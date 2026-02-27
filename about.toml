@@ -1,0 +1,20 @@
+# cargo-about configuration for generating THIRD_PARTY_LICENSES.md.
+
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+
+ignore-build-dependencies = false
+ignore-dev-dependencies = false
+filter-noassertion = true
+private = { ignore = true }

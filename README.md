@@ -180,6 +180,36 @@ cargo test --test bundle_workflow_integration -- --nocapture
 cargo llvm-cov --workspace --all-features --summary-only
 ```
 
+### Third-Party License Compliance
+
+Install tools:
+
+```bash
+cargo install --locked cargo-deny
+cargo install --locked cargo-about
+```
+
+Check dependency licenses against policy (`deny.toml`):
+
+```bash
+./scripts/check-licenses.sh
+```
+
+Generate/update third-party license inventory:
+
+```bash
+./scripts/generate-third-party-licenses.sh
+```
+
+If you want verbose cargo-about diagnostics while generating:
+
+```bash
+CARGO_ABOUT_LOG_LEVEL=warn ./scripts/generate-third-party-licenses.sh
+```
+
+Generated output:
+- [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)
+
 ### Generate Documentation
 
 Generate Rust API docs:
