@@ -40,6 +40,7 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
 
     AuditModel {
         overview: OverviewModel {
+            app_version: "test-version".to_string(),
             repo_path: ".".to_string(),
             bundle_path: "sync.bundle.zip".to_string(),
             base_ref: "sync/last".to_string(),
@@ -58,6 +59,7 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
 pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
     AuditModel {
         overview: OverviewModel {
+            app_version: "test-version".to_string(),
             repo_path: "/tmp/repo".to_string(),
             bundle_path: "/tmp/sync.bundle.zip".to_string(),
             base_ref: "sync/last".to_string(),
@@ -97,6 +99,7 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
 pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
     AuditModel {
         overview: OverviewModel {
+            app_version: "test-version".to_string(),
             repo_path: fixture.receiver_dir.display().to_string(),
             bundle_path: fixture.bundle_archive_path.display().to_string(),
             base_ref: "sync/last".to_string(),

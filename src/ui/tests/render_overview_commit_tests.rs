@@ -42,6 +42,10 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include would-change section in dry-run success path"
     );
     assert!(
+        output.contains("tool version: test-version"),
+        "overview render should include embedded tool version in general section"
+    );
+    assert!(
         output.contains("file.txt"),
         "overview render should include rendered file stats rows"
     );

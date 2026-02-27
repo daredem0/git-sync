@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod git;
 mod ui;
+mod version;
 
 use anyhow::Result;
 use app::AppConfig;

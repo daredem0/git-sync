@@ -23,6 +23,7 @@ pub(crate) enum CommitPagesModel {
 
 #[derive(Debug)]
 pub(crate) struct OverviewModel {
+    pub(crate) app_version: String,
     pub(crate) repo_path: String,
     pub(crate) bundle_path: String,
     pub(crate) base_ref: String,

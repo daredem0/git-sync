@@ -38,6 +38,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     frame.render_widget(title, chunks[0]);
 
     let general_lines = vec![
+        format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
         format!("bundle: {}", overview.bundle_path),
         format!(

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "git-sync-audit",
-    version,
+    version = crate::version::APP_VERSION,
     about = "Air-gap Git sync audit tool (scaffold)"
 )]
 /// Top-level CLI parser that dispatches to subcommands.

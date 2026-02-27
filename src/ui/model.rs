@@ -4,6 +4,7 @@ use super::format::single_line_error;
 use super::types::{AuditModel, CommitPagesModel, DryRunLine, OverviewModel, StatusLine};
 use crate::app::AppConfig;
 use crate::git::{self, ReceiveBundleOptions};
+use crate::version::APP_VERSION;
 
 /// Builds the full UI model used by overview and commit pages.
 ///
@@ -64,6 +65,7 @@ fn build_overview_model(config: &AppConfig) -> OverviewModel {
     };
 
     OverviewModel {
+        app_version: APP_VERSION.to_string(),
         repo_path: config.repo_path.display().to_string(),
         bundle_path: config.bundle_path.display().to_string(),
         base_ref: config.base_ref.clone(),

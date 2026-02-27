@@ -229,6 +229,27 @@ fn main_without_subcommand_prints_scaffold_message() {
     );
 }
 
+// Verifies that --version is available and prints a version line.
+#[test]
+fn version_flag_prints_version_line() {
+    let output = run_bin(&["--version"], None);
+    assert_success(&output, "running binary with --version");
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let line = stdout.trim();
+    assert!(
+        line.starts_with("git-sync-audit "),
+        "version output should start with binary name and a space"
+    );
+    let version_part = line
+        .split_once(' ')
+        .map(|(_, version)| version)
+        .unwrap_or_default();
+    assert!(
+        !version_part.is_empty(),
+        "version output should include a non-empty version value"
+    );
+}
+
 // Verifies that interactive audit rejects --verify-metadata when no --format is provided.
 #[test]
 fn audit_interactive_rejects_verify_metadata_flag() {
