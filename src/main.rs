@@ -6,7 +6,8 @@ mod ui;
 use anyhow::Result;
 use app::AppConfig;
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, OutputFormat};
+use git::{collect_changed_files, render_manifest, render_manifest_json};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -17,6 +18,7 @@ fn main() -> Result<()> {
             bundle,
             base,
             tip,
+            format,
         }) => {
             let config = AppConfig {
                 repo_path: repo,
@@ -24,9 +26,20 @@ fn main() -> Result<()> {
                 base_ref: base,
                 tip_ref: tip,
             };
-            git::open_context(&config)?;
-            println!("Audit command scaffold is ready.");
-            println!("Implementation is intentionally pending.");
+            let context = git::open_context(&config)?;
+            let tip_commit_id = context.tip_commit_id.unwrap_or(context.base_commit_id);
+            let changes =
+                collect_changed_files(&config.repo_path, context.base_commit_id, tip_commit_id)?;
+            match format {
+                OutputFormat::Tsv => {
+                    let manifest = render_manifest(&changes);
+                    print!("{manifest}");
+                }
+                OutputFormat::Json => {
+                    let manifest = render_manifest_json(&changes)?;
+                    println!("{manifest}");
+                }
+            }
         }
         Some(Command::Ui {
             repo,

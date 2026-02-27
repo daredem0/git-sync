@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -23,6 +23,8 @@ pub enum Command {
         base: String,
         #[arg(long)]
         tip: Option<String>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Tsv)]
+        format: OutputFormat,
     },
     Ui {
         #[arg(long)]
@@ -34,4 +36,10 @@ pub enum Command {
         #[arg(long)]
         tip: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum OutputFormat {
+    Tsv,
+    Json,
 }
