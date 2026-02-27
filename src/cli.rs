@@ -51,6 +51,12 @@ pub enum Command {
         #[arg(long)]
         tip: Option<String>,
     },
+    Receive {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

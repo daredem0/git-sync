@@ -74,6 +74,12 @@ pub struct RepoAuditRange {
     pub tip_commit_id: git2::Oid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiveBundleResult {
+    pub bundle_version: BundleVersion,
+    pub imported_heads: Vec<BundleHead>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditMetadata {
     schema_version: String,
@@ -633,6 +639,18 @@ pub fn verify_bundle_metadata_against_repo_input(
     }
 }
 
+pub fn receive_bundle_input(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+) -> Result<ReceiveBundleResult> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        receive_bundle(&extracted.bundle_path, receiver_repo_path)
+    } else {
+        receive_bundle(bundle_input_path, receiver_repo_path)
+    }
+}
+
 pub fn resolve_repo_audit_range(
     repo_path: &Path,
     from_rev: &str,
@@ -681,6 +699,46 @@ pub fn collect_changed_files(
             new_oid: entry.new_oid,
         })
         .collect())
+}
+
+fn receive_bundle(bundle_path: &Path, receiver_repo_path: &Path) -> Result<ReceiveBundleResult> {
+    let inspection = inspect_bundle(bundle_path)?;
+    if inspection.heads.is_empty() {
+        bail!("bundle does not contain any heads to import");
+    }
+
+    let repo = git2::Repository::open(receiver_repo_path)?;
+    let bundle_bytes = fs::read(bundle_path)?;
+    let pack_offset = bundle_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .ok_or_else(|| anyhow!("bundle does not contain PACK payload"))?;
+    let pack_data = &bundle_bytes[pack_offset..];
+
+    let odb = repo.odb()?;
+    let pack_dir = repo.path().join("objects").join("pack");
+    fs::create_dir_all(&pack_dir)?;
+    let mut indexer = git2::Indexer::new(Some(&odb), &pack_dir, 0o644, true)?;
+    indexer.write_all(pack_data)?;
+    indexer.commit()?;
+
+    for head in &inspection.heads {
+        repo.find_commit(head.oid).map_err(|err| {
+            anyhow!(
+                "bundle head commit '{}' is not available after import: {err}",
+                head.oid
+            )
+        })?;
+    }
+
+    for head in &inspection.heads {
+        repo.reference(&head.reference, head.oid, true, "receive bundle import")?;
+    }
+
+    Ok(ReceiveBundleResult {
+        bundle_version: inspection.version,
+        imported_heads: inspection.heads,
+    })
 }
 
 fn collect_changed_files_for_metadata(

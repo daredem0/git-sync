@@ -15,6 +15,7 @@ Current status:
 - `audit --bundle` renders changed-file manifests from bundled metadata.
 - `audit --repo --from --to` renders changed-file manifests directly from a repository range.
 - `audit --verify-metadata` validates bundled metadata against repository truth.
+- `receive --repo --bundle` imports a bundle package into a receiver repository and updates exported refs.
 
 ## Build
 
@@ -80,6 +81,14 @@ This validates:
 - metadata `commit_chain` and `changed_files` against repository truth for `range_from_oid..range_to_oid`
 - optional patch sidecar hash/size when present
 
+## Receive bundle into a repo
+
+Receiver must already contain prerequisite history referenced by the bundle.
+
+```bash
+cargo run -- receive --repo /path/to/receiver-repo --bundle /path/to/sync.bundle.zip
+```
+
 ## End-to-end test flow with merge fixture
 
 Generate a deterministic repo with merge commits and anchor tags (`sync/base`, `sync/tip`):
@@ -110,4 +119,24 @@ Verify metadata against the repo:
 
 ```bash
 cargo run -- audit --bundle /tmp/sync.bundle.zip --repo /tmp/git-sync-fixture --verify-metadata --format tsv
+```
+
+Create receiver repo and seed prerequisite commit history:
+
+```bash
+git init --bare /tmp/git-sync-receiver
+git -C /tmp/git-sync-receiver fetch /tmp/git-sync-fixture refs/tags/sync/base:refs/tags/sync/base
+```
+
+Receive the bundle into the receiver:
+
+```bash
+cargo run -- receive --repo /tmp/git-sync-receiver --bundle /tmp/sync.bundle.zip
+```
+
+Verify receiver tip ref matches source tip commit:
+
+```bash
+git -C /tmp/git-sync-fixture rev-parse sync/tip^{commit}
+git -C /tmp/git-sync-receiver rev-parse refs/tags/sync/tip^{commit}
 ```

@@ -11,6 +11,7 @@ use git::{
     CreateBundleOptions, collect_changed_files, collect_changed_files_from_bundle_input,
     create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts, render_manifest,
     render_manifest_json, resolve_repo_audit_range, verify_bundle_metadata_against_repo_input,
+    receive_bundle_input,
 };
 
 fn main() -> Result<()> {
@@ -139,6 +140,21 @@ fn main() -> Result<()> {
             ui::run(&config)?;
             println!("UI command scaffold is ready.");
             println!("Implementation is intentionally pending.");
+        }
+        Some(Command::Receive { repo, bundle }) => {
+            let result = receive_bundle_input(&bundle, &repo)?;
+            let version = match result.bundle_version {
+                git::BundleVersion::V2 => "v2",
+                git::BundleVersion::V3 => "v3",
+            };
+            println!(
+                "bundle received: version={}, imported_heads={}",
+                version,
+                result.imported_heads.len()
+            );
+            for head in &result.imported_heads {
+                println!("HEAD\t{}\t{}", head.oid, head.reference);
+            }
         }
         None => {
             println!("git-sync-audit scaffold is ready.");

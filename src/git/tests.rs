@@ -1193,6 +1193,130 @@ fn create_bundle_can_be_fetched_when_prerequisite_is_present() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that receive_bundle_input imports a zip-packaged bundle and updates exported head refs when prerequisites exist.
+#[test]
+fn receive_bundle_input_imports_zip_bundle_and_updates_heads_when_prerequisite_exists() {
+    let repo_dir = temp_repo_dir("receive-bundle-success");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    remove_unarchived_bundle_artifacts(&bundle_result).expect("must remove loose bundle artifacts");
+
+    let receiver_dir = temp_repo_dir("receive-bundle-success-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let receive_result = receive_bundle_input(&bundle_result.archive_path, &receiver_dir)
+        .expect("receive_bundle_input should succeed when prerequisites are present");
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "receive should import exactly one exported head for this bundle"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].reference, "refs/heads/tip",
+        "receive should update the exported tip ref"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].oid, tip_commit_id,
+        "receive should point exported tip ref at the imported tip commit"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip ref should exist after receive");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "receiver tip ref should match imported tip commit"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that receive_bundle_input fails when the receiver lacks prerequisite objects required by the bundle pack.
+#[test]
+fn receive_bundle_input_fails_when_prerequisite_is_missing() {
+    let repo_dir = temp_repo_dir("receive-bundle-missing-prereq");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    remove_unarchived_bundle_artifacts(&bundle_result).expect("must remove loose bundle artifacts");
+
+    let receiver_dir = temp_repo_dir("receive-bundle-missing-prereq-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+
+    let receive_result = receive_bundle_input(&bundle_result.archive_path, &receiver_dir);
+    assert!(
+        receive_result.is_err(),
+        "receive should fail when receiver does not have prerequisite commit history"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    assert!(
+        receiver_repo.find_reference("refs/heads/tip").is_err(),
+        "failed receive should not create tip ref"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that create_bundle writes a .caudit.json sidecar with core audit identity fields.
 #[test]
 fn create_bundle_writes_caudit_metadata_file_with_core_identity_fields() {

@@ -61,11 +61,11 @@ fn normalize_tsv(output: &str) -> String {
         .join("\n")
 }
 
-// Verifies the end-to-end bundle workflow equivalent to the documented 7-step flow:
-// generate fixture repo, create bundle package, inspect archive contents, audit from bundle,
-// audit from repo range, and verify metadata against repo truth.
+// Verifies the full end-to-end workflow:
+// generate fixture repo, create bundle package, audit from bundle and repo, verify metadata,
+// receive into a separate receiver repo, and confirm receiver refs resolve to the expected tip commit.
 #[test]
-fn integration_bundle_create_audit_and_verify_flow() {
+fn integration_bundle_create_audit_verify_and_receive_flow() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script_path = manifest_dir.join("scripts/generate-merge-graph-repo.sh");
     assert!(
@@ -203,6 +203,64 @@ fn integration_bundle_create_audit_and_verify_flow() {
         verify_output.trim(),
         "VERIFY\tOK",
         "metadata verification should succeed against the source repo"
+    );
+
+    let receiver_repo = test_root.join("receiver-repo");
+    let receiver_arg_owned = receiver_repo.to_string_lossy().into_owned();
+    run_checked_command(
+        "git",
+        &["init", "--bare", &receiver_arg_owned],
+        Some(&manifest_dir),
+    );
+    run_checked_command(
+        "git",
+        &[
+            "-C",
+            &receiver_arg_owned,
+            "fetch",
+            &repo_arg_owned,
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        Some(&manifest_dir),
+    );
+
+    let receive_output = run_checked_command(
+        "cargo",
+        &[
+            "run",
+            "--quiet",
+            "--",
+            "receive",
+            "--repo",
+            &receiver_arg_owned,
+            "--bundle",
+            &bundle_arg_owned,
+        ],
+        Some(&manifest_dir),
+    );
+    assert!(
+        receive_output.contains("bundle received:"),
+        "receive command should report successful import"
+    );
+    assert!(
+        receive_output.contains("imported_heads=1"),
+        "fixture range should import a single exported head"
+    );
+
+    let source_tip_commit = run_checked_command(
+        "git",
+        &["-C", &repo_arg_owned, "rev-parse", "sync/tip^{commit}"],
+        Some(&manifest_dir),
+    );
+    let receiver_tip_commit = run_checked_command(
+        "git",
+        &["-C", &receiver_arg_owned, "rev-parse", "refs/tags/sync/tip^{commit}"],
+        Some(&manifest_dir),
+    );
+    assert_eq!(
+        source_tip_commit.trim(),
+        receiver_tip_commit.trim(),
+        "receiver imported tip ref must resolve to the same commit as source sync/tip"
     );
 
     let _ = fs::remove_dir_all(test_root);
