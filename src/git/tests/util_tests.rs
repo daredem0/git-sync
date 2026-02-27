@@ -1,3 +1,5 @@
+//! Unit tests for util tests.
+
 use super::*;
 
 // Focus: utility-level parsing/formatting helpers used across bundle, metadata, and manifest paths.

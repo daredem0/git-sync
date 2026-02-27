@@ -1,3 +1,5 @@
+//! TUI-layer input functionality.
+
 use super::types::{AppState, AuditModel};
 use crossterm::event::KeyCode;
 
@@ -5,6 +7,7 @@ const DIFF_SCROLL_VERTICAL_STEP: usize = 1;
 const DIFF_SCROLL_HORIZONTAL_STEP: usize = 2;
 const DIFF_SCROLL_PAGE_STEP: usize = 20;
 
+/// Handles one key press and returns `true` when the app should exit.
 pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: KeyCode) -> bool {
     match code {
         KeyCode::Char('q') => true,
@@ -31,6 +34,7 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
     }
 }
 
+/// Handles navigation keys while the app is in page mode.
 pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
     match code {
         KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
@@ -44,6 +48,7 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
     }
 }
 
+/// Handles scrolling/navigation keys while diff view is open.
 pub(crate) fn handle_diff_keys(state: &mut AppState, code: KeyCode) {
     match code {
         KeyCode::Down | KeyCode::Char('j') => state.scroll_diff_down(DIFF_SCROLL_VERTICAL_STEP),

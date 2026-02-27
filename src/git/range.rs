@@ -1,7 +1,18 @@
+//! Git-layer range functionality.
+
 use crate::git::RepoAuditRange;
 use anyhow::{Result, bail};
 use std::path::Path;
 
+/// Resolves a linear commit range from two revision expressions.
+///
+/// The returned range is valid only when `to_rev` equals `from_rev` or is a
+/// descendant of it.
+///
+/// # Errors
+///
+/// Returns an error when the repository cannot be opened, either revision
+/// cannot be resolved to a commit, or the range is non-linear.
 pub fn resolve_repo_audit_range(
     repo_path: &Path,
     from_rev: &str,

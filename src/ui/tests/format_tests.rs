@@ -1,3 +1,5 @@
+//! Unit tests for format tests.
+
 // Focus: formatting helpers for identities/timestamps/status lines and non-text diff error recognition.
 
 use super::super::format::{

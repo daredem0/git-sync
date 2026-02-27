@@ -1,3 +1,5 @@
+//! CLI argument models and audit-target resolution.
+
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -8,13 +10,17 @@ use std::path::PathBuf;
     version,
     about = "Air-gap Git sync audit tool (scaffold)"
 )]
+/// Top-level CLI parser that dispatches to subcommands.
 pub struct Cli {
+    /// Optional subcommand; omitted prints scaffold/help guidance.
     #[command(subcommand)]
     pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
+/// Supported `git-sync-audit` command groups.
 pub enum Command {
+    /// Creates a bundle package for a linear commit range.
     Create {
         #[arg(long)]
         repo: PathBuf,
@@ -27,6 +33,7 @@ pub enum Command {
         #[arg(long, default_value_t = false)]
         with_patches: bool,
     },
+    /// Audits either a repository range or a bundle/package input.
     Audit {
         #[arg(long)]
         repo: Option<PathBuf>,
@@ -41,6 +48,7 @@ pub enum Command {
         #[arg(long, value_enum)]
         format: Option<OutputFormat>,
     },
+    /// Opens the interactive terminal UI audit view.
     Ui {
         #[arg(long)]
         repo: PathBuf,
@@ -51,6 +59,7 @@ pub enum Command {
         #[arg(long)]
         tip: Option<String>,
     },
+    /// Receives a bundle/package into a repository, optionally as dry-run.
     Receive {
         #[arg(long)]
         repo: PathBuf,
@@ -64,16 +73,20 @@ pub enum Command {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+/// Non-interactive output encoding for `audit --format`.
 pub enum OutputFormat {
+    /// Tab-separated manifest rows.
     Tsv,
+    /// Pretty-printed JSON manifest.
     Json,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Resolved non-interactive audit mode target.
 pub enum AuditTarget {
-    Bundle {
-        bundle_path: PathBuf,
-    },
+    /// Audit based on bundle metadata sidecar content.
+    Bundle { bundle_path: PathBuf },
+    /// Audit directly from repository history between two revisions.
     RepoRange {
         repo_path: PathBuf,
         from_rev: String,
@@ -81,6 +94,12 @@ pub enum AuditTarget {
     },
 }
 
+/// Resolves mutually-exclusive audit inputs into a concrete target mode.
+///
+/// # Errors
+///
+/// Returns an error when required argument combinations are missing or when
+/// repository and bundle modes are mixed.
 pub fn resolve_audit_target(
     repo: Option<PathBuf>,
     bundle: Option<PathBuf>,

@@ -1,3 +1,5 @@
+//! Diff parsing and syntax-aware rendering helpers for the UI.
+
 mod parse;
 mod render;
 mod style;

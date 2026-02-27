@@ -1,3 +1,5 @@
+//! TUI-layer commit functionality.
+
 use super::commit_table::render_commit_files_table;
 use super::render_footer_text;
 use crate::ui::format::{format_git_timestamp, format_identity};
@@ -7,6 +9,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+/// Renders a commit detail page with identity metadata and changed files table.
 pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)

@@ -1,3 +1,5 @@
+//! Unit tests for render diff help tests.
+
 // Focus: rendering behavior for diff page, footer/help text, and help overlay modes.
 
 use super::super::render::{

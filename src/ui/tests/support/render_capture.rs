@@ -1,7 +1,10 @@
+//! Unit tests for render capture.
+
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+/// Renders a widget tree into a deterministic text snapshot for assertions.
 pub(crate) fn render_and_capture_text(
     width: u16,
     height: u16,

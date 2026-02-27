@@ -1,7 +1,15 @@
+//! Git-layer context functionality.
+
 use crate::app::AppConfig;
 use crate::git::{OpenContext, inspect_bundle};
 use anyhow::{Result, bail};
 
+/// Validates repo/bundle paths and resolves references for UI startup context.
+///
+/// # Errors
+///
+/// Returns an error when configured paths do not exist, references do not
+/// resolve to commits, or `tip_ref` is not equal/descendant of `base_ref`.
 pub fn open_context(config: &AppConfig) -> Result<OpenContext> {
     if !config.repo_path.exists() {
         bail!(

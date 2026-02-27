@@ -1,3 +1,5 @@
+//! Git-domain operations for bundle creation, receive, diffing, and metadata.
+
 mod archive;
 mod bundle;
 mod context;

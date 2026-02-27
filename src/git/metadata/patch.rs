@@ -1,3 +1,5 @@
+//! Git-layer patch functionality.
+
 use crate::git::archive::patch_sidecar_path;
 use crate::git::types::CreateBundleAuditPatchSidecar;
 use crate::git::util::sha256_hex;
@@ -5,6 +7,12 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
+/// Writes a unified-diff patch sidecar for the audited commit range.
+///
+/// # Errors
+///
+/// Returns an error when commit/tree diffing, sidecar writing, or hash
+/// computation fails.
 pub(crate) fn write_patch_sidecar(
     repo: &git2::Repository,
     base_commit_id: git2::Oid,

@@ -1,3 +1,5 @@
+//! Git-layer verify functionality.
+
 use crate::git::archive::{
     caudit_sidecar_path, extract_bundle_archive, is_zip_bundle_input_path,
     resolve_patch_sidecar_path,
@@ -13,6 +15,15 @@ use anyhow::{Result, bail};
 use std::fs;
 use std::path::Path;
 
+/// Verifies metadata integrity and repository-truth consistency for a bundle.
+///
+/// This checks commit range linearity plus exact equality for `commit_chain`
+/// and `changed_files`.
+///
+/// # Errors
+///
+/// Returns an error when bundle metadata is invalid or does not match the
+/// provided repository.
 pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path) -> Result<()> {
     let metadata = verify_bundle_metadata_integrity(bundle_path)?;
 
@@ -47,6 +58,11 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
     Ok(())
 }
 
+/// Verifies metadata against a repository for `.bundle` or `.zip` input.
+///
+/// # Errors
+///
+/// Returns an error when extraction fails or verification fails.
 pub fn verify_bundle_metadata_against_repo_input(
     bundle_input_path: &Path,
     repo_path: &Path,
@@ -59,6 +75,11 @@ pub fn verify_bundle_metadata_against_repo_input(
     }
 }
 
+/// Verifies metadata integrity for `.bundle` or `.zip` input.
+///
+/// # Errors
+///
+/// Returns an error when extraction or integrity checks fail.
 pub(crate) fn verify_bundle_metadata_integrity_input(bundle_input_path: &Path) -> Result<()> {
     if is_zip_bundle_input_path(bundle_input_path) {
         let extracted = extract_bundle_archive(bundle_input_path)?;
@@ -70,6 +91,14 @@ pub(crate) fn verify_bundle_metadata_integrity_input(bundle_input_path: &Path) -
     }
 }
 
+/// Verifies metadata integrity against on-disk bundle artifacts.
+///
+/// This validates schema version, bundle hash/size, header fields, and optional
+/// patch sidecar hash/size.
+///
+/// # Errors
+///
+/// Returns an error when any metadata assertion does not match on-disk truth.
 pub(crate) fn verify_bundle_metadata_integrity(
     bundle_path: &Path,
 ) -> Result<CreateBundleAuditMetadata> {
@@ -148,6 +177,7 @@ pub(crate) fn verify_bundle_metadata_integrity(
     }
 
     if let Some(patch_sidecar) = &metadata.patch_sidecar {
+        // Patch sidecar is optional in v3-style package generation, but if present it must hash-match.
         if patch_sidecar.format != "unified-diff" {
             bail!(
                 "unsupported patch sidecar format: '{}'",

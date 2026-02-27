@@ -1,3 +1,5 @@
+//! Git-layer archive functionality.
+
 use crate::git::types::CreateBundleAuditPatchSidecar;
 use anyhow::{Result, anyhow, bail};
 use std::fs::{self, File};
@@ -7,24 +9,39 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+/// Returns the metadata sidecar path for a bundle (`.caudit.json`).
+///
+/// The output preserves the original bundle path and appends a suffix.
 pub(crate) fn caudit_sidecar_path(bundle_path: &Path) -> PathBuf {
     let mut sidecar = bundle_path.as_os_str().to_os_string();
     sidecar.push(".caudit.json");
     PathBuf::from(sidecar)
 }
 
+/// Returns the patch sidecar path for a bundle (`.caudit.patch`).
+///
+/// The output preserves the original bundle path and appends a suffix.
 pub(crate) fn patch_sidecar_path(bundle_path: &Path) -> PathBuf {
     let mut sidecar = bundle_path.as_os_str().to_os_string();
     sidecar.push(".caudit.patch");
     PathBuf::from(sidecar)
 }
 
+/// Returns the archive package path for a bundle (`.zip`).
+///
+/// The output preserves the original bundle path and appends a suffix.
 pub(crate) fn bundle_archive_path(bundle_path: &Path) -> PathBuf {
     let mut archive = bundle_path.as_os_str().to_os_string();
     archive.push(".zip");
     PathBuf::from(archive)
 }
 
+/// Writes a zip archive containing the provided files as sibling entries.
+///
+/// # Errors
+///
+/// Returns an error when any input file is missing/non-file or when zip I/O
+/// fails.
 pub(crate) fn write_zip_archive(archive_path: &Path, files: &[PathBuf]) -> Result<()> {
     let archive_file = File::create(archive_path)?;
     let mut archive = ZipWriter::new(archive_file);
@@ -51,6 +68,7 @@ pub(crate) fn write_zip_archive(archive_path: &Path, files: &[PathBuf]) -> Resul
     Ok(())
 }
 
+/// Returns `true` when the input path points to a `.zip` bundle archive.
 pub(crate) fn is_zip_bundle_input_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -69,6 +87,15 @@ impl Drop for ExtractedBundleArchive {
     }
 }
 
+/// Extracts a bundle archive and returns the temporary extracted `.bundle` path.
+///
+/// The temporary directory is removed automatically when the returned
+/// [`ExtractedBundleArchive`] is dropped.
+///
+/// # Errors
+///
+/// Returns an error when the archive is missing/invalid or when it does not
+/// contain exactly one `.bundle` file.
 pub(crate) fn extract_bundle_archive(archive_path: &Path) -> Result<ExtractedBundleArchive> {
     if !archive_path.exists() {
         bail!(
@@ -139,6 +166,12 @@ pub(crate) fn extract_bundle_archive(archive_path: &Path) -> Result<ExtractedBun
     })
 }
 
+/// Removes a file and ignores missing-path errors.
+///
+/// # Errors
+///
+/// Returns an error when deletion fails for any reason other than
+/// `NotFound`.
 pub(crate) fn remove_file_if_exists(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -150,6 +183,14 @@ pub(crate) fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
+/// Resolves the patch sidecar path recorded in metadata.
+///
+/// Resolution first tries the explicit stored path, then a same-directory
+/// sibling next to the metadata file.
+///
+/// # Errors
+///
+/// Returns an error when neither location resolves to an existing file.
 pub(crate) fn resolve_patch_sidecar_path(
     metadata_path: &Path,
     patch_sidecar: &CreateBundleAuditPatchSidecar,

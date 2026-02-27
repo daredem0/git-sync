@@ -1,3 +1,5 @@
+//! Unit tests for diff manifest tests.
+
 use super::support::*;
 use super::*;
 

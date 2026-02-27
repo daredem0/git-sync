@@ -1,3 +1,5 @@
+//! TUI-layer types functionality.
+
 use crate::git::{self, CommitAuditEntry};
 use ratatui::text::Line;
 use std::path::PathBuf;

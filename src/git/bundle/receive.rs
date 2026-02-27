@@ -1,3 +1,5 @@
+//! Git-layer receive functionality.
+
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::metadata::load_bundle_metadata_from_input;
@@ -13,6 +15,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Receives a bundle input using default receive options.
+///
+/// Equivalent to calling [`receive_bundle_input_with_options`] with
+/// [`ReceiveBundleOptions::default`].
+///
+/// # Errors
+///
+/// Returns an error when bundle parsing/import fails.
 pub fn receive_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
@@ -24,6 +34,15 @@ pub fn receive_bundle_input(
     )
 }
 
+/// Receives a bundle input (`.bundle` or packaged `.zip`) into a repository.
+///
+/// When `dry_run` is enabled, import and diff analysis run against a temporary
+/// bare mirror and do not mutate the receiver.
+///
+/// # Errors
+///
+/// Returns an error when metadata verification fails (if enabled), archive
+/// extraction fails, or bundle import cannot be applied.
 pub fn receive_bundle_input_with_options(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
@@ -41,6 +60,15 @@ pub fn receive_bundle_input_with_options(
     }
 }
 
+/// Collects commit-level audit entries for a bundle input.
+///
+/// This imports into a temporary mirror and computes commit/file summaries
+/// without mutating the receiver repository.
+///
+/// # Errors
+///
+/// Returns an error when metadata loading, bundle import, or commit traversal
+/// fails.
 pub fn collect_commit_audit_entries_for_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
@@ -50,6 +78,12 @@ pub fn collect_commit_audit_entries_for_bundle_input(
     })
 }
 
+/// Collects a unified patch for one file in a bundle commit.
+///
+/// # Errors
+///
+/// Returns an error when the commit/path is unavailable, when the file is not
+/// changed in the target commit, or when a textual patch is unavailable.
 pub fn collect_commit_file_patch_for_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
@@ -61,6 +95,7 @@ pub fn collect_commit_file_patch_for_bundle_input(
     })
 }
 
+/// Applies a bundle to the receiver repository or to a dry-run mirror.
 fn receive_bundle(
     bundle_path: &Path,
     receiver_repo_path: &Path,
@@ -89,6 +124,7 @@ fn receive_bundle(
     }
 
     if dry_run {
+        // Dry-run operates on a temporary mirror so we can safely import and diff.
         let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
         let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
         apply_bundle_to_repo(&dry_run_repo, bundle_path, &inspection.heads)?;
@@ -112,12 +148,19 @@ fn receive_bundle(
     })
 }
 
+/// Imports a bundle PACK stream into the repository object database and refs.
+///
+/// # Errors
+///
+/// Returns an error when the PACK payload cannot be located/imported, when
+/// imported head commits are missing, or ref updates fail.
 fn apply_bundle_to_repo(
     repo: &git2::Repository,
     bundle_path: &Path,
     heads: &[BundleHead],
 ) -> Result<()> {
     let bundle_bytes = fs::read(bundle_path)?;
+    // Git bundle payload starts at the embedded PACK stream.
     let pack_offset = bundle_bytes
         .windows(4)
         .position(|window| window == b"PACK")
@@ -150,6 +193,9 @@ fn apply_bundle_to_repo(
     Ok(())
 }
 
+/// Aggregates per-file line deltas across all imported heads.
+///
+/// Aggregation is keyed by path and sums additions/deletions from each head.
 fn collect_bundle_line_stats(
     repo: &git2::Repository,
     inspection: &BundleInspection,
@@ -175,6 +221,9 @@ fn collect_bundle_line_stats(
         .collect())
 }
 
+/// Computes per-file line stats for a single imported head.
+///
+/// Non-text changes are represented as `0/0` line deltas.
 fn collect_line_stats_for_head(
     repo: &git2::Repository,
     head: &BundleHead,
@@ -212,6 +261,7 @@ fn collect_line_stats_for_head(
     Ok(stats)
 }
 
+/// Builds commit-page entries from metadata and imported repository objects.
 fn collect_commit_audit_entries(
     repo: &git2::Repository,
     metadata: &crate::git::types::CreateBundleAuditMetadata,
@@ -250,6 +300,12 @@ fn collect_commit_audit_entries(
     Ok(entries)
 }
 
+/// Returns a textual patch for one file in a single commit.
+///
+/// # Errors
+///
+/// Returns an error for missing commits/paths, non-text changes, or when the
+/// file is not part of the commit diff.
 fn collect_commit_file_patch(
     repo: &git2::Repository,
     commit_id: git2::Oid,
@@ -293,12 +349,16 @@ fn collect_commit_file_patch(
     bail!("file '{path}' is not changed in commit '{commit_id}'")
 }
 
+/// Runs a callback against a temporary repo with the bundle input imported.
+///
+/// This isolates read/analysis operations from the live receiver repository.
 fn with_imported_bundle_input_repo<T>(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
     func: impl FnOnce(&git2::Repository, &crate::git::types::CreateBundleAuditMetadata) -> Result<T>,
 ) -> Result<T> {
     let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
+    // Analysis helpers run against a temporary imported repo to avoid mutating the receiver.
     let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
     let repo = git2::Repository::open_bare(&temp_repo.path)?;
 
@@ -314,6 +374,9 @@ fn with_imported_bundle_input_repo<T>(
     func(&repo, &metadata)
 }
 
+/// Computes line stats for a direct tree-to-tree diff.
+///
+/// Returned rows are path-sorted for stable UI rendering.
 fn collect_line_stats_for_tree_diff(
     repo: &git2::Repository,
     base_tree: Option<&git2::Tree<'_>>,
@@ -349,6 +412,10 @@ fn collect_line_stats_for_tree_diff(
     Ok(stats)
 }
 
+/// Resolves the baseline tree used for per-head dry-run diffing.
+///
+/// For multi-prerequisite bundles, this requires exactly one prerequisite that
+/// is an ancestor of the head.
 fn resolve_base_tree_for_head<'repo>(
     repo: &'repo git2::Repository,
     head_commit: &git2::Commit<'repo>,
@@ -386,6 +453,9 @@ fn resolve_base_tree_for_head<'repo>(
     Ok(Some(base_commit.tree()?))
 }
 
+/// Returns `true` when the referenced head already points at an imported commit.
+///
+/// This guards repeated receive operations from rewriting unchanged refs.
 pub(crate) fn is_head_already_applied(repo: &git2::Repository, head: &BundleHead) -> Result<bool> {
     let current_target = match repo.find_reference(&head.reference) {
         Ok(reference) => reference.target().or_else(|| {
@@ -408,6 +478,7 @@ pub(crate) fn is_head_already_applied(repo: &git2::Repository, head: &BundleHead
     Ok(repo.find_commit(head.oid).is_ok())
 }
 
+/// Returns `true` when a diff delta is not a regular text-file change.
 fn is_non_text_delta(delta: &git2::DiffDelta<'_>) -> bool {
     let old_file = delta.old_file();
     let new_file = delta.new_file();
@@ -425,6 +496,7 @@ fn is_non_text_delta(delta: &git2::DiffDelta<'_>) -> bool {
     !(old_regular && new_regular)
 }
 
+/// Returns `true` for standard git regular-file modes.
 fn is_regular_blob_mode(mode: u32) -> bool {
     mode == 0o100644 || mode == 0o100755
 }
@@ -434,6 +506,9 @@ struct TempBareRepo {
 }
 
 impl TempBareRepo {
+    /// Creates a temporary bare mirror of the receiver repository.
+    ///
+    /// The mirror is populated via anonymous remote fetch and deleted on drop.
     fn from_existing(source_repo_path: &Path) -> Result<Self> {
         let temp_path = std::env::temp_dir().join(format!(
             "git-sync-audit-receive-dry-run-{}-{}",

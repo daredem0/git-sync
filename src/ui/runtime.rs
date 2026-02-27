@@ -1,3 +1,5 @@
+//! TUI-layer runtime functionality.
+
 use super::input::handle_key_press;
 use super::model::build_audit_model;
 use super::render::render_page;
@@ -13,6 +15,11 @@ use ratatui::backend::CrosstermBackend;
 use std::io;
 use std::time::Duration;
 
+/// Runs the interactive TUI audit workflow for the provided config.
+///
+/// # Errors
+///
+/// Returns an error when terminal setup, rendering, or event handling fails.
 pub fn run(config: &AppConfig) -> Result<()> {
     let model = build_audit_model(config);
 
@@ -25,6 +32,7 @@ pub fn run(config: &AppConfig) -> Result<()> {
 
     let loop_result = run_loop(&mut terminal, &model, &mut app_state);
 
+    // Always attempt terminal cleanup, even when the event loop returns an error.
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
@@ -32,6 +40,11 @@ pub fn run(config: &AppConfig) -> Result<()> {
     loop_result
 }
 
+/// Runs the terminal event/render loop until user exit.
+///
+/// # Errors
+///
+/// Returns an error when drawing or reading events fails.
 fn run_loop(
     terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
     model: &AuditModel,

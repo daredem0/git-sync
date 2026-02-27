@@ -1,3 +1,5 @@
+//! CLI entrypoint and command dispatch for git-sync-audit.
+
 mod app;
 mod cli;
 mod git;
@@ -15,6 +17,11 @@ use git::{
     verify_bundle_metadata_against_repo_input,
 };
 
+/// Entrypoint for CLI parsing and subcommand dispatch.
+///
+/// # Errors
+///
+/// Returns an error when any selected subcommand operation fails.
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -66,6 +73,7 @@ fn main() -> Result<()> {
             verify_metadata,
             format,
         }) => {
+            // `audit` without `--format` enters interactive TUI mode.
             if format.is_none() {
                 if verify_metadata {
                     anyhow::bail!(

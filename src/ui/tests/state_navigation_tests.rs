@@ -1,3 +1,5 @@
+//! Unit tests for state navigation tests.
+
 // Focus: AppState page navigation and file selection movement invariants.
 
 use super::support::*;

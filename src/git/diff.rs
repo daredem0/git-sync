@@ -1,9 +1,17 @@
+//! Git-layer diff functionality.
+
 use crate::git::types::DiffEntry;
 use crate::git::util::{oid_or_none, path_to_string};
 use crate::git::{ChangeStatus, ChangedFile};
 use anyhow::{Result, bail};
 use std::path::Path;
 
+/// Collects normalized changed-file rows for a commit range.
+///
+/// # Errors
+///
+/// Returns an error when the repository or either commit cannot be resolved,
+/// or when libgit2 reports an unsupported delta.
 pub fn collect_changed_files(
     repo_path: &Path,
     base_commit_id: git2::Oid,
@@ -23,6 +31,14 @@ pub fn collect_changed_files(
         .collect())
 }
 
+/// Collects rich diff entries including mode/binary metadata.
+///
+/// The output is path-sorted for deterministic audit artifact generation.
+///
+/// # Errors
+///
+/// Returns an error when commits/trees cannot be loaded or when an unsupported
+/// diff delta kind is encountered.
 pub(crate) fn collect_diff_entries(
     repo: &git2::Repository,
     base_commit_id: git2::Oid,

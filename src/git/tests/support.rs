@@ -1,3 +1,5 @@
+//! Unit tests for support.
+
 use super::*;
 use std::path::PathBuf;
 
@@ -42,16 +44,19 @@ pub(super) fn create_linear_bundle_fixture(
     (repo_dir, result, base_commit_id, tip_commit_id)
 }
 
+/// Reads and parses a JSON value from disk.
 pub(super) fn read_json_value(path: &std::path::Path) -> serde_json::Value {
     let bytes = std::fs::read(path).expect("must read json file");
     serde_json::from_slice(&bytes).expect("json content should be valid")
 }
 
+/// Serializes and writes a JSON value to the given path.
 pub(super) fn write_json_value(path: &std::path::Path, value: &serde_json::Value) {
     let serialized = serde_json::to_vec_pretty(value).expect("must serialize json value");
     std::fs::write(path, serialized).expect("must write json file");
 }
 
+/// Writes a zip file with `(name, bytes)` test entries.
 pub(super) fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
     use std::io::Write as _;
     use zip::write::FileOptions;
@@ -72,6 +77,7 @@ pub(super) fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) 
     writer.finish().expect("must finish zip archive");
 }
 
+/// Allocates a unique temporary directory path for git test fixtures.
 pub(super) fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "git-sync-audit-{}-{}-{}",
@@ -84,6 +90,7 @@ pub(super) fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {
     ))
 }
 
+/// Writes files and creates one commit in the provided repository.
 pub(super) fn commit_from_files(
     repo: &git2::Repository,
     message: &str,

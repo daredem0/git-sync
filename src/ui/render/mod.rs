@@ -1,3 +1,5 @@
+//! Page-level render dispatch, shared footer/help UI, and popup layout helpers.
+
 mod commit;
 mod commit_table;
 mod diff_view;
@@ -13,6 +15,7 @@ pub(crate) use commit::render_commit_page;
 pub(crate) use diff_view::render_diff_view;
 pub(crate) use overview::render_overview_page;
 
+/// Renders the active page (overview, commit, or diff) and optional help overlay.
 pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     if state.is_diff_open() {
         render_diff_view(frame, state);
@@ -27,6 +30,7 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
     }
 }
 
+/// Renders footer key-hint text, including transient action messages.
 pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
         "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back | ? help | q quit"
@@ -39,6 +43,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     }
 }
 
+/// Renders the centered keymap help overlay for the current mode.
 pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
     let area = centered_rect(75, 45, frame.area());
     frame.render_widget(Clear, area);
@@ -50,6 +55,7 @@ pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
     frame.render_widget(help, area);
 }
 
+/// Returns contextual key help for page mode or diff mode.
 pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
     if in_diff_view {
         "Navigation (Diff View)\n\
@@ -76,6 +82,7 @@ pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
     }
 }
 
+/// Computes a centered popup rectangle using percentage-based constraints.
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

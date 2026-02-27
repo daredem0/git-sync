@@ -1,3 +1,5 @@
+//! TUI-layer render functionality.
+
 use super::parse::{classify_patch_line, line_number_columns, parse_hunk_header};
 use super::style::render_patch_content_line;
 use crate::ui::types::{RenderedDiff, SyntaxHighlighter};
@@ -5,6 +7,10 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
 
+/// Renders a unified patch into styled ratatui lines.
+///
+/// Each row contains old/new line number columns plus syntax-highlighted
+/// content for textual lines.
 pub(crate) fn render_patch_with_syntax(
     path: &str,
     patch: &str,

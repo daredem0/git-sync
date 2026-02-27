@@ -1,3 +1,5 @@
+//! Unit tests for mod.
+
 // Focus: shared UI test fixtures, model builders, and render capture helpers.
 
 mod fixtures;

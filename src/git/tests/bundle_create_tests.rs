@@ -1,3 +1,5 @@
+//! Unit tests for bundle create tests.
+
 use super::support::*;
 use super::*;
 use std::path::PathBuf;

@@ -1,3 +1,5 @@
+//! Git-layer collect functionality.
+
 use crate::git::diff::collect_diff_entries;
 use crate::git::types::{
     CreateBundleAuditChangedFile, CreateBundleAuditCommit, CreateBundleAuditSignature,
@@ -5,6 +7,11 @@ use crate::git::types::{
 use crate::git::util::status_code;
 use anyhow::Result;
 
+/// Collects changed-file entries in the serialized metadata shape.
+///
+/// # Errors
+///
+/// Returns an error when diff collection fails for the requested range.
 pub(crate) fn collect_changed_files_for_metadata(
     repo: &git2::Repository,
     base_commit_id: git2::Oid,
@@ -26,6 +33,13 @@ pub(crate) fn collect_changed_files_for_metadata(
         .collect())
 }
 
+/// Collects a topologically ordered commit chain for metadata serialization.
+///
+/// The output order is oldest-to-newest within the audited range.
+///
+/// # Errors
+///
+/// Returns an error when rev-walk setup or commit lookup fails.
 pub(crate) fn collect_commit_chain_for_metadata(
     repo: &git2::Repository,
     from_commit_id: git2::Oid,
@@ -58,6 +72,7 @@ pub(crate) fn collect_commit_chain_for_metadata(
     Ok(commit_chain)
 }
 
+/// Converts a libgit2 signature into the serialized audit-signature shape.
 pub(crate) fn signature_to_audit_signature(
     signature: git2::Signature<'_>,
 ) -> CreateBundleAuditSignature {

@@ -1,3 +1,5 @@
+//! Metadata collection, loading, patch sidecar generation, and verification.
+
 mod collect;
 mod load;
 mod patch;

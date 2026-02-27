@@ -1,3 +1,5 @@
+//! Unit tests for models.
+
 use super::fixtures::DiffFixture;
 use crate::git::{self, CommitAuditEntry, CommitAuditIdentity};
 use crate::ui::types::{
@@ -5,6 +7,7 @@ use crate::ui::types::{
 };
 use std::path::PathBuf;
 
+/// Builds a sample model with synthetic commits and file stats.
 pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> AuditModel {
     let commit_pages = CommitPagesModel::Ok(
         (0..commit_count)
@@ -51,6 +54,7 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
     }
 }
 
+/// Builds a sample model focused on overview-page rendering.
 pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
     AuditModel {
         overview: OverviewModel {
@@ -89,6 +93,7 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
     }
 }
 
+/// Builds an `AuditModel` whose commit page data matches a fixture payload.
 pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
     AuditModel {
         overview: OverviewModel {

@@ -1,3 +1,5 @@
+//! Unit tests for fixtures.
+
 use super::helpers::{commit_from_entries, commit_from_files, unique_temp_dir};
 use crate::git::{self, CommitAuditEntry};
 use std::fs;
@@ -18,6 +20,7 @@ impl Drop for DiffFixture {
     }
 }
 
+/// Creates a representative text-diff fixture used by render/input tests.
 pub(crate) fn create_diff_fixture() -> DiffFixture {
     let source_dir = unique_temp_dir("source");
     fs::create_dir_all(&source_dir).expect("must create source dir");
@@ -85,6 +88,7 @@ pub(crate) fn create_diff_fixture() -> DiffFixture {
     }
 }
 
+/// Creates a fixture whose changed entry represents a non-text file change.
 pub(crate) fn create_non_text_diff_fixture() -> DiffFixture {
     let source_dir = unique_temp_dir("source-non-text");
     fs::create_dir_all(&source_dir).expect("must create source dir");

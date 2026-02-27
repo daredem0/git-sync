@@ -1,9 +1,14 @@
+//! TUI-layer syntax functionality.
+
 use super::types::SyntaxHighlighter;
 use std::path::Path;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 
 impl SyntaxHighlighter {
+    /// Loads bundled syntax and theme sets used by the diff renderer.
+    ///
+    /// Prefers `base16-ocean.dark`, then falls back to available built-ins.
     pub(crate) fn load() -> Self {
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let themes = ThemeSet::load_defaults();
@@ -18,6 +23,9 @@ impl SyntaxHighlighter {
         Self { syntax_set, theme }
     }
 
+    /// Resolves a syntax definition from a file path.
+    ///
+    /// Falls back to plain text when no extension-specific syntax exists.
     pub(crate) fn resolve_syntax_for_path<'a>(
         &'a self,
         path: &str,

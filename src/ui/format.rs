@@ -1,6 +1,9 @@
+//! TUI-layer format functionality.
+
 use super::types::{DryRunLine, StatusLine};
 use crate::git::CommitAuditIdentity;
 
+/// Renders metadata verification status into a user-facing line.
 pub(crate) fn render_status_line(status: &StatusLine) -> String {
     match status {
         StatusLine::Ok => "OK".to_string(),
@@ -8,6 +11,7 @@ pub(crate) fn render_status_line(status: &StatusLine) -> String {
     }
 }
 
+/// Renders dry-run applicability status into a user-facing line.
 pub(crate) fn render_dry_run_status(status: &DryRunLine) -> String {
     match status {
         DryRunLine::Ok(result) => {
@@ -21,19 +25,23 @@ pub(crate) fn render_dry_run_status(status: &DryRunLine) -> String {
     }
 }
 
+/// Flattens a potentially multi-line error into a single printable line.
 pub(crate) fn single_line_error(err: &anyhow::Error) -> String {
     err.to_string().replace('\n', " ")
 }
 
+/// Returns `true` when an error indicates diff text is unavailable for non-text files.
 pub(crate) fn is_non_text_patch_unavailable_error(err: &anyhow::Error) -> bool {
     err.to_string()
         .contains("textual diff unavailable for non-text path")
 }
 
+/// Formats commit identity as `Name <email>`.
 pub(crate) fn format_identity(identity: &CommitAuditIdentity) -> String {
     format!("{} <{}>", identity.name, identity.email)
 }
 
+/// Formats a git timestamp as `seconds (UTC±hh:mm)`.
 pub(crate) fn format_git_timestamp(seconds: i64, offset_minutes: i32) -> String {
     let sign = if offset_minutes < 0 { '-' } else { '+' };
     let absolute = offset_minutes.abs();

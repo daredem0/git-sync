@@ -1,8 +1,14 @@
+//! Git-layer manifest functionality.
+
 use crate::git::ChangedFile;
 use crate::git::util::{oid_to_str, status_code};
 use anyhow::Result;
 use serde::Serialize;
 
+/// Renders changed files as a tab-separated manifest table.
+///
+/// The first row is a header and each subsequent row uses stable column order:
+/// `STATUS`, `PATH`, `OLD_PATH`, `OLD_OID`, `NEW_OID`.
 pub fn render_manifest(changes: &[ChangedFile]) -> String {
     let mut out = String::from("STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n");
     for change in changes {
@@ -24,6 +30,11 @@ pub fn render_manifest(changes: &[ChangedFile]) -> String {
     out
 }
 
+/// Renders changed files as pretty-printed JSON.
+///
+/// # Errors
+///
+/// Returns an error if serialization fails.
 pub fn render_manifest_json(changes: &[ChangedFile]) -> Result<String> {
     let entries: Vec<JsonChangedFile> = changes
         .iter()

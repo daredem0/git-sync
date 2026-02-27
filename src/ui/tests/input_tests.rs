@@ -1,3 +1,5 @@
+//! Unit tests for input tests.
+
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
 use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};

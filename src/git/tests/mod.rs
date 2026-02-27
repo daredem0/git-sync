@@ -1,3 +1,5 @@
+//! Unit tests for mod.
+
 use super::*;
 
 mod support;

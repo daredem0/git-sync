@@ -1,3 +1,5 @@
+//! Git-layer create functionality.
+
 use super::inspect::inspect_bundle;
 use crate::git::archive::{
     bundle_archive_path, caudit_sidecar_path, remove_file_if_exists, write_zip_archive,
@@ -17,6 +19,15 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+/// Creates a bundle package for a linear commit range using default options.
+///
+/// Equivalent to calling [`create_bundle_with_options`] with
+/// [`CreateBundleOptions::default`].
+///
+/// # Errors
+///
+/// Returns an error when revision resolution, bundle generation, metadata
+/// generation, or archive packaging fails.
 pub fn create_bundle(
     repo_path: &Path,
     from_rev: &str,
@@ -32,6 +43,18 @@ pub fn create_bundle(
     )
 }
 
+/// Creates a bundle package and metadata sidecars for a linear commit range.
+///
+/// The returned package includes:
+/// - raw `.bundle`
+/// - metadata `.caudit.json`
+/// - optional patch sidecar `.caudit.patch`
+/// - packaged `.zip` containing generated artifacts
+///
+/// # Errors
+///
+/// Returns an error when the range is non-linear, git object export fails, or
+/// sidecar/archive creation fails.
 pub fn create_bundle_with_options(
     repo_path: &Path,
     from_rev: &str,
@@ -151,6 +174,13 @@ pub fn create_bundle_with_options(
     })
 }
 
+/// Removes loose artifacts once the packaged archive has been produced.
+///
+/// This is a cleanup helper for workflows that only distribute the `.zip`.
+///
+/// # Errors
+///
+/// Returns an error on filesystem deletion failures other than missing files.
 pub fn remove_unarchived_bundle_artifacts(result: &CreateBundleResult) -> Result<()> {
     remove_file_if_exists(&result.bundle_path)?;
     remove_file_if_exists(&result.audit_path)?;

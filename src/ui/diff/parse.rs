@@ -1,5 +1,11 @@
+//! TUI-layer parse functionality.
+
 use crate::ui::types::PatchLineKind;
 
+/// Computes displayed old/new line number columns for a rendered patch line.
+///
+/// The mutable counters are updated according to diff semantics
+/// (added/deleted/context).
 pub(crate) fn line_number_columns(
     kind: PatchLineKind,
     old_line: &mut Option<usize>,
@@ -43,6 +49,7 @@ pub(crate) fn line_number_columns(
     }
 }
 
+/// Classifies a raw unified-diff line into semantic render groups.
 pub(crate) fn classify_patch_line(line: &str) -> PatchLineKind {
     if line.starts_with("diff --git ")
         || line.starts_with("index ")
@@ -76,6 +83,7 @@ pub(crate) fn classify_patch_line(line: &str) -> PatchLineKind {
     PatchLineKind::Other
 }
 
+/// Parses a unified-diff hunk header and returns `(old_start, new_start)`.
 pub(crate) fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     let rest = line.strip_prefix("@@ -")?;
     let (old_part, rest) = rest.split_once(" +")?;

@@ -1,3 +1,5 @@
+//! Unit tests for inspect range tests.
+
 use super::support::*;
 use super::*;
 

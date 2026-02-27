@@ -1,9 +1,12 @@
+//! TUI-layer overview tables functionality.
+
 use crate::git::{self, BundleVersion};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 
+/// Renders the table of bundle heads that would be imported.
 pub(super) fn render_heads_table(
     frame: &mut Frame<'_>,
     result: &git::ReceiveBundleResult,
@@ -35,6 +38,7 @@ pub(super) fn render_heads_table(
     frame.render_widget(heads_table, area);
 }
 
+/// Renders per-file added/deleted line counts from dry-run analysis.
 pub(super) fn render_changes_table(
     frame: &mut Frame<'_>,
     result: &git::ReceiveBundleResult,

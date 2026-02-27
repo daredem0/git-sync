@@ -1,9 +1,16 @@
+//! Git-layer util functionality.
+
 use crate::git::{BundleVersion, ChangeStatus};
 use anyhow::{Result, anyhow, bail};
 use std::fs;
 use std::mem::MaybeUninit;
 use std::path::Path;
 
+/// Returns the current UNIX timestamp in seconds.
+///
+/// # Errors
+///
+/// Returns an error when the system clock is before the UNIX epoch.
 pub(crate) fn current_unix_timestamp_secs() -> Result<u64> {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -11,6 +18,9 @@ pub(crate) fn current_unix_timestamp_secs() -> Result<u64> {
     Ok(duration.as_secs())
 }
 
+/// Returns the current username from common environment variables.
+///
+/// Falls back to `"unknown"` when no non-empty value is available.
 pub(crate) fn current_username() -> String {
     for key in ["USER", "USERNAME"] {
         if let Ok(value) = std::env::var(key) {
@@ -23,6 +33,9 @@ pub(crate) fn current_username() -> String {
     "unknown".to_string()
 }
 
+/// Returns the current hostname from environment or `/etc/hostname`.
+///
+/// Falls back to `"unknown-host"` when no non-empty value is available.
 pub(crate) fn current_hostname() -> String {
     if let Ok(value) = std::env::var("HOSTNAME") {
         let value = value.trim();
@@ -41,6 +54,11 @@ pub(crate) fn current_hostname() -> String {
     "unknown-host".to_string()
 }
 
+/// Returns the SHA-256 digest of `bytes` as a lowercase hex string.
+///
+/// # Errors
+///
+/// Returns an error when OpenSSL digest operations fail.
 pub(crate) fn sha256_hex(bytes: &[u8]) -> Result<String> {
     let mut ctx = MaybeUninit::<openssl_sys::SHA256_CTX>::uninit();
 
@@ -70,6 +88,11 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> Result<String> {
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Converts an optional git path into a lossy UTF-8 string.
+///
+/// # Errors
+///
+/// Returns an error when git omitted the path for a diff entry.
 pub(crate) fn path_to_string(path: Option<&Path>) -> Result<String> {
     match path {
         Some(path) => Ok(path.to_string_lossy().into_owned()),
@@ -77,14 +100,17 @@ pub(crate) fn path_to_string(path: Option<&Path>) -> Result<String> {
     }
 }
 
+/// Converts a possibly-zero OID into `None` for absent values.
 pub(crate) fn oid_or_none(oid: git2::Oid) -> Option<git2::Oid> {
     if oid.is_zero() { None } else { Some(oid) }
 }
 
+/// Formats an optional OID, using `-` for missing values.
 pub(crate) fn oid_to_str(oid: Option<git2::Oid>) -> String {
     oid.map_or_else(|| "-".to_string(), |oid| oid.to_string())
 }
 
+/// Encodes a change status as the manifest short code.
 pub(crate) fn status_code(status: ChangeStatus) -> &'static str {
     match status {
         ChangeStatus::Added => "A",
@@ -96,6 +122,11 @@ pub(crate) fn status_code(status: ChangeStatus) -> &'static str {
     }
 }
 
+/// Parses manifest/metadata status codes (`A`, `M`, `D`, `R`, `C`, `T`).
+///
+/// # Errors
+///
+/// Returns an error for unsupported status codes.
 pub(crate) fn parse_status_code(status: &str) -> Result<ChangeStatus> {
     match status {
         "A" => Ok(ChangeStatus::Added),
@@ -108,6 +139,11 @@ pub(crate) fn parse_status_code(status: &str) -> Result<ChangeStatus> {
     }
 }
 
+/// Parses an optional hex object ID string into `git2::Oid`.
+///
+/// # Errors
+///
+/// Returns an error when the provided OID string is malformed.
 pub(crate) fn parse_optional_oid(value: Option<&str>) -> Result<Option<git2::Oid>> {
     value
         .map(git2::Oid::from_str)
@@ -115,6 +151,7 @@ pub(crate) fn parse_optional_oid(value: Option<&str>) -> Result<Option<git2::Oid
         .map_err(Into::into)
 }
 
+/// Encodes a bundle header version for metadata fields.
 pub(crate) fn bundle_version_code(version: BundleVersion) -> &'static str {
     match version {
         BundleVersion::V2 => "v2",

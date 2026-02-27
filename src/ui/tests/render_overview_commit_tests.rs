@@ -1,3 +1,5 @@
+//! Unit tests for render overview commit tests.
+
 // Focus: rendering behavior for overview and commit pages, including unavailable and out-of-range commit states.
 
 use super::super::render::{render_commit_page, render_overview_page};

@@ -1,3 +1,5 @@
+//! TUI-layer style functionality.
+
 use crate::ui::types::PatchLineKind;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
@@ -5,6 +7,10 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::FontStyle;
 use syntect::parsing::SyntaxSet;
 
+/// Renders a single patch line with semantic and syntax highlight styling.
+///
+/// Added/deleted/context lines preserve their leading diff marker as a
+/// separately styled span.
 pub(super) fn render_patch_content_line(
     line: &str,
     kind: PatchLineKind,
@@ -59,6 +65,7 @@ pub(super) fn render_patch_content_line(
     }
 }
 
+/// Returns base semantic styling for the diff line body.
 fn semantic_content_style(kind: PatchLineKind) -> Style {
     match kind {
         PatchLineKind::Added => Style::default().bg(Color::Rgb(18, 46, 20)),
@@ -73,6 +80,7 @@ fn semantic_content_style(kind: PatchLineKind) -> Style {
     }
 }
 
+/// Returns semantic styling for diff prefixes (`+`, `-`, or context marker).
 fn semantic_prefix_style(kind: PatchLineKind) -> Style {
     match kind {
         PatchLineKind::Added => Style::default()
@@ -88,6 +96,7 @@ fn semantic_prefix_style(kind: PatchLineKind) -> Style {
     }
 }
 
+/// Converts a syntect style span into an equivalent ratatui style.
 fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> Style {
     let mut result = Style::default().fg(Color::Rgb(
         style.foreground.r,

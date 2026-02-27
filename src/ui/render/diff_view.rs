@@ -1,3 +1,5 @@
+//! TUI-layer diff view functionality.
+
 use super::render_footer_text;
 use crate::ui::types::{AppState, DiffViewState};
 use ratatui::Frame;
@@ -5,6 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+/// Renders the dedicated diff page for the currently selected commit file.
 pub(crate) fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
     let Some(diff_view) = &state.diff_view else {
         return;
@@ -40,6 +43,9 @@ pub(crate) fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
     frame.render_widget(footer, chunks[2]);
 }
 
+/// Renders the scrollable patch body widget for the current diff view.
+///
+/// Scroll offsets are converted to `u16` for ratatui paragraph scrolling.
 fn render_patch_block(frame: &mut Frame<'_>, diff_view: &DiffViewState, area: Rect) {
     let diff_text = ratatui::text::Text::from(diff_view.lines.clone());
     let diff_paragraph = Paragraph::new(diff_text)

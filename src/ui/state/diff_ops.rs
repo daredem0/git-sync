@@ -1,9 +1,14 @@
+//! TUI-layer diff ops functionality.
+
 use crate::git;
 use crate::ui::diff::render_patch_with_syntax;
 use crate::ui::format::{is_non_text_patch_unavailable_error, single_line_error};
 use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DiffViewState};
 
 impl AppState {
+    /// Opens a rendered patch view for the currently selected commit file.
+    ///
+    /// Non-text files keep page mode open and avoid showing a hard error.
     pub(crate) fn open_selected_diff(&mut self, model: &AuditModel) {
         let Some((commit_index, file_count)) = self.current_commit_context(model) else {
             return;
@@ -66,6 +71,7 @@ impl AppState {
         }
     }
 
+    /// Scrolls the open diff view down by `step` lines.
     pub(crate) fn scroll_diff_down(&mut self, step: usize) {
         if let Some(view) = self.diff_view.as_mut() {
             let last = view.lines.len().saturating_sub(1);
@@ -73,12 +79,14 @@ impl AppState {
         }
     }
 
+    /// Scrolls the open diff view up by `step` lines.
     pub(crate) fn scroll_diff_up(&mut self, step: usize) {
         if let Some(view) = self.diff_view.as_mut() {
             view.scroll_y = view.scroll_y.saturating_sub(step);
         }
     }
 
+    /// Scrolls the open diff view right by `step` columns.
     pub(crate) fn scroll_diff_right(&mut self, step: usize) {
         if let Some(view) = self.diff_view.as_mut() {
             let max = view.max_line_width.saturating_sub(1);
@@ -86,12 +94,14 @@ impl AppState {
         }
     }
 
+    /// Scrolls the open diff view left by `step` columns.
     pub(crate) fn scroll_diff_left(&mut self, step: usize) {
         if let Some(view) = self.diff_view.as_mut() {
             view.scroll_x = view.scroll_x.saturating_sub(step);
         }
     }
 
+    /// Resets horizontal and vertical diff scroll offsets to the origin.
     pub(crate) fn reset_diff_scroll(&mut self) {
         if let Some(view) = self.diff_view.as_mut() {
             view.scroll_x = 0;

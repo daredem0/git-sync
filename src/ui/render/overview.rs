@@ -1,3 +1,5 @@
+//! TUI-layer overview functionality.
+
 use super::overview_tables::{render_changes_table, render_heads_table};
 use super::render_footer_text;
 use crate::ui::format::{render_dry_run_status, render_status_line};
@@ -7,6 +9,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+/// Renders the overview page with validation, heads, and dry-run summaries.
 pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     let overview = &model.overview;
     let page_label = format!("page {}/{}", state.page_index + 1, state.total_pages(model));

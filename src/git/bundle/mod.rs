@@ -1,3 +1,5 @@
+//! Bundle-oriented operations: create, inspect, receive, and commit patch views.
+
 mod create;
 mod inspect;
 mod receive;

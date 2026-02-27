@@ -1,3 +1,5 @@
+//! Unit tests for diff tests.
+
 // Focus: patch parsing/classification and syntax-highlighted diff rendering behavior.
 
 use super::super::diff::{classify_patch_line, parse_hunk_header, render_patch_with_syntax};

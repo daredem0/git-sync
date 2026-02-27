@@ -1,3 +1,5 @@
+//! Unit tests for state diff scroll tests.
+
 // Focus: AppState diff scrolling bounds and line-number bookkeeping in rendered patch views.
 
 use super::super::types::{DiffViewState, PatchLineKind};

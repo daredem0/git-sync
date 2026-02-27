@@ -1,6 +1,9 @@
+//! Unit tests for helpers.
+
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Creates a unique temporary directory for UI test fixtures.
 pub(crate) fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "git-sync-audit-ui-{}-{}-{}",
@@ -13,6 +16,7 @@ pub(crate) fn unique_temp_dir(prefix: &str) -> PathBuf {
     ))
 }
 
+/// Writes file paths and commits them as a single changeset.
 pub(crate) fn commit_from_files(
     repo: &git2::Repository,
     message: &str,
@@ -41,6 +45,7 @@ pub(crate) fn commit_from_files(
         .expect("must create commit")
 }
 
+/// Writes raw byte entries and commits them as a single changeset.
 pub(crate) fn commit_from_entries(
     repo: &git2::Repository,
     message: &str,

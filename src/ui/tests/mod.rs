@@ -1,3 +1,5 @@
+//! Unit tests for mod.
+
 mod diff_tests;
 mod format_tests;
 mod input_tests;

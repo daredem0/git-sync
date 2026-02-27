@@ -1,9 +1,20 @@
+//! Git-layer inspect functionality.
+
 use crate::git::{BundleHead, BundleInspection, BundleVersion};
 use anyhow::{Result, anyhow, bail};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+/// Parses a git bundle header and extracts inspection metadata.
+///
+/// This reads only the textual header area (version line, prerequisites, and
+/// heads), not the PACK payload.
+///
+/// # Errors
+///
+/// Returns an error when the path is missing/invalid or the header format is
+/// malformed.
 pub fn inspect_bundle(bundle_path: &Path) -> Result<BundleInspection> {
     if !bundle_path.exists() {
         bail!("bundle path does not exist: {}", bundle_path.display());

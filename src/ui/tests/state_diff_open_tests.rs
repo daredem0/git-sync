@@ -1,3 +1,5 @@
+//! Unit tests for state diff open tests.
+
 // Focus: AppState diff-opening behavior for normal, out-of-context, and non-text commit file selections.
 
 use super::support::*;

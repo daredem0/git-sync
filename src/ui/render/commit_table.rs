@@ -1,3 +1,5 @@
+//! TUI-layer commit table functionality.
+
 use crate::git::CommitAuditEntry;
 use crate::ui::types::AppState;
 use ratatui::Frame;
@@ -5,6 +7,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
+/// Renders the per-commit file stats table with selection highlighting.
 pub(super) fn render_commit_files_table(
     frame: &mut Frame<'_>,
     entry: &CommitAuditEntry,

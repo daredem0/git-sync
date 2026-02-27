@@ -1,3 +1,5 @@
+//! Git-layer load functionality.
+
 use crate::git::archive::{caudit_sidecar_path, extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{ChangedFile, CreateBundleAuditMetadata};
 use crate::git::util::{parse_optional_oid, parse_status_code};
@@ -5,6 +7,12 @@ use anyhow::{Result, bail};
 use std::fs;
 use std::path::Path;
 
+/// Loads metadata from bundle input and converts it into manifest-style rows.
+///
+/// # Errors
+///
+/// Returns an error when metadata cannot be loaded or contains invalid status
+/// or object ID fields.
 pub fn collect_changed_files_from_bundle_input(
     bundle_input_path: &Path,
 ) -> Result<Vec<ChangedFile>> {
@@ -24,6 +32,11 @@ pub fn collect_changed_files_from_bundle_input(
         .collect()
 }
 
+/// Loads bundle metadata from either a raw `.bundle` input or packaged `.zip`.
+///
+/// # Errors
+///
+/// Returns an error when archive extraction or metadata parsing fails.
 pub(crate) fn load_bundle_metadata_from_input(
     bundle_input_path: &Path,
 ) -> Result<CreateBundleAuditMetadata> {
@@ -37,6 +50,11 @@ pub(crate) fn load_bundle_metadata_from_input(
     load_bundle_metadata_from_path(&metadata_path)
 }
 
+/// Loads and deserializes a metadata sidecar from disk.
+///
+/// # Errors
+///
+/// Returns an error when the path is missing/invalid or JSON decoding fails.
 pub(crate) fn load_bundle_metadata_from_path(
     metadata_path: &Path,
 ) -> Result<CreateBundleAuditMetadata> {

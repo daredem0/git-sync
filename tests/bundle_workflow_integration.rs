@@ -1,3 +1,5 @@
+//! Integration tests for bundle workflow integration.
+
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
