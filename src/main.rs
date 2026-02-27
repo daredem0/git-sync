@@ -66,6 +66,33 @@ fn main() -> Result<()> {
             verify_metadata,
             format,
         }) => {
+            if format.is_none() {
+                if verify_metadata {
+                    anyhow::bail!(
+                        "interactive audit does not accept --verify-metadata; metadata is shown in the TUI overview"
+                    );
+                }
+                if from.is_some() || to.is_some() {
+                    anyhow::bail!(
+                        "interactive audit does not accept --from/--to; use --format for non-interactive repo-range audit"
+                    );
+                }
+                let repo_path =
+                    repo.ok_or_else(|| anyhow::anyhow!("interactive audit requires --repo"))?;
+                let bundle_path =
+                    bundle.ok_or_else(|| anyhow::anyhow!("interactive audit requires --bundle"))?;
+                let config = AppConfig {
+                    repo_path,
+                    bundle_path,
+                    base_ref: "sync/last".to_string(),
+                    tip_ref: None,
+                };
+                ui::run(&config)?;
+                return Ok(());
+            }
+
+            let format = format.expect("format should be present in non-interactive audit mode");
+
             if verify_metadata {
                 let repo_path =
                     repo.ok_or_else(|| anyhow::anyhow!("metadata verification requires --repo"))?;
@@ -137,10 +164,7 @@ fn main() -> Result<()> {
                 base_ref: base,
                 tip_ref: tip,
             };
-            git::open_context(&config)?;
             ui::run(&config)?;
-            println!("UI command scaffold is ready.");
-            println!("Implementation is intentionally pending.");
         }
         Some(Command::Receive {
             repo,
