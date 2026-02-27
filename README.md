@@ -210,6 +210,70 @@ CARGO_ABOUT_LOG_LEVEL=warn ./scripts/generate-third-party-licenses.sh
 Generated output:
 - [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)
 
+### Linux Packages (Debian + Arch)
+
+Prerequisites:
+
+```bash
+# for man page generation
+sudo pacman -S pandoc
+
+# for Debian package creation
+cargo install --locked cargo-deb
+
+# for Arch package creation (makepkg)
+sudo pacman -S base-devel
+```
+
+Generate man pages from documentation (`README.md` and `SDD_SAD.md` -> section 7 man pages):
+
+```bash
+./scripts/generate-manpages.sh
+```
+
+This writes:
+- `target/man/git-sync-audit.1.gz`
+- `target/man/git-sync-audit-readme.7.gz`
+- `target/man/git-sync-audit-architecture.7.gz`
+
+Build a Debian package (`.deb`):
+
+```bash
+cargo install --locked cargo-deb
+./scripts/build-deb.sh
+```
+
+Build an Arch package (`.pkg.tar.zst`):
+
+```bash
+./scripts/build-arch.sh
+```
+
+Install the generated Arch package:
+
+```bash
+sudo pacman -U target/arch/git-sync-audit-bin-*.pkg.tar.zst
+```
+
+Optional: install debug symbols package:
+
+```bash
+sudo pacman -U target/arch/git-sync-audit-bin-debug-*.pkg.tar.zst
+```
+
+Verify installed man pages:
+
+```bash
+man git-sync-audit
+man 7 git-sync-audit-readme
+man 7 git-sync-audit-architecture
+```
+
+Notes:
+- Arch packaging uses a prebuilt release binary through `packaging/arch/PKGBUILD`.
+- Debian packaging uses `[package.metadata.deb]` in `Cargo.toml`.
+- Both package paths are printed by the scripts (`target/debian` and `target/arch`).
+
 ### Generate Documentation
 
 Generate Rust API docs:

@@ -35,6 +35,12 @@ jobs:
             cargo build --locked
           fi
 
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.profile }}
+          path: target/${{ matrix.profile }}/git-sync-audit
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -82,6 +88,71 @@ jobs:
           name: coverage-lcov
           path: target/coverage/lcov.info
 
+  package-deb:
+    name: Package Debian (.deb)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc dpkg-dev
+
+      - name: Install cargo-deb
+        run: cargo install --locked cargo-deb
+
+      - name: Build Debian package
+        run: ./scripts/build-deb.sh
+
+      - name: Upload Debian package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-deb
+          path: target/debian/*.deb
+
+  package-arch:
+    name: Package Arch (.pkg.tar.zst)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install packaging prerequisites
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rustup pandoc
+
+      - name: Create non-root builder user
+        run: |
+          useradd -m builder || true
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
+
+      - name: Install Rust toolchain for builder
+        run: |
+          su builder -c "rustup toolchain install stable --profile minimal"
+          su builder -c "rustup default stable"
+
+      - name: Build Arch package
+        run: |
+          su builder -c "cd '${GITHUB_WORKSPACE}' && ./scripts/build-arch.sh"
+
+      - name: Upload Arch package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-arch
+          path: target/arch/*.pkg.tar.*
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
@@ -98,6 +169,30 @@ jobs:
 
       - name: Generate docs
         run: RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --locked --no-deps --bins
+
+      - name: Create root docs index for GitHub Pages
+        run: |
+          CRATE_DOC_DIR="$(grep -m1 '^name = ' Cargo.toml | sed -E 's/name = "([^"]+)"/\1/' | tr '-' '_')"
+          if [ ! -f "target/doc/${CRATE_DOC_DIR}/index.html" ]; then
+            echo "Expected crate index not found: target/doc/${CRATE_DOC_DIR}/index.html" >&2
+            exit 1
+          fi
+
+          cat > target/doc/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta http-equiv="refresh" content="0; url=./${CRATE_DOC_DIR}/index.html" />
+            <title>Redirecting to documentation…</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="./${CRATE_DOC_DIR}/index.html">crate documentation</a>.</p>
+          </body>
+          </html>
+          EOF
+
+          touch target/doc/.nojekyll
 
       - name: Upload docs artifact
         uses: actions/upload-pages-artifact@v3

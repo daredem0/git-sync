@@ -1,0 +1,33 @@
+pkgname=git-sync-audit-bin
+pkgver=${PKGVER:-0.1.0}
+pkgrel=${PKGREL:-1}
+pkgdesc="Air-gap Git sync and audit tool (prebuilt binary package)"
+arch=('x86_64')
+url="https://github.com/daredem0/git-sync"
+license=('Apache')
+depends=('glibc')
+provides=('git-sync-audit')
+conflicts=('git-sync-audit')
+source=(
+  "git-sync-audit"
+  "git-sync-audit.1.gz"
+  "git-sync-audit-readme.7.gz"
+  "git-sync-audit-architecture.7.gz"
+  "LICENSE"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+build() {
+  :
+}
+
+package() {
+  install -Dm755 "${srcdir}/git-sync-audit" "${pkgdir}/usr/bin/git-sync-audit"
+  install -Dm644 "${srcdir}/git-sync-audit.1.gz" \
+    "${pkgdir}/usr/share/man/man1/git-sync-audit.1.gz"
+  install -Dm644 "${srcdir}/git-sync-audit-readme.7.gz" \
+    "${pkgdir}/usr/share/man/man7/git-sync-audit-readme.7.gz"
+  install -Dm644 "${srcdir}/git-sync-audit-architecture.7.gz" \
+    "${pkgdir}/usr/share/man/man7/git-sync-audit-architecture.7.gz"
+  install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
