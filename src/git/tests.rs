@@ -1261,6 +1261,20 @@ fn create_bundle_writes_caudit_metadata_file_with_core_identity_fields() {
         serde_json::json!("v2"),
         "metadata should report the bundle format version"
     );
+    let generated_by_username = metadata["generated_by_username"]
+        .as_str()
+        .expect("metadata should include generated_by_username as a string");
+    assert!(
+        !generated_by_username.is_empty(),
+        "generated_by_username should not be empty"
+    );
+    let generated_by_hostname = metadata["generated_by_hostname"]
+        .as_str()
+        .expect("metadata should include generated_by_hostname as a string");
+    assert!(
+        !generated_by_hostname.is_empty(),
+        "generated_by_hostname should not be empty"
+    );
     let bundle_bytes = std::fs::read(&bundle_path).expect("must read generated bundle bytes");
     let expected_bundle_sha256 = sha256_hex(&bundle_bytes).expect("must hash bundle bytes");
     assert_eq!(
@@ -1274,6 +1288,62 @@ fn create_bundle_writes_caudit_metadata_file_with_core_identity_fields() {
     assert_eq!(
         bundle_sha256, expected_bundle_sha256,
         "metadata bundle_sha256 must match the actual bundle file content digest"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that create_bundle writes a .zip archive containing at least the bundle and metadata files.
+#[test]
+fn create_bundle_writes_archive_with_bundle_and_metadata_entries() {
+    let repo_dir = temp_repo_dir("create-bundle-archive");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let expected_archive_path = PathBuf::from(format!("{}.zip", bundle_path.display()));
+    assert_eq!(
+        result.archive_path, expected_archive_path,
+        "create_bundle should return a deterministic archive path next to the bundle"
+    );
+    assert!(
+        result.archive_path.exists(),
+        "create_bundle should write a .zip archive"
+    );
+
+    let archive_bytes =
+        std::fs::read(&result.archive_path).expect("must read generated archive bytes");
+    assert!(
+        archive_bytes.starts_with(b"PK\x03\x04"),
+        "archive should use ZIP local-header signature"
+    );
+    let archive_text = String::from_utf8_lossy(&archive_bytes);
+    assert!(
+        archive_text.contains("range.bundle"),
+        "archive should contain the bundle file entry name"
+    );
+    assert!(
+        archive_text.contains("range.bundle.caudit.json"),
+        "archive should contain the metadata file entry name"
+    );
+    assert!(
+        !archive_text.contains("range.bundle.caudit.patch"),
+        "default archive should not include patch sidecar entry when patches are disabled"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
@@ -1412,6 +1482,89 @@ fn create_bundle_with_patch_sidecar_writes_and_references_sidecar() {
         sha_from_metadata,
         sha256_hex(&patch_bytes).expect("must hash patch sidecar"),
         "metadata sidecar sha256 should match patch sidecar bytes"
+    );
+    assert!(
+        result.archive_path.exists(),
+        "archive path should be generated when patch sidecar is enabled"
+    );
+    let archive_bytes =
+        std::fs::read(&result.archive_path).expect("must read generated archive bytes");
+    let archive_text = String::from_utf8_lossy(&archive_bytes);
+    assert!(
+        archive_text.contains("range.bundle.caudit.patch"),
+        "archive should include patch sidecar entry when patch generation is enabled"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that bundle metadata validation succeeds when the generated metadata matches the source repository state.
+#[test]
+fn verify_bundle_metadata_against_repo_accepts_matching_metadata() {
+    let repo_dir = temp_repo_dir("verify-caudit-matching");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    verify_bundle_metadata_against_repo(&bundle_path, &repo_dir)
+        .expect("metadata verification should succeed when metadata and repo state match");
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that bundle metadata validation rejects tampered metadata content.
+#[test]
+fn verify_bundle_metadata_against_repo_rejects_tampered_metadata() {
+    let repo_dir = temp_repo_dir("verify-caudit-tampered");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    let metadata_bytes = std::fs::read(&caudit_path).expect("must read created caudit metadata");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+    metadata["range_to_oid"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    std::fs::write(
+        &caudit_path,
+        serde_json::to_vec_pretty(&metadata).expect("must serialize tampered metadata"),
+    )
+    .expect("must write tampered metadata");
+
+    let result = verify_bundle_metadata_against_repo(&bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "verification must reject metadata that does not match repository truth"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

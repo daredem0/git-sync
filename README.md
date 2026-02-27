@@ -39,6 +39,9 @@ cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundl
 ```
 
 This creates:
+- `sync.bundle.zip` only
+
+The archive contains:
 - `sync.bundle`
 - `sync.bundle.caudit.json`
 
@@ -49,7 +52,19 @@ cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundl
 ```
 
 This additionally creates:
-- `sync.bundle.caudit.patch`
+- no extra loose files; `sync.bundle.caudit.patch` is included inside the zip archive
 
 The metadata JSON schema is defined at:
 - `schemas/sync.bundle.caudit.schema.json`
+
+## Verify bundle metadata against a repo
+
+```bash
+cargo run -- audit --bundle sync.bundle --repo . --verify-metadata --format tsv
+```
+
+This validates:
+- bundle hash and size recorded in `.caudit.json`
+- bundle header fields (`version`, `prerequisites`, `heads`)
+- metadata `commit_chain` and `changed_files` against repository truth for `range_from_oid..range_to_oid`
+- optional patch sidecar hash/size when present

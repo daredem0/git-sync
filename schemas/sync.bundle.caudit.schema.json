@@ -8,6 +8,8 @@
     "schema_version",
     "tool_version",
     "generated_at_unix_secs",
+    "generated_by_username",
+    "generated_by_hostname",
     "bundle_path",
     "bundle_size_bytes",
     "bundle_sha256",
@@ -33,6 +35,14 @@
     "generated_at_unix_secs": {
       "type": "integer",
       "minimum": 0
+    },
+    "generated_by_username": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_by_hostname": {
+      "type": "string",
+      "minLength": 1
     },
     "bundle_path": {
       "type": "string",

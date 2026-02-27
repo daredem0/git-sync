@@ -1,11 +1,14 @@
 use crate::app::AppConfig;
 use anyhow::{Result, anyhow, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
+use zip::CompressionMethod;
+use zip::ZipWriter;
+use zip::write::FileOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundleVersion {
@@ -60,6 +63,7 @@ pub struct CreateBundleResult {
     pub bundle_path: PathBuf,
     pub audit_path: PathBuf,
     pub patch_audit_path: Option<PathBuf>,
+    pub archive_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,11 +72,13 @@ pub struct RepoAuditRange {
     pub tip_commit_id: git2::Oid,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditMetadata {
     schema_version: String,
     tool_version: String,
     generated_at_unix_secs: u64,
+    generated_by_username: String,
+    generated_by_hostname: String,
     bundle_path: String,
     bundle_size_bytes: u64,
     bundle_sha256: String,
@@ -87,13 +93,13 @@ struct CreateBundleAuditMetadata {
     patch_sidecar: Option<CreateBundleAuditPatchSidecar>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditHead {
     oid: String,
     reference: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditCommit {
     oid: String,
     tree_oid: String,
@@ -103,7 +109,7 @@ struct CreateBundleAuditCommit {
     committer: CreateBundleAuditSignature,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditSignature {
     name: String,
     email: String,
@@ -111,7 +117,7 @@ struct CreateBundleAuditSignature {
     offset_minutes: i32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditChangedFile {
     status: String,
     path: String,
@@ -123,7 +129,7 @@ struct CreateBundleAuditChangedFile {
     is_binary: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct CreateBundleAuditPatchSidecar {
     path: String,
     format: String,
@@ -306,6 +312,8 @@ pub fn create_bundle_with_options(
         schema_version: "1".to_string(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         generated_at_unix_secs: current_unix_timestamp_secs()?,
+        generated_by_username: current_username(),
+        generated_by_hostname: current_hostname(),
         bundle_path: bundle_path.display().to_string(),
         bundle_size_bytes,
         bundle_sha256,
@@ -333,17 +341,35 @@ pub fn create_bundle_with_options(
     let metadata_json = serde_json::to_string_pretty(&metadata)?;
     fs::write(&audit_path, metadata_json.as_bytes())?;
 
+    let patch_audit_path = metadata
+        .patch_sidecar
+        .as_ref()
+        .map(|sidecar| PathBuf::from(sidecar.path.clone()));
+    let archive_path = bundle_archive_path(bundle_path);
+    let mut archive_inputs = vec![bundle_path.to_path_buf(), audit_path.clone()];
+    if let Some(patch_path) = &patch_audit_path {
+        archive_inputs.push(patch_path.clone());
+    }
+    write_zip_archive(&archive_path, &archive_inputs)?;
+
     Ok(CreateBundleResult {
         from_commit_id,
         to_commit_id,
         tip_ref_name,
         bundle_path: bundle_path.to_path_buf(),
         audit_path,
-        patch_audit_path: metadata
-            .patch_sidecar
-            .as_ref()
-            .map(|sidecar| PathBuf::from(sidecar.path.clone())),
+        patch_audit_path,
+        archive_path,
     })
+}
+
+pub fn remove_unarchived_bundle_artifacts(result: &CreateBundleResult) -> Result<()> {
+    remove_file_if_exists(&result.bundle_path)?;
+    remove_file_if_exists(&result.audit_path)?;
+    if let Some(patch_path) = &result.patch_audit_path {
+        remove_file_if_exists(patch_path)?;
+    }
+    Ok(())
 }
 
 pub fn open_context(config: &AppConfig) -> Result<OpenContext> {
@@ -463,6 +489,165 @@ pub fn inspect_bundle(bundle_path: &Path) -> Result<BundleInspection> {
         prerequisites,
         heads,
     })
+}
+
+pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path) -> Result<()> {
+    if !bundle_path.exists() {
+        bail!("bundle path does not exist: {}", bundle_path.display());
+    }
+    if !bundle_path.is_file() {
+        bail!("bundle path is not a file: {}", bundle_path.display());
+    }
+
+    let metadata_path = caudit_sidecar_path(bundle_path);
+    if !metadata_path.exists() {
+        bail!(
+            "bundle audit metadata path does not exist: {}",
+            metadata_path.display()
+        );
+    }
+    if !metadata_path.is_file() {
+        bail!(
+            "bundle audit metadata path is not a file: {}",
+            metadata_path.display()
+        );
+    }
+
+    let metadata_bytes = fs::read(&metadata_path)?;
+    let metadata: CreateBundleAuditMetadata = serde_json::from_slice(&metadata_bytes)?;
+
+    if metadata.schema_version != "1" {
+        bail!(
+            "unsupported caudit schema version: '{}'",
+            metadata.schema_version
+        );
+    }
+
+    let bundle_bytes = fs::read(bundle_path)?;
+    let actual_bundle_size = bundle_bytes.len() as u64;
+    if metadata.bundle_size_bytes != actual_bundle_size {
+        bail!(
+            "bundle size mismatch: metadata={}, actual={}",
+            metadata.bundle_size_bytes,
+            actual_bundle_size
+        );
+    }
+
+    let actual_bundle_sha256 = sha256_hex(&bundle_bytes)?;
+    if metadata.bundle_sha256 != actual_bundle_sha256 {
+        bail!(
+            "bundle sha256 mismatch: metadata={}, actual={}",
+            metadata.bundle_sha256,
+            actual_bundle_sha256
+        );
+    }
+
+    let inspection = inspect_bundle(bundle_path)?;
+    let expected_bundle_header_version = bundle_version_code(inspection.version).to_string();
+    if metadata.bundle_header_version != expected_bundle_header_version {
+        bail!(
+            "bundle header version mismatch: metadata={}, actual={}",
+            metadata.bundle_header_version,
+            expected_bundle_header_version
+        );
+    }
+
+    let expected_prerequisites: Vec<String> = inspection
+        .prerequisites
+        .iter()
+        .map(|oid| oid.to_string())
+        .collect();
+    if metadata.prerequisites != expected_prerequisites {
+        bail!("bundle prerequisites mismatch between metadata and bundle header");
+    }
+
+    let expected_heads: Vec<CreateBundleAuditHead> = inspection
+        .heads
+        .iter()
+        .map(|head| CreateBundleAuditHead {
+            oid: head.oid.to_string(),
+            reference: head.reference.clone(),
+        })
+        .collect();
+    if metadata.heads != expected_heads {
+        bail!("bundle heads mismatch between metadata and bundle header");
+    }
+
+    if !metadata
+        .heads
+        .iter()
+        .any(|head| head.reference == metadata.tip_ref && head.oid == metadata.range_to_oid)
+    {
+        bail!("metadata tip_ref/range_to_oid must match one bundle head entry");
+    }
+
+    let repo = git2::Repository::open(repo_path)?;
+
+    let from_commit_id = git2::Oid::from_str(&metadata.range_from_oid)?;
+    let to_commit_id = git2::Oid::from_str(&metadata.range_to_oid)?;
+
+    repo.find_commit(from_commit_id)?;
+    repo.find_commit(to_commit_id)?;
+
+    if to_commit_id != from_commit_id && !repo.graph_descendant_of(to_commit_id, from_commit_id)? {
+        bail!(
+            "metadata range is not linear in repository: to={} from={}",
+            to_commit_id,
+            from_commit_id
+        );
+    }
+
+    let expected_commit_chain =
+        collect_commit_chain_for_metadata(&repo, from_commit_id, to_commit_id)?;
+    if metadata.commit_chain != expected_commit_chain {
+        bail!("metadata commit_chain does not match repository truth");
+    }
+
+    let expected_changed_files =
+        collect_changed_files_for_metadata(&repo, from_commit_id, to_commit_id)?;
+    if metadata.changed_files != expected_changed_files {
+        bail!("metadata changed_files does not match repository truth");
+    }
+
+    if let Some(patch_sidecar) = &metadata.patch_sidecar {
+        if patch_sidecar.format != "unified-diff" {
+            bail!(
+                "unsupported patch sidecar format: '{}'",
+                patch_sidecar.format
+            );
+        }
+        let patch_path = PathBuf::from(&patch_sidecar.path);
+        if !patch_path.exists() {
+            bail!(
+                "patch sidecar path does not exist: {}",
+                patch_path.display()
+            );
+        }
+        if !patch_path.is_file() {
+            bail!("patch sidecar path is not a file: {}", patch_path.display());
+        }
+
+        let patch_bytes = fs::read(&patch_path)?;
+        let actual_patch_size = patch_bytes.len() as u64;
+        if patch_sidecar.size_bytes != actual_patch_size {
+            bail!(
+                "patch sidecar size mismatch: metadata={}, actual={}",
+                patch_sidecar.size_bytes,
+                actual_patch_size
+            );
+        }
+
+        let actual_patch_sha256 = sha256_hex(&patch_bytes)?;
+        if patch_sidecar.sha256 != actual_patch_sha256 {
+            bail!(
+                "patch sidecar sha256 mismatch: metadata={}, actual={}",
+                patch_sidecar.sha256,
+                actual_patch_sha256
+            );
+        }
+    }
+
+    Ok(())
 }
 
 pub fn resolve_repo_audit_range(
@@ -696,11 +881,84 @@ fn patch_sidecar_path(bundle_path: &Path) -> PathBuf {
     PathBuf::from(sidecar)
 }
 
+fn bundle_archive_path(bundle_path: &Path) -> PathBuf {
+    let mut archive = bundle_path.as_os_str().to_os_string();
+    archive.push(".zip");
+    PathBuf::from(archive)
+}
+
+fn write_zip_archive(archive_path: &Path, files: &[PathBuf]) -> Result<()> {
+    let archive_file = File::create(archive_path)?;
+    let mut archive = ZipWriter::new(archive_file);
+    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    for file_path in files {
+        if !file_path.exists() {
+            bail!("archive input path does not exist: {}", file_path.display());
+        }
+        if !file_path.is_file() {
+            bail!("archive input path is not a file: {}", file_path.display());
+        }
+
+        let file_name = file_path
+            .file_name()
+            .ok_or_else(|| anyhow!("archive input has no file name: {}", file_path.display()))?;
+        let file_name = file_name.to_string_lossy();
+        archive.start_file(file_name, options)?;
+        let bytes = fs::read(file_path)?;
+        archive.write_all(&bytes)?;
+    }
+
+    archive.finish()?;
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(anyhow!(
+            "failed to remove temporary artifact '{}': {err}",
+            path.display()
+        )),
+    }
+}
+
 fn current_unix_timestamp_secs() -> Result<u64> {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| anyhow!("system clock is before unix epoch"))?;
     Ok(duration.as_secs())
+}
+
+fn current_username() -> String {
+    for key in ["USER", "USERNAME"] {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return value.to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+fn current_hostname() -> String {
+    if let Ok(value) = std::env::var("HOSTNAME") {
+        let value = value.trim();
+        if !value.is_empty() {
+            return value.to_string();
+        }
+    }
+
+    if let Ok(contents) = fs::read_to_string("/etc/hostname") {
+        let value = contents.trim();
+        if !value.is_empty() {
+            return value.to_string();
+        }
+    }
+
+    "unknown-host".to_string()
 }
 
 fn sha256_hex(bytes: &[u8]) -> Result<String> {

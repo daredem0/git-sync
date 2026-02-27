@@ -36,6 +36,8 @@ pub enum Command {
         from: Option<String>,
         #[arg(long)]
         to: Option<String>,
+        #[arg(long, default_value_t = false)]
+        verify_metadata: bool,
         #[arg(long, value_enum, default_value_t = OutputFormat::Tsv)]
         format: OutputFormat,
     },
