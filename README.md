@@ -116,7 +116,7 @@ Also available:
 - `k` / `Up`: move selection up (commit file list)
 - `g`: first page
 - `G`: last page
-- `Enter`: reserved for file diff view (planned)
+- `Enter`: open diff view for selected file on commit pages
 - `?`: toggle help
 - `q` / `Esc`: quit
 
@@ -157,7 +157,7 @@ Preview:
 │                                           ││                                                     │
 │                                           ││                                                     │
 └───────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
-h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open (planned) | ? help | q quit
+h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open diff | ? help | q quit
 ```
 
 ### Page 2..N: commit detail pages
@@ -172,29 +172,78 @@ For each commit in the audited range, this page shows:
 Preview:
 ```text
 ┌Commit Detail─────────────────────────────────────────────────────────────────────────────────────┐
-│Commit 3/9 | fef480558abd352fe2d1c16dd01e8c5587567217                                             │
-│feat(login): wire login settings                                                                  │
-│committer date: 1704067200 (UTC+00:00)                                                            │
-│committer: Audit Bot <audit@example.com>                                                          │
-│author date: 1704067200 (UTC+00:00)                                                               │
-│author: Audit Bot <audit@example.com>                                                             │
-│Changed files: 2                                                                                  │
+│Commit 4/13 | aa7406fc5178e46f570027914655aeb27b550a15                                            │
+│Change: Add zip-bundle audit flow and end-to-end fixture test                                     │
+│committer date: 1772219543 (UTC+01:00)                                                            │
+│committer: Florian Leuze <f.leuze@outlook.de>                                                     │
+│author date: 1772219543 (UTC+01:00)                                                               │
+│author: Florian Leuze <f.leuze@outlook.de>                                                        │
+│Changed files: 6                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌Changed Files (this commit)───────────────────────────────────────────────────────────────────────┐
 │PATH                                                                            +LINES    -LINES  │
-│config.ini                                                                      1         0       │
-│src/login.txt                                                                   1         0       │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
+│README.md                                                                       4         1       │
+│scripts/generate-merge-graph-repo.sh                                            158       0       │
+│src/git/mod.rs                                                                  198       64      │
+│src/git/tests.rs                                                                73        0       │
+│src/main.rs                                                                     9         10      │
+│tests/bundle_workflow_integration.rs                                            209       0       │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open (planned) | ? help | q quit
+h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open diff | ? help | q quit
+```
+
+### Diff view (opened from commit page with `Enter`)
+
+This view opens on top of the commit page for the currently selected file.
+
+It shows:
+- selected commit id and subject
+- selected file path
+- detected syntax name used for highlighting
+- first-parent patch with old/new line number columns
+- diff semantic coloring (`+` / `-` / hunk/header) plus syntax-aware line highlighting
+
+Diff view controls:
+- `j` / `Down`: scroll down
+- `k` / `Up`: scroll up
+- `h` / `Left`: horizontal scroll left
+- `l` / `Right`: horizontal scroll right
+- `PgUp` / `PgDn`: fast vertical scroll
+- `Home`: reset scroll position
+- `Esc`: close diff view and return to commit page
+
+Preview:
+
+```text
+┌Diff View─────────────────────────────────────────────────────────────────────────────────────────┐
+│Commit 4/? | aa7406fc5178e46f570027914655aeb27b550a15                                             │
+│Change: Add zip-bundle audit flow and end-to-end fixture test                                     │
+│file: src/git/mod.rs                                                                              │
+│syntax: Rust | selected file index: 3                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Patch (first-parent commit diff)──────────────────────────────────────────────────────────────────┐
+│   227        │ -            .collect(),                                                          │
+│   228        │ -    };                                                                           │
+│   229        │ -    Ok(serde_json::to_string_pretty(&serializable)?)                             │
+│   230        │ -}                                                                                │
+│   231        │ -                                                                                 │
+│   232    194 │  pub fn create_bundle(                                                            │
+│   233    195 │      repo_path: &Path,                                                            │
+│   234    196 │      from_rev: &str,                                                              │
+│              │ @@ -491,6 +453,25 @@ pub fn inspect_bundle(bundle_path: &Path) -> Result<BundleIns│
+│   491    453 │      })                                                                           │
+│   492    454 │  }                                                                                │
+│   493    455 │                                                                                   │
+│          456 │ +pub fn collect_changed_files_from_bundle_input(                                  │
+│          457 │ +    bundle_input_path: &Path,                                                    │
+│          458 │ +) -> Result<Vec<ChangedFile>> {                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back
 ```
 
 ## Constraints
@@ -211,7 +260,6 @@ h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open (planned
 
 ## Open TODO
 
-- Add interactive file-diff view on commit pages (`Enter` action).
 - Add package authenticity verification using detached `Ed25519` signatures.
 - Signing target: final transfer artifact (`sync.bundle.zip`) as raw bytes.
 - Planned output on create: `sync.bundle.zip.sig`.

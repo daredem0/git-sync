@@ -11,10 +11,19 @@ use crossterm::terminal::{
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use std::io;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{FontStyle, Theme, ThemeSet};
+use syntect::parsing::{SyntaxReference, SyntaxSet};
+
+const DIFF_SCROLL_VERTICAL_STEP: usize = 1;
+const DIFF_SCROLL_HORIZONTAL_STEP: usize = 2;
+const DIFF_SCROLL_PAGE_STEP: usize = 20;
 
 pub fn run(config: &AppConfig) -> Result<()> {
     let model = build_audit_model(config);
@@ -39,6 +48,9 @@ pub fn run(config: &AppConfig) -> Result<()> {
 struct AuditModel {
     overview: OverviewModel,
     commit_pages: CommitPagesModel,
+    repo_path: PathBuf,
+    bundle_path: PathBuf,
+    syntax_highlighter: SyntaxHighlighter,
 }
 
 #[derive(Debug)]
@@ -75,6 +87,68 @@ struct AppState {
     selected_file_indices: Vec<usize>,
     show_help: bool,
     action_message: Option<String>,
+    diff_view: Option<DiffViewState>,
+}
+
+#[derive(Debug, Clone)]
+struct DiffViewState {
+    commit_index: usize,
+    file_index: usize,
+    commit_id: git2::Oid,
+    commit_subject: String,
+    file_path: String,
+    syntax_name: String,
+    lines: Vec<Line<'static>>,
+    max_line_width: usize,
+    scroll_y: usize,
+    scroll_x: usize,
+}
+
+#[derive(Debug)]
+struct RenderedDiff {
+    syntax_name: String,
+    lines: Vec<Line<'static>>,
+    max_line_width: usize,
+}
+
+#[derive(Debug)]
+struct SyntaxHighlighter {
+    syntax_set: SyntaxSet,
+    theme: Theme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PatchLineKind {
+    Header,
+    Hunk,
+    Added,
+    Deleted,
+    Context,
+    Other,
+}
+
+impl SyntaxHighlighter {
+    fn load() -> Self {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let themes = ThemeSet::load_defaults();
+        let theme = themes
+            .themes
+            .get("base16-ocean.dark")
+            .or_else(|| themes.themes.get("InspiredGitHub"))
+            .or_else(|| themes.themes.values().next())
+            .cloned()
+            .expect("syntect should provide at least one built-in theme");
+
+        Self { syntax_set, theme }
+    }
+
+    fn resolve_syntax_for_path<'a>(&'a self, path: &str) -> (&'a SyntaxReference, String) {
+        let extension = Path::new(path).extension().and_then(|ext| ext.to_str());
+        let syntax = extension
+            .and_then(|ext| self.syntax_set.find_syntax_by_extension(ext))
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+        (syntax, syntax.name.to_string())
+    }
 }
 
 impl AppState {
@@ -88,6 +162,7 @@ impl AppState {
             selected_file_indices,
             show_help: false,
             action_message: None,
+            diff_view: None,
         }
     }
 
@@ -146,14 +221,6 @@ impl AppState {
         }
     }
 
-    // Placeholder for keymap action 4 (open selected file diff).
-    fn trigger_open_selected(&mut self, model: &AuditModel) {
-        if self.current_commit_context(model).is_some() {
-            self.action_message =
-                Some("Open file diff is planned and not implemented yet.".to_string());
-        }
-    }
-
     fn selected_file_index(&self, commit_index: usize) -> usize {
         self.selected_file_indices
             .get(commit_index)
@@ -174,6 +241,106 @@ impl AppState {
             CommitPagesModel::Failed(_) => None,
         }
     }
+
+    fn is_diff_open(&self) -> bool {
+        self.diff_view.is_some()
+    }
+
+    fn close_diff(&mut self) {
+        self.diff_view = None;
+        self.action_message = None;
+    }
+
+    fn open_selected_diff(&mut self, model: &AuditModel) {
+        let Some((commit_index, file_count)) = self.current_commit_context(model) else {
+            return;
+        };
+        if file_count == 0 {
+            self.action_message = Some("selected commit has no file content changes".to_string());
+            return;
+        }
+
+        let CommitPagesModel::Ok(entries) = &model.commit_pages else {
+            self.action_message = Some("commit pages are unavailable".to_string());
+            return;
+        };
+
+        let Some(commit_entry) = entries.get(commit_index) else {
+            self.action_message = Some("commit index is out of range".to_string());
+            return;
+        };
+
+        let file_index = self
+            .selected_file_index(commit_index)
+            .min(commit_entry.files.len() - 1);
+        let file_path = commit_entry.files[file_index].path.clone();
+
+        let patch = git::collect_commit_file_patch_for_bundle_input(
+            &model.bundle_path,
+            &model.repo_path,
+            commit_entry.commit_id,
+            &file_path,
+        );
+
+        match patch {
+            Ok(patch_text) => {
+                let rendered =
+                    render_patch_with_syntax(&file_path, &patch_text, &model.syntax_highlighter);
+                self.diff_view = Some(DiffViewState {
+                    commit_index,
+                    file_index,
+                    commit_id: commit_entry.commit_id,
+                    commit_subject: commit_entry.subject.clone(),
+                    file_path,
+                    syntax_name: rendered.syntax_name,
+                    lines: rendered.lines,
+                    max_line_width: rendered.max_line_width,
+                    scroll_y: 0,
+                    scroll_x: 0,
+                });
+                self.action_message = None;
+            }
+            Err(err) => {
+                self.action_message = Some(format!(
+                    "failed to open patch view: {}",
+                    single_line_error(&err)
+                ));
+            }
+        }
+    }
+
+    fn scroll_diff_down(&mut self, step: usize) {
+        if let Some(view) = self.diff_view.as_mut() {
+            let last = view.lines.len().saturating_sub(1);
+            view.scroll_y = std::cmp::min(view.scroll_y.saturating_add(step), last);
+        }
+    }
+
+    fn scroll_diff_up(&mut self, step: usize) {
+        if let Some(view) = self.diff_view.as_mut() {
+            view.scroll_y = view.scroll_y.saturating_sub(step);
+        }
+    }
+
+    fn scroll_diff_right(&mut self, step: usize) {
+        if let Some(view) = self.diff_view.as_mut() {
+            let max = view.max_line_width.saturating_sub(1);
+            view.scroll_x = std::cmp::min(view.scroll_x.saturating_add(step), max);
+        }
+    }
+
+    fn scroll_diff_left(&mut self, step: usize) {
+        if let Some(view) = self.diff_view.as_mut() {
+            view.scroll_x = view.scroll_x.saturating_sub(step);
+        }
+    }
+
+    fn reset_diff_scroll(&mut self) {
+        if let Some(view) = self.diff_view.as_mut() {
+            view.scroll_x = 0;
+            view.scroll_y = 0;
+        }
+    }
 }
 
 fn build_audit_model(config: &AppConfig) -> AuditModel {
@@ -189,6 +356,9 @@ fn build_audit_model(config: &AppConfig) -> AuditModel {
     AuditModel {
         overview,
         commit_pages,
+        repo_path: config.repo_path.clone(),
+        bundle_path: config.bundle_path.clone(),
+        syntax_highlighter: SyntaxHighlighter::load(),
     }
 }
 
@@ -240,22 +410,29 @@ fn run_loop(
     loop {
         terminal.draw(|frame| render_page(frame, model, state))?;
 
-        if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        if event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Char('q') => break,
+                KeyCode::Esc => {
+                    if state.is_diff_open() {
+                        state.close_diff();
+                    } else {
+                        break;
+                    }
                 }
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => break,
-                    KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
-                    KeyCode::Left | KeyCode::Char('h') => state.previous_page(),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(model),
-                    KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(model),
-                    KeyCode::Char('g') => state.first_page(),
-                    KeyCode::Char('G') => state.last_page(model),
-                    KeyCode::Char('?') => state.show_help = !state.show_help,
-                    KeyCode::Enter => state.trigger_open_selected(model),
-                    _ => {}
+                KeyCode::Char('?') => state.show_help = !state.show_help,
+                _ => {
+                    if state.is_diff_open() {
+                        handle_diff_keys(state, key.code);
+                    } else {
+                        handle_page_keys(state, model, key.code);
+                    }
                 }
             }
         }
@@ -264,16 +441,89 @@ fn run_loop(
     Ok(())
 }
 
+fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
+    match code {
+        KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
+        KeyCode::Left | KeyCode::Char('h') => state.previous_page(),
+        KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(model),
+        KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(model),
+        KeyCode::Char('g') => state.first_page(),
+        KeyCode::Char('G') => state.last_page(model),
+        KeyCode::Enter => state.open_selected_diff(model),
+        _ => {}
+    }
+}
+
+fn handle_diff_keys(state: &mut AppState, code: KeyCode) {
+    match code {
+        KeyCode::Down | KeyCode::Char('j') => state.scroll_diff_down(DIFF_SCROLL_VERTICAL_STEP),
+        KeyCode::Up | KeyCode::Char('k') => state.scroll_diff_up(DIFF_SCROLL_VERTICAL_STEP),
+        KeyCode::Right | KeyCode::Char('l') => state.scroll_diff_right(DIFF_SCROLL_HORIZONTAL_STEP),
+        KeyCode::Left | KeyCode::Char('h') => state.scroll_diff_left(DIFF_SCROLL_HORIZONTAL_STEP),
+        KeyCode::PageDown => state.scroll_diff_down(DIFF_SCROLL_PAGE_STEP),
+        KeyCode::PageUp => state.scroll_diff_up(DIFF_SCROLL_PAGE_STEP),
+        KeyCode::Home => state.reset_diff_scroll(),
+        _ => {}
+    }
+}
+
 fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
-    if state.page_index == 0 {
+    if state.is_diff_open() {
+        render_diff_view(frame, state);
+    } else if state.page_index == 0 {
         render_overview_page(frame, model, state);
     } else {
         render_commit_page(frame, model, state);
     }
 
     if state.show_help {
-        render_help_overlay(frame);
+        render_help_overlay(frame, state.is_diff_open());
     }
+}
+
+fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
+    let Some(diff_view) = &state.diff_view else {
+        return;
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Min(10),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+
+    let header = Paragraph::new(format!(
+        "Commit {}/? | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}",
+        diff_view.commit_index + 1,
+        diff_view.commit_id,
+        diff_view.commit_subject,
+        diff_view.file_path,
+        diff_view.syntax_name,
+        diff_view.file_index + 1
+    ))
+    .block(Block::default().borders(Borders::ALL).title("Diff View"))
+    .wrap(Wrap { trim: false });
+    frame.render_widget(header, chunks[0]);
+
+    let diff_text = Text::from(diff_view.lines.clone());
+    let diff_paragraph = Paragraph::new(diff_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Patch (first-parent commit diff)"),
+        )
+        .scroll((
+            u16::try_from(diff_view.scroll_y).unwrap_or(u16::MAX),
+            u16::try_from(diff_view.scroll_x).unwrap_or(u16::MAX),
+        ));
+    frame.render_widget(diff_paragraph, chunks[1]);
+
+    let footer = Paragraph::new(render_footer_text(state))
+        .style(Style::default().add_modifier(Modifier::ITALIC));
+    frame.render_widget(footer, chunks[2]);
 }
 
 fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
@@ -570,31 +820,291 @@ fn render_commit_files_table(
     frame.render_stateful_widget(files_table, area, &mut table_state);
 }
 
+fn render_patch_with_syntax(
+    path: &str,
+    patch: &str,
+    highlighter: &SyntaxHighlighter,
+) -> RenderedDiff {
+    let (syntax, syntax_name) = highlighter.resolve_syntax_for_path(path);
+    let mut syntax_state = HighlightLines::new(syntax, &highlighter.theme);
+
+    let mut old_line: Option<usize> = None;
+    let mut new_line: Option<usize> = None;
+    let mut lines = Vec::new();
+    let mut max_line_width = 0usize;
+
+    for raw_line in patch.lines() {
+        if let Some((old_start, new_start)) = parse_hunk_header(raw_line) {
+            old_line = Some(old_start);
+            new_line = Some(new_start);
+        }
+
+        let kind = classify_patch_line(raw_line);
+        let (old_display, new_display) = line_number_columns(kind, &mut old_line, &mut new_line);
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            format!("{:>6} {:>6} │ ", old_display, new_display),
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        spans.extend(render_patch_content_line(
+            raw_line,
+            kind,
+            &mut syntax_state,
+            &highlighter.syntax_set,
+        ));
+
+        let visual_width = raw_line.chars().count() + 18;
+        max_line_width = std::cmp::max(max_line_width, visual_width);
+        lines.push(Line::from(spans));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "(patch contains no renderable text lines)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    RenderedDiff {
+        syntax_name,
+        lines,
+        max_line_width,
+    }
+}
+
+fn line_number_columns(
+    kind: PatchLineKind,
+    old_line: &mut Option<usize>,
+    new_line: &mut Option<usize>,
+) -> (String, String) {
+    match kind {
+        PatchLineKind::Added => {
+            let display = new_line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "".to_string());
+            if let Some(value) = new_line.as_mut() {
+                *value += 1;
+            }
+            ("".to_string(), display)
+        }
+        PatchLineKind::Deleted => {
+            let display = old_line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "".to_string());
+            if let Some(value) = old_line.as_mut() {
+                *value += 1;
+            }
+            (display, "".to_string())
+        }
+        PatchLineKind::Context => {
+            let old_display = old_line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "".to_string());
+            let new_display = new_line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "".to_string());
+            if let Some(value) = old_line.as_mut() {
+                *value += 1;
+            }
+            if let Some(value) = new_line.as_mut() {
+                *value += 1;
+            }
+            (old_display, new_display)
+        }
+        _ => ("".to_string(), "".to_string()),
+    }
+}
+
+fn render_patch_content_line(
+    line: &str,
+    kind: PatchLineKind,
+    syntax_state: &mut HighlightLines<'_>,
+    syntax_set: &SyntaxSet,
+) -> Vec<Span<'static>> {
+    let semantic_style = semantic_content_style(kind);
+
+    match kind {
+        PatchLineKind::Header => vec![Span::styled(line.to_string(), semantic_style)],
+        PatchLineKind::Hunk => vec![Span::styled(line.to_string(), semantic_style)],
+        PatchLineKind::Other => vec![Span::styled(line.to_string(), semantic_style)],
+        PatchLineKind::Added | PatchLineKind::Deleted | PatchLineKind::Context => {
+            let prefix_len = line.chars().next().map(char::len_utf8).unwrap_or(0);
+            let (prefix, content) = line.split_at(prefix_len);
+            let mut spans = vec![Span::styled(
+                prefix.to_string(),
+                semantic_prefix_style(kind),
+            )];
+
+            let mut highlight_input = String::with_capacity(content.len() + 1);
+            highlight_input.push_str(content);
+            highlight_input.push('\n');
+
+            let regions = syntax_state.highlight_line(&highlight_input, syntax_set);
+            match regions {
+                Ok(regions) if !regions.is_empty() => {
+                    let last = regions.len() - 1;
+                    for (index, (style, segment)) in regions.into_iter().enumerate() {
+                        let text = if index == last {
+                            segment.strip_suffix('\n').unwrap_or(segment)
+                        } else {
+                            segment
+                        };
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let span_style = syntect_style_to_ratatui(style).patch(semantic_style);
+                        spans.push(Span::styled(text.to_string(), span_style));
+                    }
+                }
+                _ => {
+                    spans.push(Span::styled(content.to_string(), semantic_style));
+                }
+            }
+
+            if spans.len() == 1 {
+                spans.push(Span::styled(String::new(), semantic_style));
+            }
+            spans
+        }
+    }
+}
+
+fn classify_patch_line(line: &str) -> PatchLineKind {
+    if line.starts_with("diff --git ")
+        || line.starts_with("index ")
+        || line.starts_with("--- ")
+        || line.starts_with("+++ ")
+        || line.starts_with("new file mode ")
+        || line.starts_with("deleted file mode ")
+        || line.starts_with("similarity index ")
+        || line.starts_with("rename from ")
+        || line.starts_with("rename to ")
+    {
+        return PatchLineKind::Header;
+    }
+
+    if line.starts_with("@@") {
+        return PatchLineKind::Hunk;
+    }
+
+    if line.starts_with('+') && !line.starts_with("+++") {
+        return PatchLineKind::Added;
+    }
+
+    if line.starts_with('-') && !line.starts_with("---") {
+        return PatchLineKind::Deleted;
+    }
+
+    if line.starts_with(' ') {
+        return PatchLineKind::Context;
+    }
+
+    PatchLineKind::Other
+}
+
+fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (old_part, rest) = rest.split_once(" +")?;
+    let (new_part, _) = rest.split_once(" @@")?;
+
+    let old_start = old_part.split(',').next()?.parse::<usize>().ok()?;
+    let new_start = new_part.split(',').next()?.parse::<usize>().ok()?;
+
+    Some((old_start, new_start))
+}
+
+fn semantic_content_style(kind: PatchLineKind) -> Style {
+    match kind {
+        PatchLineKind::Added => Style::default().bg(Color::Rgb(18, 46, 20)),
+        PatchLineKind::Deleted => Style::default().bg(Color::Rgb(52, 20, 20)),
+        PatchLineKind::Hunk => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        PatchLineKind::Header => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default(),
+    }
+}
+
+fn semantic_prefix_style(kind: PatchLineKind) -> Style {
+    match kind {
+        PatchLineKind::Added => Style::default()
+            .fg(Color::Green)
+            .bg(Color::Rgb(18, 46, 20))
+            .add_modifier(Modifier::BOLD),
+        PatchLineKind::Deleted => Style::default()
+            .fg(Color::Red)
+            .bg(Color::Rgb(52, 20, 20))
+            .add_modifier(Modifier::BOLD),
+        PatchLineKind::Context => Style::default().fg(Color::DarkGray),
+        _ => Style::default(),
+    }
+}
+
+fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> Style {
+    let mut result = Style::default().fg(Color::Rgb(
+        style.foreground.r,
+        style.foreground.g,
+        style.foreground.b,
+    ));
+
+    if style.font_style.contains(FontStyle::BOLD) {
+        result = result.add_modifier(Modifier::BOLD);
+    }
+    if style.font_style.contains(FontStyle::ITALIC) {
+        result = result.add_modifier(Modifier::ITALIC);
+    }
+    if style.font_style.contains(FontStyle::UNDERLINE) {
+        result = result.add_modifier(Modifier::UNDERLINED);
+    }
+
+    result
+}
+
 fn render_footer_text(state: &AppState) -> String {
-    let base = "h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open (planned) | ? help | q quit";
+    let base = if state.is_diff_open() {
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back | ? help | q quit"
+    } else {
+        "h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open diff | ? help | q quit"
+    };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
         None => base.to_string(),
     }
 }
 
-fn render_help_overlay(frame: &mut Frame<'_>) {
+fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
     let area = centered_rect(75, 45, frame.area());
     frame.render_widget(Clear, area);
-    let help = Paragraph::new(
-        "Navigation\n\
+    let help_text = if in_diff_view {
+        "Navigation (Diff View)\n\
+         - j / Down: scroll down\n\
+         - k / Up: scroll up\n\
+         - h / Left: horizontal scroll left\n\
+         - l / Right: horizontal scroll right\n\
+         - PgUp / PgDn: fast vertical scroll\n\
+         - Home: reset scroll\n\
+         - Esc: close diff and return to commit page\n\
+         - ?: toggle this help\n\
+         - q: quit"
+    } else {
+        "Navigation (Page View)\n\
          - h / Left: previous page\n\
          - l / Right: next page\n\
-         - j / Down: move selection down on commit pages\n\
-         - k / Up: move selection up on commit pages\n\
+         - j / Down: move file selection down on commit pages\n\
+         - k / Up: move file selection up on commit pages\n\
          - g: first page\n\
          - G: last page\n\
-         - Enter: open selected file diff (planned)\n\
+         - Enter: open selected file diff view\n\
          - ?: toggle this help\n\
-         - q / Esc: quit",
-    )
-    .block(Block::default().borders(Borders::ALL).title("Keymap"))
-    .wrap(Wrap { trim: false });
+         - q / Esc: quit"
+    };
+
+    let help = Paragraph::new(help_text)
+        .block(Block::default().borders(Borders::ALL).title("Keymap"))
+        .wrap(Wrap { trim: false });
     frame.render_widget(help, area);
 }
 
@@ -698,6 +1208,9 @@ mod tests {
                 dry_run: DryRunLine::Failed("not needed for state tests".to_string()),
             },
             commit_pages,
+            repo_path: PathBuf::from("."),
+            bundle_path: PathBuf::from("sync.bundle.zip"),
+            syntax_highlighter: SyntaxHighlighter::load(),
         }
     }
 
@@ -751,22 +1264,6 @@ mod tests {
         assert_eq!(state.selected_file_index(0), 0);
     }
 
-    // Verifies that the keymap placeholder action sets a planned-message on commit pages.
-    #[test]
-    fn app_state_enter_sets_placeholder_message_on_commit_page() {
-        let model = sample_model(1, 1);
-        let mut state = AppState::new(&model);
-        state.next_page(&model);
-        state.trigger_open_selected(&model);
-        assert!(
-            state
-                .action_message
-                .as_deref()
-                .is_some_and(|message| message.contains("not implemented yet")),
-            "enter should acknowledge placeholder action"
-        );
-    }
-
     // Verifies that identity formatting is rendered as "Name <email>" for commit detail display.
     #[test]
     fn format_identity_renders_name_and_email() {
@@ -788,6 +1285,60 @@ mod tests {
         assert_eq!(
             format_git_timestamp(1_700_000_000, -90),
             "1700000000 (UTC-01:30)".to_string()
+        );
+    }
+
+    // Verifies that patch line classification detects headers, hunks, additions, deletions, and context lines.
+    #[test]
+    fn classify_patch_line_detects_core_kinds() {
+        assert_eq!(
+            classify_patch_line("diff --git a/a.txt b/a.txt"),
+            PatchLineKind::Header
+        );
+        assert_eq!(classify_patch_line("@@ -1,2 +1,2 @@"), PatchLineKind::Hunk);
+        assert_eq!(classify_patch_line("+added"), PatchLineKind::Added);
+        assert_eq!(classify_patch_line("-removed"), PatchLineKind::Deleted);
+        assert_eq!(classify_patch_line(" context"), PatchLineKind::Context);
+    }
+
+    // Verifies that hunk header parsing extracts old and new line starts.
+    #[test]
+    fn parse_hunk_header_extracts_line_starts() {
+        assert_eq!(parse_hunk_header("@@ -12,3 +48,7 @@ fn x"), Some((12, 48)));
+        assert_eq!(parse_hunk_header("not a hunk"), None);
+    }
+
+    // Verifies that rendered patch output includes line-number prefix and styled content rows.
+    #[test]
+    fn render_patch_with_syntax_includes_line_number_column() {
+        let highlighter = SyntaxHighlighter::load();
+        let patch =
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+        let rendered = render_patch_with_syntax("a.txt", patch, &highlighter);
+        assert!(
+            !rendered.lines.is_empty(),
+            "rendered diff should contain lines for a valid patch"
+        );
+        let first = rendered.lines[0]
+            .spans
+            .first()
+            .map(|span| span.content.to_string())
+            .unwrap_or_default();
+        assert!(
+            first.contains('│'),
+            "rendered rows should include a line-number column separator"
+        );
+    }
+
+    // Verifies that opening a diff from non-commit context does not create an active diff view.
+    #[test]
+    fn open_selected_diff_noop_outside_commit_context() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.open_selected_diff(&model);
+        assert!(
+            state.diff_view.is_none(),
+            "diff view should remain closed when not on a commit page"
         );
     }
 }

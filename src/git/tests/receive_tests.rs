@@ -836,3 +836,76 @@ fn collect_commit_audit_entries_includes_author_and_committer_identity() {
     let _ = std::fs::remove_dir_all(repo_dir);
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
+
+// Verifies that a per-file patch can be collected for a changed file in a commit inside a bundle package.
+#[test]
+fn collect_commit_file_patch_for_bundle_input_returns_patch_for_changed_file() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-commit-file-patch", false);
+
+    let receiver_dir = temp_repo_dir("receive-commit-file-patch-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let patch = collect_commit_file_patch_for_bundle_input(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        tip_commit_id,
+        "f.txt",
+    )
+    .expect("must collect patch for changed file");
+    assert!(
+        patch.contains("diff --git a/f.txt b/f.txt"),
+        "patch should include diff header for the selected path"
+    );
+    assert!(
+        patch.contains("--- a/f.txt") && patch.contains("+++ b/f.txt"),
+        "patch should include file headers for the selected path"
+    );
+    assert!(
+        patch.contains("@@"),
+        "patch should include at least one hunk for modified file content"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that per-file patch collection fails when the requested path is not changed by the selected commit.
+#[test]
+fn collect_commit_file_patch_for_bundle_input_rejects_missing_path() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-commit-file-patch-missing", false);
+
+    let receiver_dir = temp_repo_dir("receive-commit-file-patch-missing-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let result = collect_commit_file_patch_for_bundle_input(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        tip_commit_id,
+        "does-not-exist.txt",
+    );
+    assert!(
+        result.is_err(),
+        "collecting a patch for an unchanged path must fail"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}

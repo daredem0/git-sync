@@ -45,20 +45,20 @@ pub fn collect_commit_audit_entries_for_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
 ) -> Result<Vec<CommitAuditEntry>> {
-    let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
-    let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
-    let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
+    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, metadata| {
+        collect_commit_audit_entries(repo, metadata)
+    })
+}
 
-    if is_zip_bundle_input_path(bundle_input_path) {
-        let extracted = extract_bundle_archive(bundle_input_path)?;
-        let inspection = inspect_bundle(&extracted.bundle_path)?;
-        apply_bundle_to_repo(&dry_run_repo, &extracted.bundle_path, &inspection.heads)?;
-    } else {
-        let inspection = inspect_bundle(bundle_input_path)?;
-        apply_bundle_to_repo(&dry_run_repo, bundle_input_path, &inspection.heads)?;
-    }
-
-    collect_commit_audit_entries(&dry_run_repo, &metadata)
+pub fn collect_commit_file_patch_for_bundle_input(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    commit_id: git2::Oid,
+    path: &str,
+) -> Result<String> {
+    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, _| {
+        collect_commit_file_patch(repo, commit_id, path)
+    })
 }
 
 fn receive_bundle(
@@ -244,6 +244,67 @@ fn collect_commit_audit_entries(
     }
 
     Ok(entries)
+}
+
+fn collect_commit_file_patch(
+    repo: &git2::Repository,
+    commit_id: git2::Oid,
+    path: &str,
+) -> Result<String> {
+    let commit = repo.find_commit(commit_id)?;
+    let tip_tree = commit.tree()?;
+    let base_tree = if commit.parent_count() == 0 {
+        None
+    } else {
+        Some(commit.parent(0)?.tree()?)
+    };
+
+    let mut diff = repo.diff_tree_to_tree(base_tree.as_ref(), Some(&tip_tree), None)?;
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))?;
+
+    for (index, delta) in diff.deltas().enumerate() {
+        let old_path = path_to_string(delta.old_file().path())?;
+        let new_path = path_to_string(delta.new_file().path())?;
+        if old_path != path && new_path != path {
+            continue;
+        }
+
+        let patch = git2::Patch::from_diff(&diff, index)?;
+        let Some(mut patch) = patch else {
+            return Ok(format!(
+                "diff --git a/{old_path} b/{new_path}\nBinary file changed; textual diff unavailable.\n"
+            ));
+        };
+
+        let patch_buf = patch.to_buf()?;
+        let patch_text = String::from_utf8_lossy(patch_buf.as_ref()).to_string();
+        return Ok(patch_text);
+    }
+
+    bail!("file '{path}' is not changed in commit '{commit_id}'")
+}
+
+fn with_imported_bundle_input_repo<T>(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    func: impl FnOnce(&git2::Repository, &crate::git::types::CreateBundleAuditMetadata) -> Result<T>,
+) -> Result<T> {
+    let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
+    let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
+    let repo = git2::Repository::open_bare(&temp_repo.path)?;
+
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        let inspection = inspect_bundle(&extracted.bundle_path)?;
+        apply_bundle_to_repo(&repo, &extracted.bundle_path, &inspection.heads)?;
+    } else {
+        let inspection = inspect_bundle(bundle_input_path)?;
+        apply_bundle_to_repo(&repo, bundle_input_path, &inspection.heads)?;
+    }
+
+    func(&repo, &metadata)
 }
 
 fn collect_line_stats_for_tree_diff(
