@@ -12,7 +12,9 @@ Current status:
 - `create` writes a bundle and a `.caudit.json` metadata sidecar.
 - `.caudit.json` is compact by default (no inline file patch content).
 - `create --with-patches` adds an optional `.caudit.patch` sidecar.
-- `audit` supports bundle header inspection and repo range manifests.
+- `audit --bundle` renders changed-file manifests from bundled metadata.
+- `audit --repo --from --to` renders changed-file manifests directly from a repository range.
+- `audit --verify-metadata` validates bundled metadata against repository truth.
 
 ## Build
 
@@ -30,6 +32,12 @@ cargo build --release
 
 ```bash
 cargo test
+```
+
+Run only the end-to-end workflow integration test:
+
+```bash
+cargo test --test bundle_workflow_integration -- --nocapture
 ```
 
 ## Create bundle + metadata
@@ -71,3 +79,35 @@ This validates:
 - bundle header fields (`version`, `prerequisites`, `heads`)
 - metadata `commit_chain` and `changed_files` against repository truth for `range_from_oid..range_to_oid`
 - optional patch sidecar hash/size when present
+
+## End-to-end test flow with merge fixture
+
+Generate a deterministic repo with merge commits and anchor tags (`sync/base`, `sync/tip`):
+
+```bash
+./scripts/generate-merge-graph-repo.sh /tmp/git-sync-fixture
+```
+
+Create the bundle package:
+
+```bash
+cargo run -- create --repo /tmp/git-sync-fixture --from sync/base --to sync/tip --output /tmp/sync.bundle
+```
+
+Audit from the bundle package:
+
+```bash
+cargo run -- audit --bundle /tmp/sync.bundle.zip --format tsv
+```
+
+Audit the same range directly from the repo:
+
+```bash
+cargo run -- audit --repo /tmp/git-sync-fixture --from sync/base --to sync/tip --format tsv
+```
+
+Verify metadata against the repo:
+
+```bash
+cargo run -- audit --bundle /tmp/sync.bundle.zip --repo /tmp/git-sync-fixture --verify-metadata --format tsv
+```
