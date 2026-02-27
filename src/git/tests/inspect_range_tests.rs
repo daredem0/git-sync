@@ -168,3 +168,112 @@ fn inspect_bundle_rejects_directory_path() {
 
     let _ = std::fs::remove_dir_all(bundle_dir);
 }
+
+// Verifies that inspect_bundle rejects malformed prerequisite lines that omit the prerequisite OID.
+#[test]
+fn inspect_bundle_rejects_prerequisite_line_without_oid() {
+    let bundle_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-invalid-prereq-line-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::write(&bundle_path, b"# v2 git bundle\n-\n\n")
+        .expect("must write malformed prerequisite bundle");
+
+    let result = inspect_bundle(&bundle_path);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject prerequisite lines that omit OID tokens"
+    );
+
+    let _ = std::fs::remove_file(bundle_path);
+}
+
+// Verifies that inspect_bundle rejects malformed head lines that omit the reference name.
+#[test]
+fn inspect_bundle_rejects_head_line_without_reference() {
+    let bundle_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-invalid-head-line-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::write(
+        &bundle_path,
+        b"# v2 git bundle\n1111111111111111111111111111111111111111\n\n",
+    )
+    .expect("must write malformed head bundle");
+
+    let result = inspect_bundle(&bundle_path);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject head lines missing reference names"
+    );
+
+    let _ = std::fs::remove_file(bundle_path);
+}
+
+// Verifies that inspect_bundle rejects bundle lines with invalid OID tokens.
+#[test]
+fn inspect_bundle_rejects_invalid_oid_tokens() {
+    let bundle_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-invalid-head-oid-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::write(&bundle_path, b"# v2 git bundle\nnotanod refs/heads/main\n\n")
+        .expect("must write malformed oid bundle");
+
+    let result = inspect_bundle(&bundle_path);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject invalid OID fields in head lines"
+    );
+
+    let _ = std::fs::remove_file(bundle_path);
+}
+
+// Verifies that inspect_bundle accepts CRLF line endings for bundle header and metadata lines.
+#[test]
+fn inspect_bundle_accepts_crlf_line_endings() {
+    let bundle_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-crlf-header-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::write(
+        &bundle_path,
+        b"# v2 git bundle\r\n-1111111111111111111111111111111111111111\r\n2222222222222222222222222222222222222222 refs/heads/main\r\n\r\n",
+    )
+    .expect("must write crlf bundle text");
+
+    let inspection = inspect_bundle(&bundle_path).expect("crlf bundle should parse successfully");
+    assert_eq!(
+        inspection.version,
+        BundleVersion::V2,
+        "crlf header should still resolve to v2 bundle version"
+    );
+    assert_eq!(
+        inspection.prerequisites.len(),
+        1,
+        "crlf prerequisites should parse as normal prerequisite lines"
+    );
+    assert_eq!(
+        inspection.heads.len(),
+        1,
+        "crlf heads should parse as normal head lines"
+    );
+
+    let _ = std::fs::remove_file(bundle_path);
+}

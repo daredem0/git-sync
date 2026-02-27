@@ -317,3 +317,90 @@ fn render_manifest_json_formats_entries_and_preserves_order() {
         "second entry old oid must be serialized as hex string"
     );
 }
+
+fn commit_with_entries(
+    repo: &git2::Repository,
+    message: &str,
+    entries: &[(&str, &str, i32)],
+    parent_oids: &[git2::Oid],
+) -> git2::Oid {
+    let mut builder = repo.treebuilder(None).expect("must create treebuilder");
+    for (path, content, mode) in entries {
+        let blob_id = repo
+            .blob(content.as_bytes())
+            .expect("must create blob for tree entry");
+        builder
+            .insert(*path, blob_id, *mode)
+            .expect("must insert tree entry");
+    }
+    let tree_id = builder.write().expect("must write tree");
+    let tree = repo.find_tree(tree_id).expect("must find written tree");
+
+    let parent_commits: Vec<git2::Commit<'_>> = parent_oids
+        .iter()
+        .map(|oid| repo.find_commit(*oid).expect("must find parent commit"))
+        .collect();
+    let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
+    let sig = git2::Signature::now("Test User", "test@example.com").expect("must create signature");
+
+    repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+        .expect("must create commit")
+}
+
+// Verifies that collect_changed_files reports a file-mode transition (file -> symlink) either as TypeChanged or as split add/delete entries.
+#[test]
+fn collect_changed_files_detects_file_mode_transition() {
+    let repo_dir = temp_repo_dir("changes-typechange");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let base_commit_id = commit_with_entries(
+        &repo,
+        "base commit",
+        &[("kind.txt", "regular-file\n", 0o100644)],
+        &[],
+    );
+    let tip_commit_id = commit_with_entries(
+        &repo,
+        "tip commit",
+        &[("kind.txt", "target-link\n", 0o120000)],
+        &[base_commit_id],
+    );
+
+    let changes = collect_changed_files(&repo_dir, base_commit_id, tip_commit_id)
+        .expect("collect_changed_files should succeed for typechange fixture");
+    let has_typechange = changes
+        .iter()
+        .any(|change| change.path == "kind.txt" && change.status == ChangeStatus::TypeChanged);
+    let has_split_add_delete = changes.iter().any(|change| {
+        change.path == "kind.txt"
+            && (change.status == ChangeStatus::Added || change.status == ChangeStatus::Deleted)
+    });
+    assert!(
+        has_typechange || has_split_add_delete,
+        "file mode transitions should be represented either as TypeChanged or as add/delete split"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that collect_changed_files returns an error when the repository path does not exist.
+#[test]
+fn collect_changed_files_rejects_missing_repository_path() {
+    let missing_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-missing-repo-path-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    let oid = git2::Oid::from_str("1111111111111111111111111111111111111111")
+        .expect("must parse test oid");
+
+    let result = collect_changed_files(&missing_path, oid, oid);
+    assert!(
+        result.is_err(),
+        "collect_changed_files must fail for non-existent repository paths"
+    );
+}

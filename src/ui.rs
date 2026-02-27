@@ -1184,6 +1184,8 @@ fn format_git_timestamp(seconds: i64, offset_minutes: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1353,6 +1355,68 @@ mod tests {
             bundle_path: PathBuf::from("sync.bundle.zip"),
             syntax_highlighter: SyntaxHighlighter::load(),
         }
+    }
+
+    fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
+        AuditModel {
+            overview: OverviewModel {
+                repo_path: "/tmp/repo".to_string(),
+                bundle_path: "/tmp/sync.bundle.zip".to_string(),
+                base_ref: "sync/last".to_string(),
+                tip_ref: "-".to_string(),
+                metadata_verification: StatusLine::Ok,
+                dry_run,
+            },
+            commit_pages: CommitPagesModel::Ok(vec![CommitAuditEntry {
+                commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                    .expect("valid oid"),
+                subject: "subject".to_string(),
+                committer: CommitAuditIdentity {
+                    name: "Committer".to_string(),
+                    email: "committer@example.com".to_string(),
+                    time_seconds: 1_700_000_000,
+                    offset_minutes: 0,
+                },
+                author: CommitAuditIdentity {
+                    name: "Author".to_string(),
+                    email: "author@example.com".to_string(),
+                    time_seconds: 1_700_000_001,
+                    offset_minutes: 0,
+                },
+                files: vec![git::FileLineStat {
+                    path: "file.txt".to_string(),
+                    additions: 2,
+                    deletions: 1,
+                }],
+            }]),
+            repo_path: PathBuf::from("/tmp/repo"),
+            bundle_path: PathBuf::from("/tmp/sync.bundle.zip"),
+            syntax_highlighter: SyntaxHighlighter::load(),
+        }
+    }
+
+    fn render_and_capture_text(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut Frame<'_>),
+    ) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("must create test terminal");
+        terminal.draw(draw).expect("render should succeed");
+        let backend = terminal.backend();
+        let mut output = String::new();
+        let area = backend.buffer().area;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = backend
+                    .buffer()
+                    .cell((x, y))
+                    .expect("rendered cell should exist");
+                output.push_str(cell.symbol());
+            }
+            output.push('\n');
+        }
+        output
     }
 
     fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
@@ -1722,5 +1786,263 @@ mod tests {
             diff_help.contains("Esc: close diff and return to commit page"),
             "diff help should mention returning from diff view"
         );
+    }
+
+    // Verifies that rendering overview page with successful dry-run shows import and change sections.
+    #[test]
+    fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
+        let model = sample_overview_model(DryRunLine::Ok(git::ReceiveBundleResult {
+            bundle_version: BundleVersion::V2,
+            imported_heads: vec![git::BundleHead {
+                oid: git2::Oid::from_str("2222222222222222222222222222222222222222")
+                    .expect("valid oid"),
+                reference: "refs/heads/main".to_string(),
+            }],
+            can_apply_without_conflicts: true,
+            line_stats: vec![git::FileLineStat {
+                path: "file.txt".to_string(),
+                additions: 2,
+                deletions: 1,
+            }],
+        }));
+        let state = AppState::new(&model);
+
+        let output = render_and_capture_text(140, 40, |frame| {
+            render_overview_page(frame, &model, &state);
+        });
+
+        assert!(
+            output.contains("Heads To Import"),
+            "overview render should include heads section in dry-run success path"
+        );
+        assert!(
+            output.contains("Would Change"),
+            "overview render should include would-change section in dry-run success path"
+        );
+        assert!(
+            output.contains("file.txt"),
+            "overview render should include rendered file stats rows"
+        );
+    }
+
+    // Verifies that rendering overview page with dry-run failure shows a user-facing failure explanation.
+    #[test]
+    fn render_overview_page_with_dry_run_failed_shows_error_text() {
+        let model = sample_overview_model(DryRunLine::Failed("dry-run failed".to_string()));
+        let state = AppState::new(&model);
+
+        let output = render_and_capture_text(140, 40, |frame| {
+            render_overview_page(frame, &model, &state);
+        });
+
+        assert!(
+            output.contains("Dry-run failed"),
+            "overview render should explain when dry-run data is unavailable"
+        );
+    }
+
+    // Verifies that rendering commit page in normal mode shows commit metadata and changed-file table.
+    #[test]
+    fn render_commit_page_shows_commit_detail_and_changed_files() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.page_index = 1;
+
+        let output = render_and_capture_text(140, 40, |frame| {
+            render_commit_page(frame, &model, &state);
+        });
+
+        assert!(
+            output.contains("Commit Detail"),
+            "commit page render should include the detail block title"
+        );
+        assert!(
+            output.contains("Changed Files"),
+            "commit page render should include changed-file table"
+        );
+        assert!(
+            output.contains("file-0.txt"),
+            "commit page render should include the selected commit file list"
+        );
+    }
+
+    // Verifies that rendering commit page handles commit-page-load failures without panicking.
+    #[test]
+    fn render_commit_page_failed_mode_shows_unavailable_message() {
+        let model = AuditModel {
+            overview: sample_model(1, 1).overview,
+            commit_pages: CommitPagesModel::Failed("metadata load failed".to_string()),
+            repo_path: PathBuf::from("."),
+            bundle_path: PathBuf::from("sync.bundle.zip"),
+            syntax_highlighter: SyntaxHighlighter::load(),
+        };
+        let mut state = AppState::new(&model);
+        state.page_index = 1;
+
+        let output = render_and_capture_text(140, 30, |frame| {
+            render_commit_page(frame, &model, &state);
+        });
+
+        assert!(
+            output.contains("Commit Pages Unavailable"),
+            "commit page render should show unavailable state title"
+        );
+    }
+
+    // Verifies that out-of-bounds commit page indices render fallback text instead of panicking.
+    #[test]
+    fn render_commit_page_out_of_bounds_shows_fallback_message() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.page_index = 5;
+
+        let output = render_and_capture_text(120, 30, |frame| {
+            render_commit_page(frame, &model, &state);
+        });
+
+        assert!(
+            output.contains("out of bounds"),
+            "commit page render should gracefully handle out-of-range page indices"
+        );
+    }
+
+    // Verifies that rendering diff view prints header metadata and patch container labels.
+    #[test]
+    fn render_diff_view_shows_header_and_patch_section() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.diff_view = Some(DiffViewState {
+            commit_index: 0,
+            commit_total: 1,
+            file_index: 0,
+            commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                .expect("valid oid"),
+            commit_subject: "subject".to_string(),
+            file_path: "main.rs".to_string(),
+            syntax_name: "Rust".to_string(),
+            lines: vec![Line::from("line 1"), Line::from("line 2")],
+            max_line_width: 20,
+            scroll_y: 0,
+            scroll_x: 0,
+        });
+
+        let output = render_and_capture_text(140, 30, |frame| {
+            render_diff_view(frame, &state);
+        });
+
+        assert!(
+            output.contains("Diff View"),
+            "diff render should include the diff page title"
+        );
+        assert!(
+            output.contains("Patch"),
+            "diff render should include patch section title"
+        );
+        assert!(
+            output.contains("main.rs"),
+            "diff render should include selected file path in header"
+        );
+    }
+
+    // Verifies that rendering help overlay in page mode prints page-navigation hints.
+    #[test]
+    fn render_help_overlay_page_mode_renders_page_navigation_hints() {
+        let output = render_and_capture_text(120, 30, |frame| {
+            render_help_overlay(frame, false);
+        });
+        assert!(
+            output.contains("Navigation (Page View)"),
+            "page help overlay should label page-view help mode"
+        );
+        assert!(
+            output.contains("Enter: open selected file diff view"),
+            "page help overlay should include diff open hint"
+        );
+    }
+
+    // Verifies that rendering help overlay in diff mode prints diff-navigation hints.
+    #[test]
+    fn render_help_overlay_diff_mode_renders_diff_navigation_hints() {
+        let output = render_and_capture_text(120, 30, |frame| {
+            render_help_overlay(frame, true);
+        });
+        assert!(
+            output.contains("Navigation (Diff View)"),
+            "diff help overlay should label diff-view help mode"
+        );
+        assert!(
+            output.contains("Esc: close diff"),
+            "diff help overlay should include close-diff hint"
+        );
+    }
+
+    // Verifies that pressing q through unified key handler requests app termination.
+    #[test]
+    fn handle_key_press_q_requests_exit() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        assert!(
+            handle_key_press(&mut state, &model, KeyCode::Char('q')),
+            "q should request loop exit"
+        );
+    }
+
+    // Verifies that pressing ? through unified key handler toggles the help flag.
+    #[test]
+    fn handle_key_press_question_toggles_help() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        assert!(
+            !state.show_help,
+            "precondition: help starts hidden for new app state"
+        );
+        let should_exit = handle_key_press(&mut state, &model, KeyCode::Char('?'));
+        assert!(
+            !should_exit,
+            "toggling help should not request app exit"
+        );
+        assert!(state.show_help, "help flag should flip to true");
+    }
+
+    // Verifies that Enter on commit pages sets an error message when patch loading fails.
+    #[test]
+    fn handle_page_keys_enter_sets_error_when_patch_load_fails() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.page_index = 1;
+        handle_page_keys(&mut state, &model, KeyCode::Enter);
+        assert!(
+            state
+                .action_message
+                .as_deref()
+                .is_some_and(|msg| msg.contains("failed to open patch view")),
+            "enter should expose a helpful failure message when patch load cannot be performed"
+        );
+    }
+
+    // Verifies that unmapped diff keys are no-ops for current scroll position.
+    #[test]
+    fn handle_diff_keys_unmapped_input_does_not_change_scroll_state() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.diff_view = Some(DiffViewState {
+            commit_index: 0,
+            commit_total: 1,
+            file_index: 0,
+            commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                .expect("valid oid"),
+            commit_subject: "subject".to_string(),
+            file_path: "main.rs".to_string(),
+            syntax_name: "Rust".to_string(),
+            lines: vec![Line::from("line 1")],
+            max_line_width: 5,
+            scroll_y: 0,
+            scroll_x: 0,
+        });
+
+        handle_diff_keys(&mut state, KeyCode::Char('x'));
+        let diff_view = state.diff_view.as_ref().expect("diff view should exist");
+        assert_eq!(diff_view.scroll_y, 0);
+        assert_eq!(diff_view.scroll_x, 0);
     }
 }

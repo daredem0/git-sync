@@ -16,3 +16,5 @@ mod receive_tests;
 mod metadata_tests;
 // Focus: archive extraction/writing and artifact-cleanup helpers.
 mod archive_tests;
+// Focus: utility helper behavior for parsing, formatting, hashing, and OID/path conversions.
+mod util_tests;
