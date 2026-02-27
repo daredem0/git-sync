@@ -1,4 +1,7 @@
 //! CLI entrypoint and command dispatch for git-sync-audit.
+#![doc = include_str!("../README.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../SDD_SAD.md")]
 
 mod app;
 mod cli;

@@ -188,6 +188,12 @@ Generate Rust API docs:
 cargo doc --no-deps
 ```
 
+Generate docs with Mermaid diagrams rendered (requires internet access for the Mermaid JS module):
+
+```bash
+RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --bins
+```
+
 Generate and open docs in browser:
 
 ```bash
