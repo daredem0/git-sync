@@ -1,35 +1,50 @@
 use crate::app::AppConfig;
-use crate::git::{self, BundleVersion, ReceiveBundleOptions};
+use crate::git::{
+    self, BundleVersion, CommitAuditEntry, CommitAuditIdentity, ReceiveBundleOptions,
+};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use std::io;
 use std::time::Duration;
 
 pub fn run(config: &AppConfig) -> Result<()> {
-    let model = build_overview_model(config);
+    let model = build_audit_model(config);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+    let mut app_state = AppState::new(&model);
 
-    let loop_result = run_overview_loop(&mut terminal, &model);
+    let loop_result = run_loop(&mut terminal, &model, &mut app_state);
 
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
 
     loop_result
+}
+
+#[derive(Debug)]
+struct AuditModel {
+    overview: OverviewModel,
+    commit_pages: CommitPagesModel,
+}
+
+#[derive(Debug)]
+enum CommitPagesModel {
+    Ok(Vec<CommitAuditEntry>),
+    Failed(String),
 }
 
 #[derive(Debug)]
@@ -52,6 +67,129 @@ enum StatusLine {
 enum DryRunLine {
     Ok(git::ReceiveBundleResult),
     Failed(String),
+}
+
+#[derive(Debug)]
+struct AppState {
+    page_index: usize,
+    selected_file_indices: Vec<usize>,
+    show_help: bool,
+    action_message: Option<String>,
+}
+
+impl AppState {
+    fn new(model: &AuditModel) -> Self {
+        let selected_file_indices = match &model.commit_pages {
+            CommitPagesModel::Ok(entries) => vec![0; entries.len()],
+            CommitPagesModel::Failed(_) => Vec::new(),
+        };
+        Self {
+            page_index: 0,
+            selected_file_indices,
+            show_help: false,
+            action_message: None,
+        }
+    }
+
+    fn total_pages(&self, model: &AuditModel) -> usize {
+        match &model.commit_pages {
+            CommitPagesModel::Ok(entries) => {
+                if entries.is_empty() {
+                    1
+                } else {
+                    1 + entries.len()
+                }
+            }
+            CommitPagesModel::Failed(_) => 2,
+        }
+    }
+
+    fn next_page(&mut self, model: &AuditModel) {
+        let last = self.total_pages(model).saturating_sub(1);
+        self.page_index = std::cmp::min(self.page_index + 1, last);
+        self.action_message = None;
+    }
+
+    fn previous_page(&mut self) {
+        self.page_index = self.page_index.saturating_sub(1);
+        self.action_message = None;
+    }
+
+    fn first_page(&mut self) {
+        self.page_index = 0;
+        self.action_message = None;
+    }
+
+    fn last_page(&mut self, model: &AuditModel) {
+        self.page_index = self.total_pages(model).saturating_sub(1);
+        self.action_message = None;
+    }
+
+    fn move_selection_down(&mut self, model: &AuditModel) {
+        let Some((commit_index, file_count)) = self.current_commit_context(model) else {
+            return;
+        };
+        if file_count == 0 {
+            return;
+        }
+        if let Some(selected) = self.selected_file_indices.get_mut(commit_index) {
+            *selected = std::cmp::min(*selected + 1, file_count - 1);
+        }
+    }
+
+    fn move_selection_up(&mut self, model: &AuditModel) {
+        let Some((commit_index, _)) = self.current_commit_context(model) else {
+            return;
+        };
+        if let Some(selected) = self.selected_file_indices.get_mut(commit_index) {
+            *selected = selected.saturating_sub(1);
+        }
+    }
+
+    // Placeholder for keymap action 4 (open selected file diff).
+    fn trigger_open_selected(&mut self, model: &AuditModel) {
+        if self.current_commit_context(model).is_some() {
+            self.action_message =
+                Some("Open file diff is planned and not implemented yet.".to_string());
+        }
+    }
+
+    fn selected_file_index(&self, commit_index: usize) -> usize {
+        self.selected_file_indices
+            .get(commit_index)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn current_commit_context(&self, model: &AuditModel) -> Option<(usize, usize)> {
+        if self.page_index == 0 {
+            return None;
+        }
+        match &model.commit_pages {
+            CommitPagesModel::Ok(entries) => {
+                let commit_index = self.page_index - 1;
+                let file_count = entries.get(commit_index)?.files.len();
+                Some((commit_index, file_count))
+            }
+            CommitPagesModel::Failed(_) => None,
+        }
+    }
+}
+
+fn build_audit_model(config: &AppConfig) -> AuditModel {
+    let overview = build_overview_model(config);
+    let commit_pages = match git::collect_commit_audit_entries_for_bundle_input(
+        &config.bundle_path,
+        &config.repo_path,
+    ) {
+        Ok(entries) => CommitPagesModel::Ok(entries),
+        Err(err) => CommitPagesModel::Failed(single_line_error(&err)),
+    };
+
+    AuditModel {
+        overview,
+        commit_pages,
+    }
 }
 
 fn build_overview_model(config: &AppConfig) -> OverviewModel {
@@ -94,25 +232,53 @@ fn build_overview_model(config: &AppConfig) -> OverviewModel {
     }
 }
 
-fn run_overview_loop(
+fn run_loop(
     terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
-    model: &OverviewModel,
+    model: &AuditModel,
+    state: &mut AppState,
 ) -> Result<()> {
     loop {
-        terminal.draw(|frame| render_overview(frame, model))?;
+        terminal.draw(|frame| render_page(frame, model, state))?;
 
-        if event::poll(Duration::from_millis(200))?
-            && let Event::Key(key) = event::read()?
-            && matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
-        {
-            break;
+        if event::poll(Duration::from_millis(200))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => break,
+                    KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
+                    KeyCode::Left | KeyCode::Char('h') => state.previous_page(),
+                    KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(model),
+                    KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(model),
+                    KeyCode::Char('g') => state.first_page(),
+                    KeyCode::Char('G') => state.last_page(model),
+                    KeyCode::Char('?') => state.show_help = !state.show_help,
+                    KeyCode::Enter => state.trigger_open_selected(model),
+                    _ => {}
+                }
+            }
         }
     }
 
     Ok(())
 }
 
-fn render_overview(frame: &mut Frame<'_>, model: &OverviewModel) {
+fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
+    if state.page_index == 0 {
+        render_overview_page(frame, model, state);
+    } else {
+        render_commit_page(frame, model, state);
+    }
+
+    if state.show_help {
+        render_help_overlay(frame);
+    }
+}
+
+fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
+    let overview = &model.overview;
+    let page_label = format!("page {}/{}", state.page_index + 1, state.total_pages(model));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -123,11 +289,12 @@ fn render_overview(frame: &mut Frame<'_>, model: &OverviewModel) {
         ])
         .split(frame.area());
 
-    let title = Paragraph::new(
-        "Audit Overview\n\
-         First page: package validity, import heads, and would-change summary\n\
-         Press q or Esc to quit",
-    )
+    let title = Paragraph::new(format!(
+        "Audit Overview ({})\n\
+             This page shows package validity, import heads, and would-change summary\n\
+             Use h/l or left/right to move pages",
+        page_label
+    ))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -137,23 +304,26 @@ fn render_overview(frame: &mut Frame<'_>, model: &OverviewModel) {
     frame.render_widget(title, chunks[0]);
 
     let general_lines = vec![
-        format!("repo: {}", model.repo_path),
-        format!("bundle: {}", model.bundle_path),
-        format!("base_ref: {} | tip_ref: {}", model.base_ref, model.tip_ref),
+        format!("repo: {}", overview.repo_path),
+        format!("bundle: {}", overview.bundle_path),
+        format!(
+            "base_ref: {} | tip_ref: {}",
+            overview.base_ref, overview.tip_ref
+        ),
         format!(
             "metadata verification: {}",
-            render_status_line(&model.metadata_verification)
+            render_status_line(&overview.metadata_verification)
         ),
         format!(
             "dry-run applicability: {}",
-            render_dry_run_status(&model.dry_run)
+            render_dry_run_status(&overview.dry_run)
         ),
     ];
     let general = Paragraph::new(general_lines.join("\n"))
         .block(Block::default().borders(Borders::ALL).title("General"));
     frame.render_widget(general, chunks[1]);
 
-    match &model.dry_run {
+    match &overview.dry_run {
         DryRunLine::Ok(result) => {
             let detail_chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -172,10 +342,97 @@ fn render_overview(frame: &mut Frame<'_>, model: &OverviewModel) {
         }
     }
 
-    let footer =
-        Paragraph::new("Next page (planned): commit-by-commit tree and per-file diff view.")
-            .style(Style::default().add_modifier(Modifier::ITALIC));
+    let footer = Paragraph::new(render_footer_text(state))
+        .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[3]);
+}
+
+fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(10),
+            Constraint::Min(10),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+
+    match &model.commit_pages {
+        CommitPagesModel::Failed(err) => {
+            let page_label = format!("page {}/{}", state.page_index + 1, state.total_pages(model));
+            let message = Paragraph::new(format!(
+                "Commit page data is unavailable ({})\nerror: {}\n\
+                 The overview page is still usable for package-level auditing.",
+                page_label, err
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Pages Unavailable"),
+            )
+            .wrap(Wrap { trim: false });
+            frame.render_widget(message, chunks[0]);
+            frame.render_widget(
+                Paragraph::new("No commit list can be rendered for this package.").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Changed Files"),
+                ),
+                chunks[1],
+            );
+            frame.render_widget(
+                Paragraph::new(render_footer_text(state))
+                    .style(Style::default().add_modifier(Modifier::ITALIC)),
+                chunks[2],
+            );
+        }
+        CommitPagesModel::Ok(entries) => {
+            let commit_index = state.page_index.saturating_sub(1);
+            let Some(entry) = entries.get(commit_index) else {
+                frame.render_widget(
+                    Paragraph::new("Page index is out of bounds for commit entries.")
+                        .block(Block::default().borders(Borders::ALL).title("Commit")),
+                    chunks[0],
+                );
+                frame.render_widget(
+                    Paragraph::new(render_footer_text(state))
+                        .style(Style::default().add_modifier(Modifier::ITALIC)),
+                    chunks[2],
+                );
+                return;
+            };
+
+            let header = Paragraph::new(format!(
+                "Commit {}/{} | {}\n{}\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
+                commit_index + 1,
+                entries.len(),
+                entry.commit_id,
+                entry.subject,
+                format_git_timestamp(
+                    entry.committer.time_seconds,
+                    entry.committer.offset_minutes,
+                ),
+                format_identity(&entry.committer),
+                format_git_timestamp(entry.author.time_seconds, entry.author.offset_minutes),
+                format_identity(&entry.author),
+                entry.files.len()
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Detail"),
+            )
+            .wrap(Wrap { trim: false });
+            frame.render_widget(header, chunks[0]);
+
+            render_commit_files_table(frame, entry, commit_index, state, chunks[1]);
+            frame.render_widget(
+                Paragraph::new(render_footer_text(state))
+                    .style(Style::default().add_modifier(Modifier::ITALIC)),
+                chunks[2],
+            );
+        }
+    }
 }
 
 fn render_heads_table(
@@ -255,6 +512,112 @@ fn render_changes_table(
     frame.render_widget(changes_table, area);
 }
 
+fn render_commit_files_table(
+    frame: &mut Frame<'_>,
+    entry: &CommitAuditEntry,
+    commit_index: usize,
+    state: &AppState,
+    area: Rect,
+) {
+    if entry.files.is_empty() {
+        let empty = Paragraph::new("(no file content changes in this commit)").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Changed Files"),
+        );
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    let rows: Vec<Row<'_>> = entry
+        .files
+        .iter()
+        .map(|stat| {
+            Row::new(vec![
+                Cell::from(stat.path.clone()),
+                Cell::from(stat.additions.to_string()),
+                Cell::from(stat.deletions.to_string()),
+            ])
+        })
+        .collect();
+
+    let files_table = Table::new(
+        rows,
+        [
+            Constraint::Min(20),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ],
+    )
+    .header(
+        Row::new(vec!["PATH", "+LINES", "-LINES"])
+            .style(Style::default().add_modifier(Modifier::BOLD)),
+    )
+    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Changed Files (this commit)"),
+    )
+    .column_spacing(2);
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(
+        state
+            .selected_file_index(commit_index)
+            .min(entry.files.len() - 1),
+    ));
+    frame.render_stateful_widget(files_table, area, &mut table_state);
+}
+
+fn render_footer_text(state: &AppState) -> String {
+    let base = "h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open (planned) | ? help | q quit";
+    match &state.action_message {
+        Some(message) => format!("{base} | {message}"),
+        None => base.to_string(),
+    }
+}
+
+fn render_help_overlay(frame: &mut Frame<'_>) {
+    let area = centered_rect(75, 45, frame.area());
+    frame.render_widget(Clear, area);
+    let help = Paragraph::new(
+        "Navigation\n\
+         - h / Left: previous page\n\
+         - l / Right: next page\n\
+         - j / Down: move selection down on commit pages\n\
+         - k / Up: move selection up on commit pages\n\
+         - g: first page\n\
+         - G: last page\n\
+         - Enter: open selected file diff (planned)\n\
+         - ?: toggle this help\n\
+         - q / Esc: quit",
+    )
+    .block(Block::default().borders(Borders::ALL).title("Keymap"))
+    .wrap(Wrap { trim: false });
+    frame.render_widget(help, area);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 fn render_status_line(status: &StatusLine) -> String {
     match status {
         StatusLine::Ok => "OK".to_string(),
@@ -277,4 +640,154 @@ fn render_dry_run_status(status: &DryRunLine) -> String {
 
 fn single_line_error(err: &anyhow::Error) -> String {
     err.to_string().replace('\n', " ")
+}
+
+fn format_identity(identity: &CommitAuditIdentity) -> String {
+    format!("{} <{}>", identity.name, identity.email)
+}
+
+fn format_git_timestamp(seconds: i64, offset_minutes: i32) -> String {
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let absolute = offset_minutes.abs();
+    let hours = absolute / 60;
+    let minutes = absolute % 60;
+    format!("{seconds} (UTC{sign}{hours:02}:{minutes:02})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_model(commit_count: usize, files_per_commit: usize) -> AuditModel {
+        let commit_pages = CommitPagesModel::Ok(
+            (0..commit_count)
+                .map(|i| CommitAuditEntry {
+                    commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                        .expect("valid oid"),
+                    subject: format!("commit-{i}"),
+                    committer: CommitAuditIdentity {
+                        name: "Committer".to_string(),
+                        email: "committer@example.com".to_string(),
+                        time_seconds: 1_700_000_000,
+                        offset_minutes: 60,
+                    },
+                    author: CommitAuditIdentity {
+                        name: "Author".to_string(),
+                        email: "author@example.com".to_string(),
+                        time_seconds: 1_700_000_001,
+                        offset_minutes: 60,
+                    },
+                    files: (0..files_per_commit)
+                        .map(|n| git::FileLineStat {
+                            path: format!("file-{n}.txt"),
+                            additions: n + 1,
+                            deletions: n,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        );
+
+        AuditModel {
+            overview: OverviewModel {
+                repo_path: ".".to_string(),
+                bundle_path: "sync.bundle.zip".to_string(),
+                base_ref: "sync/last".to_string(),
+                tip_ref: "main".to_string(),
+                metadata_verification: StatusLine::Ok,
+                dry_run: DryRunLine::Failed("not needed for state tests".to_string()),
+            },
+            commit_pages,
+        }
+    }
+
+    // Verifies that total_pages returns one overview page plus one page per commit.
+    #[test]
+    fn app_state_total_pages_counts_overview_and_commits() {
+        let model = sample_model(3, 2);
+        let state = AppState::new(&model);
+        assert_eq!(state.total_pages(&model), 4);
+    }
+
+    // Verifies that page navigation clamps at the first and last available page.
+    #[test]
+    fn app_state_page_navigation_is_bounded() {
+        let model = sample_model(2, 1);
+        let mut state = AppState::new(&model);
+
+        state.previous_page();
+        assert_eq!(state.page_index, 0);
+
+        state.next_page(&model);
+        state.next_page(&model);
+        state.next_page(&model);
+        assert_eq!(state.page_index, 2);
+
+        state.first_page();
+        assert_eq!(state.page_index, 0);
+
+        state.last_page(&model);
+        assert_eq!(state.page_index, 2);
+    }
+
+    // Verifies that file selection movement on commit pages stays within valid row bounds.
+    #[test]
+    fn app_state_selection_movement_is_bounded() {
+        let model = sample_model(1, 2);
+        let mut state = AppState::new(&model);
+        state.next_page(&model);
+        assert_eq!(state.page_index, 1);
+
+        state.move_selection_down(&model);
+        assert_eq!(state.selected_file_index(0), 1);
+
+        state.move_selection_down(&model);
+        assert_eq!(state.selected_file_index(0), 1);
+
+        state.move_selection_up(&model);
+        assert_eq!(state.selected_file_index(0), 0);
+
+        state.move_selection_up(&model);
+        assert_eq!(state.selected_file_index(0), 0);
+    }
+
+    // Verifies that the keymap placeholder action sets a planned-message on commit pages.
+    #[test]
+    fn app_state_enter_sets_placeholder_message_on_commit_page() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.next_page(&model);
+        state.trigger_open_selected(&model);
+        assert!(
+            state
+                .action_message
+                .as_deref()
+                .is_some_and(|message| message.contains("not implemented yet")),
+            "enter should acknowledge placeholder action"
+        );
+    }
+
+    // Verifies that identity formatting is rendered as "Name <email>" for commit detail display.
+    #[test]
+    fn format_identity_renders_name_and_email() {
+        let identity = CommitAuditIdentity {
+            name: "Florian".to_string(),
+            email: "florian@example.com".to_string(),
+            time_seconds: 0,
+            offset_minutes: 0,
+        };
+        assert_eq!(
+            format_identity(&identity),
+            "Florian <florian@example.com>".to_string()
+        );
+    }
+
+    // Verifies that timestamp formatting keeps unix seconds and renders timezone offset in UTC form.
+    #[test]
+    fn format_git_timestamp_renders_seconds_and_offset() {
+        assert_eq!(
+            format_git_timestamp(1_700_000_000, -90),
+            "1700000000 (UTC-01:30)".to_string()
+        );
+    }
 }

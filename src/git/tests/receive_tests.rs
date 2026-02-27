@@ -777,3 +777,62 @@ fn is_head_already_applied_returns_false_when_ref_target_differs() {
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
+
+// Verifies that commit-audit entries expose author/committer identity fields needed by the commit-detail TUI page.
+#[test]
+fn collect_commit_audit_entries_includes_author_and_committer_identity() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-commit-audit-identities", false);
+
+    let receiver_dir = temp_repo_dir("receive-commit-audit-identities-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let entries =
+        collect_commit_audit_entries_for_bundle_input(&bundle_result.archive_path, &receiver_dir)
+            .expect("must collect commit-audit entries from package");
+    assert_eq!(
+        entries.len(),
+        1,
+        "fixture range should produce one commit entry (base..tip)"
+    );
+    let entry = &entries[0];
+    assert_eq!(
+        entry.commit_id, tip_commit_id,
+        "entry commit id should match the tip commit in this fixture range"
+    );
+    assert_eq!(
+        entry.author.name, "Test User",
+        "author identity should expose the commit author name"
+    );
+    assert_eq!(
+        entry.author.email, "test@example.com",
+        "author identity should expose the commit author email"
+    );
+    assert_eq!(
+        entry.committer.name, "Test User",
+        "committer identity should expose the commit committer name"
+    );
+    assert_eq!(
+        entry.committer.email, "test@example.com",
+        "committer identity should expose the commit committer email"
+    );
+    assert!(
+        entry.author.time_seconds > 0 && entry.committer.time_seconds > 0,
+        "identity timestamps should contain valid unix timestamps"
+    );
+    assert_eq!(
+        entry.author.offset_minutes, entry.committer.offset_minutes,
+        "fixture uses the same timezone offset for author and committer"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}

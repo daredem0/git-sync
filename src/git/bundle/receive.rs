@@ -1,9 +1,11 @@
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
+use crate::git::metadata::load_bundle_metadata_from_input;
 use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
 use crate::git::{
-    BundleHead, BundleInspection, FileLineStat, ReceiveBundleOptions, ReceiveBundleResult,
+    BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
+    ReceiveBundleOptions, ReceiveBundleResult,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
@@ -37,6 +39,26 @@ pub fn receive_bundle_input_with_options(
     } else {
         receive_bundle(bundle_input_path, receiver_repo_path, options.dry_run)
     }
+}
+
+pub fn collect_commit_audit_entries_for_bundle_input(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+) -> Result<Vec<CommitAuditEntry>> {
+    let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
+    let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
+    let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
+
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        let inspection = inspect_bundle(&extracted.bundle_path)?;
+        apply_bundle_to_repo(&dry_run_repo, &extracted.bundle_path, &inspection.heads)?;
+    } else {
+        let inspection = inspect_bundle(bundle_input_path)?;
+        apply_bundle_to_repo(&dry_run_repo, bundle_input_path, &inspection.heads)?;
+    }
+
+    collect_commit_audit_entries(&dry_run_repo, &metadata)
 }
 
 fn receive_bundle(
@@ -183,6 +205,75 @@ fn collect_line_stats_for_head(
             deletions,
         });
     }
+    Ok(stats)
+}
+
+fn collect_commit_audit_entries(
+    repo: &git2::Repository,
+    metadata: &crate::git::types::CreateBundleAuditMetadata,
+) -> Result<Vec<CommitAuditEntry>> {
+    let mut entries = Vec::new();
+    for commit_meta in &metadata.commit_chain {
+        let commit_id = git2::Oid::from_str(&commit_meta.oid)?;
+        let commit = repo.find_commit(commit_id)?;
+        let tip_tree = commit.tree()?;
+        let base_tree = if commit.parent_count() == 0 {
+            None
+        } else {
+            Some(commit.parent(0)?.tree()?)
+        };
+
+        let files = collect_line_stats_for_tree_diff(repo, base_tree.as_ref(), &tip_tree)?;
+        entries.push(CommitAuditEntry {
+            commit_id,
+            subject: commit_meta.subject.clone(),
+            committer: CommitAuditIdentity {
+                name: commit_meta.committer.name.clone(),
+                email: commit_meta.committer.email.clone(),
+                time_seconds: commit_meta.committer.time_seconds,
+                offset_minutes: commit_meta.committer.offset_minutes,
+            },
+            author: CommitAuditIdentity {
+                name: commit_meta.author.name.clone(),
+                email: commit_meta.author.email.clone(),
+                time_seconds: commit_meta.author.time_seconds,
+                offset_minutes: commit_meta.author.offset_minutes,
+            },
+            files,
+        });
+    }
+
+    Ok(entries)
+}
+
+fn collect_line_stats_for_tree_diff(
+    repo: &git2::Repository,
+    base_tree: Option<&git2::Tree<'_>>,
+    tip_tree: &git2::Tree<'_>,
+) -> Result<Vec<FileLineStat>> {
+    let mut diff = repo.diff_tree_to_tree(base_tree, Some(tip_tree), None)?;
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))?;
+
+    let mut stats = Vec::new();
+    for (index, delta) in diff.deltas().enumerate() {
+        let path = path_to_string(delta.new_file().path().or(delta.old_file().path()))?;
+        let (additions, deletions) = match git2::Patch::from_diff(&diff, index)? {
+            Some(patch) => {
+                let (_, additions, deletions) = patch.line_stats()?;
+                (additions, deletions)
+            }
+            None => (0, 0),
+        };
+        stats.push(FileLineStat {
+            path,
+            additions,
+            deletions,
+        });
+    }
+
+    stats.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(stats)
 }
 

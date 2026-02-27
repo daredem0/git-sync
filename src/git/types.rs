@@ -78,6 +78,23 @@ pub struct FileLineStat {
     pub deletions: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitAuditEntry {
+    pub commit_id: git2::Oid,
+    pub subject: String,
+    pub committer: CommitAuditIdentity,
+    pub author: CommitAuditIdentity,
+    pub files: Vec<FileLineStat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitAuditIdentity {
+    pub name: String,
+    pub email: String,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CreateBundleOptions {
     pub include_patch_sidecar: bool,
