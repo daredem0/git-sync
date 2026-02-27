@@ -296,6 +296,7 @@ dependencies = [
  "clap",
  "crossterm",
  "git2",
+ "openssl-sys",
  "ratatui",
  "serde",
  "serde_json",

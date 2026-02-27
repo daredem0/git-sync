@@ -9,7 +9,10 @@ Planned characteristics:
 
 Current status:
 - Project and command structure are bootstrapped.
-- Functional auditing and UI behavior are intentionally not implemented yet.
+- `create` writes a bundle and a `.caudit.json` metadata sidecar.
+- `.caudit.json` is compact by default (no inline file patch content).
+- `create --with-patches` adds an optional `.caudit.patch` sidecar.
+- `audit` supports bundle header inspection and repo range manifests.
 
 ## Build
 
@@ -28,3 +31,25 @@ cargo build --release
 ```bash
 cargo test
 ```
+
+## Create bundle + metadata
+
+```bash
+cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundle
+```
+
+This creates:
+- `sync.bundle`
+- `sync.bundle.caudit.json`
+
+To include a full unified patch sidecar:
+
+```bash
+cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundle --with-patches
+```
+
+This additionally creates:
+- `sync.bundle.caudit.patch`
+
+The metadata JSON schema is defined at:
+- `schemas/sync.bundle.caudit.schema.json`

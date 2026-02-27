@@ -1193,6 +1193,363 @@ fn create_bundle_can_be_fetched_when_prerequisite_is_present() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that create_bundle writes a .caudit.json sidecar with core audit identity fields.
+#[test]
+fn create_bundle_writes_caudit_metadata_file_with_core_identity_fields() {
+    let repo_dir = temp_repo_dir("create-bundle-caudit-core");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let expected_caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    assert_eq!(
+        result.audit_path, expected_caudit_path,
+        "create_bundle should return the generated .caudit.json path"
+    );
+    assert!(
+        result.audit_path.exists(),
+        "create_bundle should write a .caudit.json metadata file"
+    );
+
+    let metadata_bytes =
+        std::fs::read(&result.audit_path).expect("must read generated .caudit metadata file");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+
+    assert_eq!(
+        metadata["schema_version"],
+        serde_json::json!("1"),
+        "schema version must match the initial metadata contract"
+    );
+    assert_eq!(
+        metadata["range_from_oid"],
+        serde_json::json!(base_commit_id.to_string()),
+        "metadata must record the resolved from commit id"
+    );
+    assert_eq!(
+        metadata["range_to_oid"],
+        serde_json::json!(tip_commit_id.to_string()),
+        "metadata must record the resolved to commit id"
+    );
+    assert_eq!(
+        metadata["tip_ref"],
+        serde_json::json!("refs/heads/tip"),
+        "metadata must preserve the exported tip reference name"
+    );
+    assert_eq!(
+        metadata["bundle_path"],
+        serde_json::json!(bundle_path.display().to_string()),
+        "metadata must include the bundle path used during creation"
+    );
+    assert_eq!(
+        metadata["bundle_header_version"],
+        serde_json::json!("v2"),
+        "metadata should report the bundle format version"
+    );
+    let bundle_bytes = std::fs::read(&bundle_path).expect("must read generated bundle bytes");
+    let expected_bundle_sha256 = sha256_hex(&bundle_bytes).expect("must hash bundle bytes");
+    assert_eq!(
+        metadata["bundle_size_bytes"],
+        serde_json::json!(bundle_bytes.len() as u64),
+        "metadata must report the exact bundle byte length"
+    );
+    let bundle_sha256 = metadata["bundle_sha256"]
+        .as_str()
+        .expect("bundle_sha256 should be present as a string");
+    assert_eq!(
+        bundle_sha256, expected_bundle_sha256,
+        "metadata bundle_sha256 must match the actual bundle file content digest"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that create_bundle metadata stays compact by omitting inline per-file patch text by default.
+#[test]
+fn create_bundle_caudit_omits_inline_patch_details_by_default() {
+    let repo_dir = temp_repo_dir("create-bundle-caudit-patch");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base content")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "other")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    let metadata_bytes =
+        std::fs::read(&result.audit_path).expect("must read generated .caudit metadata file");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+
+    let changed_files = metadata["changed_files"]
+        .as_array()
+        .expect("changed_files should be serialized as an array");
+    let modified_f_txt = changed_files
+        .iter()
+        .find(|entry| {
+            entry["status"] == serde_json::json!("M") && entry["path"] == serde_json::json!("f.txt")
+        })
+        .expect("changed_files should include f.txt as a modified entry");
+
+    assert_eq!(
+        modified_f_txt["is_binary"],
+        serde_json::json!(false),
+        "text file changes should be marked as non-binary"
+    );
+    assert!(
+        modified_f_txt.get("patch").is_none(),
+        "compact metadata should not embed full unified patch text per changed file"
+    );
+    assert!(
+        metadata["patch_sidecar"].is_null(),
+        "compact metadata should not include a patch sidecar descriptor unless explicitly requested"
+    );
+    assert!(
+        result.patch_audit_path.is_none(),
+        "create_bundle result should not expose a patch sidecar path by default"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that create_bundle can optionally write a patch sidecar and reference it from metadata.
+#[test]
+fn create_bundle_with_patch_sidecar_writes_and_references_sidecar() {
+    let repo_dir = temp_repo_dir("create-bundle-caudit-sidecar");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base content")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "other")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle_with_options(
+        &repo_dir,
+        "refs/heads/base",
+        "refs/heads/tip",
+        &bundle_path,
+        CreateBundleOptions {
+            include_patch_sidecar: true,
+        },
+    )
+    .expect("create_bundle_with_options should succeed with patch sidecar enabled");
+
+    let patch_path = result
+        .patch_audit_path
+        .clone()
+        .expect("patch sidecar path should be returned when enabled");
+    assert!(
+        patch_path.exists(),
+        "patch sidecar should be written to disk"
+    );
+
+    let patch_bytes = std::fs::read(&patch_path).expect("must read patch sidecar bytes");
+    let patch_text = String::from_utf8_lossy(&patch_bytes);
+    assert!(
+        patch_text.contains("base content"),
+        "patch sidecar should include previous text content"
+    );
+    assert!(
+        patch_text.contains("tip content"),
+        "patch sidecar should include updated text content"
+    );
+
+    let metadata_bytes =
+        std::fs::read(&result.audit_path).expect("must read generated .caudit metadata file");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+    let sidecar = metadata["patch_sidecar"]
+        .as_object()
+        .expect("metadata should include a patch_sidecar descriptor");
+    let path_from_metadata = sidecar
+        .get("path")
+        .and_then(|value| value.as_str())
+        .expect("patch_sidecar.path must be present");
+    let sha_from_metadata = sidecar
+        .get("sha256")
+        .and_then(|value| value.as_str())
+        .expect("patch_sidecar.sha256 must be present");
+    assert_eq!(
+        path_from_metadata,
+        patch_path.display().to_string(),
+        "metadata should reference the exact patch sidecar path"
+    );
+    assert_eq!(
+        sha_from_metadata,
+        sha256_hex(&patch_bytes).expect("must hash patch sidecar"),
+        "metadata sidecar sha256 should match patch sidecar bytes"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that inspect_bundle parses version, prerequisite, and head entries from a created bundle.
+#[test]
+fn inspect_bundle_parses_created_bundle_metadata() {
+    let repo_dir = temp_repo_dir("inspect-bundle");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let inspection = inspect_bundle(&bundle_path).expect("bundle inspection should succeed");
+    assert_eq!(
+        inspection.version,
+        BundleVersion::V2,
+        "created bundle should use v2 bundle format"
+    );
+    assert_eq!(
+        inspection.prerequisites,
+        vec![base_commit_id],
+        "inspection should parse prerequisite commit list"
+    );
+    assert_eq!(
+        inspection.heads.len(),
+        1,
+        "inspection should parse one head"
+    );
+    assert_eq!(
+        inspection.heads[0].oid, tip_commit_id,
+        "inspection should parse head oid"
+    );
+    assert_eq!(
+        inspection.heads[0].reference, "refs/heads/tip",
+        "inspection should parse head reference name"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that inspect_bundle rejects files that do not begin with a valid bundle header signature.
+#[test]
+fn inspect_bundle_rejects_invalid_header_signature() {
+    let bundle_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-invalid-bundle-header-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::write(&bundle_path, b"not-a-bundle\nPACK").expect("must write invalid bundle file");
+
+    let result = inspect_bundle(&bundle_path);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject files with an invalid bundle signature line"
+    );
+
+    let _ = std::fs::remove_file(bundle_path);
+}
+
+// Verifies that resolve_repo_audit_range resolves commit ids from revspecs when the range is linear.
+#[test]
+fn resolve_repo_audit_range_accepts_linear_range() {
+    let repo_dir = temp_repo_dir("repo-range-linear");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id =
+        commit_from_files(&repo, "tip commit", &[("f.txt", "tip")], &[base_commit_id]);
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let range = resolve_repo_audit_range(&repo_dir, "refs/heads/base", "refs/heads/tip")
+        .expect("linear repo range should resolve");
+    assert_eq!(
+        range.base_commit_id, base_commit_id,
+        "base oid should resolve"
+    );
+    assert_eq!(range.tip_commit_id, tip_commit_id, "tip oid should resolve");
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that resolve_repo_audit_range rejects ranges where tip is not a descendant of base.
+#[test]
+fn resolve_repo_audit_range_rejects_non_descendant_tip() {
+    let repo_dir = temp_repo_dir("repo-range-non-descendant");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let root_commit_id = commit_from_files(&repo, "root commit", &[("f.txt", "root")], &[]);
+    let base_commit_id = commit_from_files(
+        &repo,
+        "base branch commit",
+        &[("f.txt", "base branch")],
+        &[root_commit_id],
+    );
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "diverged tip commit",
+        &[("f.txt", "tip branch")],
+        &[root_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let result = resolve_repo_audit_range(&repo_dir, "refs/heads/base", "refs/heads/tip");
+    assert!(
+        result.is_err(),
+        "repo audit range must reject non-descendant tip commits"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "git-sync-audit-{}-{}-{}",

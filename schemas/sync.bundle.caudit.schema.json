@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/sync.bundle.caudit.schema.json",
+  "title": "Git Sync Bundle Create Audit Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool_version",
+    "generated_at_unix_secs",
+    "bundle_path",
+    "bundle_size_bytes",
+    "bundle_sha256",
+    "bundle_header_version",
+    "prerequisites",
+    "heads",
+    "range_from_oid",
+    "range_to_oid",
+    "tip_ref",
+    "commit_chain",
+    "changed_files",
+    "patch_sidecar"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_unix_secs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bundle_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bundle_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bundle_header_version": {
+      "type": "string",
+      "enum": [
+        "v2",
+        "v3"
+      ]
+    },
+    "prerequisites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/oid"
+      }
+    },
+    "heads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "oid",
+          "reference"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "range_from_oid": {
+      "$ref": "#/$defs/oid"
+    },
+    "range_to_oid": {
+      "$ref": "#/$defs/oid"
+    },
+    "tip_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commit_chain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "oid",
+          "tree_oid",
+          "parent_oids",
+          "subject",
+          "author",
+          "committer"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "tree_oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "parent_oids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/oid"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "author": {
+            "$ref": "#/$defs/signature"
+          },
+          "committer": {
+            "$ref": "#/$defs/signature"
+          }
+        }
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "path",
+          "old_path",
+          "old_oid",
+          "new_oid",
+          "old_mode",
+          "new_mode",
+          "is_binary"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/$defs/status_code"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "old_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "old_oid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "new_oid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "old_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-7]{6}$"
+          },
+          "new_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-7]{6}$"
+          },
+          "is_binary": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "patch_sidecar": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "size_bytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "unified-diff"
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "oid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "status_code": {
+      "type": "string",
+      "enum": [
+        "A",
+        "M",
+        "D",
+        "R",
+        "C",
+        "T"
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "email",
+        "time_seconds",
+        "offset_minutes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "time_seconds": {
+          "type": "integer"
+        },
+        "offset_minutes": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}
