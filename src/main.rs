@@ -8,10 +8,11 @@ use app::AppConfig;
 use clap::Parser;
 use cli::{AuditTarget, Cli, Command, OutputFormat, resolve_audit_target};
 use git::{
-    CreateBundleOptions, collect_changed_files, collect_changed_files_from_bundle_input,
-    create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts, render_manifest,
-    render_manifest_json, resolve_repo_audit_range, verify_bundle_metadata_against_repo_input,
-    receive_bundle_input, receive_bundle_input_with_options, ReceiveBundleOptions,
+    CreateBundleOptions, ReceiveBundleOptions, collect_changed_files,
+    collect_changed_files_from_bundle_input, create_bundle, create_bundle_with_options,
+    receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
+    render_manifest, render_manifest_json, resolve_repo_audit_range,
+    verify_bundle_metadata_against_repo_input,
 };
 
 fn main() -> Result<()> {

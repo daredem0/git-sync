@@ -1332,8 +1332,7 @@ fn receive_bundle_input_is_idempotent_when_same_package_is_applied_twice() {
     let second_receive = receive_bundle_input(&bundle_result.archive_path, &receiver_dir)
         .expect("second receive should also succeed");
     assert_eq!(
-        second_receive.imported_heads,
-        first_receive.imported_heads,
+        second_receive.imported_heads, first_receive.imported_heads,
         "idempotent receive should report the same imported heads"
     );
 
@@ -2255,7 +2254,10 @@ fn extract_bundle_archive_rejects_zip_with_multiple_bundle_entries() {
     let archive_path = work_dir.join("input.zip");
     write_test_zip(
         &archive_path,
-        &[("a.bundle", b"# v2 git bundle\n\nPACK"), ("b.bundle", b"# v2 git bundle\n\nPACK")],
+        &[
+            ("a.bundle", b"# v2 git bundle\n\nPACK"),
+            ("b.bundle", b"# v2 git bundle\n\nPACK"),
+        ],
     );
 
     let result = extract_bundle_archive(&archive_path);
@@ -2355,7 +2357,8 @@ fn verify_bundle_metadata_integrity_rejects_tip_head_consistency_mismatch() {
 // Verifies that metadata integrity validation rejects unsupported patch sidecar format values.
 #[test]
 fn verify_bundle_metadata_integrity_rejects_patch_sidecar_unsupported_format() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-format", true);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("integrity-patch-format", true);
     let mut metadata = read_json_value(&bundle_result.audit_path);
     metadata["patch_sidecar"]["format"] = serde_json::json!("unknown-format");
     write_json_value(&bundle_result.audit_path, &metadata);
@@ -2372,7 +2375,8 @@ fn verify_bundle_metadata_integrity_rejects_patch_sidecar_unsupported_format() {
 // Verifies that metadata integrity validation rejects missing patch sidecar paths.
 #[test]
 fn verify_bundle_metadata_integrity_rejects_missing_patch_sidecar_path() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-missing", true);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("integrity-patch-missing", true);
     let mut metadata = read_json_value(&bundle_result.audit_path);
     let missing_patch_path = repo_dir.join("missing-sidecar.patch");
     metadata["patch_sidecar"]["path"] = serde_json::json!(missing_patch_path.display().to_string());
@@ -2390,7 +2394,8 @@ fn verify_bundle_metadata_integrity_rejects_missing_patch_sidecar_path() {
 // Verifies that metadata integrity validation rejects patch sidecars with mismatched size values.
 #[test]
 fn verify_bundle_metadata_integrity_rejects_patch_sidecar_size_mismatch() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-size", true);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("integrity-patch-size", true);
     let mut metadata = read_json_value(&bundle_result.audit_path);
     let size = metadata["patch_sidecar"]["size_bytes"]
         .as_u64()
@@ -2550,19 +2555,9 @@ fn verify_bundle_metadata_against_repo_rejects_non_linear_range_in_metadata() {
     let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
 
     let root_commit_id = commit_from_files(&repo, "root", &[("f.txt", "root")], &[]);
-    let base_commit_id = commit_from_files(
-        &repo,
-        "base",
-        &[("f.txt", "base")],
-        &[root_commit_id],
-    );
+    let base_commit_id = commit_from_files(&repo, "base", &[("f.txt", "base")], &[root_commit_id]);
     let tip_commit_id = commit_from_files(&repo, "tip", &[("f.txt", "tip")], &[base_commit_id]);
-    let side_commit_id = commit_from_files(
-        &repo,
-        "side",
-        &[("f.txt", "side")],
-        &[root_commit_id],
-    );
+    let side_commit_id = commit_from_files(&repo, "side", &[("f.txt", "side")], &[root_commit_id]);
     repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
         .expect("must create base ref");
     repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
@@ -2589,7 +2584,8 @@ fn verify_bundle_metadata_against_repo_rejects_non_linear_range_in_metadata() {
 // Verifies that metadata verification rejects mismatched commit_chain values even when commit ids are valid and linear.
 #[test]
 fn verify_bundle_metadata_against_repo_rejects_commit_chain_mismatch() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("verify-caudit-chain", false);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("verify-caudit-chain", false);
     let mut metadata = read_json_value(&bundle_result.audit_path);
     metadata["commit_chain"] = serde_json::json!([]);
     write_json_value(&bundle_result.audit_path, &metadata);
@@ -2667,11 +2663,19 @@ fn receive_bundle_input_with_options_accepts_plain_bundle_with_verification() {
     let base_ref = receiver_repo
         .find_reference("refs/heads/base")
         .expect("base prerequisite ref should exist");
-    assert_eq!(base_ref.target(), Some(base_commit_id), "base ref should match");
+    assert_eq!(
+        base_ref.target(),
+        Some(base_commit_id),
+        "base ref should match"
+    );
     let tip_ref = receiver_repo
         .find_reference("refs/heads/tip")
         .expect("tip ref should exist");
-    assert_eq!(tip_ref.target(), Some(tip_commit_id), "tip ref should match");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "tip ref should match"
+    );
 
     let _ = std::fs::remove_dir_all(repo_dir);
     let _ = std::fs::remove_dir_all(receiver_dir);
@@ -2691,13 +2695,17 @@ fn verify_bundle_metadata_integrity_input_accepts_plain_bundle_input() {
 // Verifies that removing unarchived artifacts also removes optional patch sidecar files when present.
 #[test]
 fn remove_unarchived_bundle_artifacts_removes_optional_patch_sidecar() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("remove-artifacts-patch", true);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("remove-artifacts-patch", true);
     let patch_path = bundle_result
         .patch_audit_path
         .as_ref()
         .expect("patch sidecar path should be present when enabled")
         .clone();
-    assert!(patch_path.exists(), "patch sidecar should exist before cleanup");
+    assert!(
+        patch_path.exists(),
+        "patch sidecar should exist before cleanup"
+    );
 
     remove_unarchived_bundle_artifacts(&bundle_result)
         .expect("cleanup should succeed when patch sidecar exists");
@@ -2804,7 +2812,8 @@ fn load_bundle_metadata_from_path_rejects_directory_path() {
 // Verifies that resolve_patch_sidecar_path falls back to metadata sibling directory when explicit path does not exist.
 #[test]
 fn resolve_patch_sidecar_path_uses_sibling_when_explicit_path_is_missing() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("resolve-sidecar-sibling", true);
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("resolve-sidecar-sibling", true);
     let patch_path = bundle_result
         .patch_audit_path
         .as_ref()
@@ -2846,9 +2855,8 @@ fn receive_bundle_input_rejects_when_head_oid_is_missing_after_import() {
     let pack_data = &bundle_bytes[pack_offset..];
 
     let fake_head_oid = "ffffffffffffffffffffffffffffffffffffffff";
-    let tampered_header = format!(
-        "# v2 git bundle\n-{base_commit_id}\n{fake_head_oid} refs/heads/tip\n\n"
-    );
+    let tampered_header =
+        format!("# v2 git bundle\n-{base_commit_id}\n{fake_head_oid} refs/heads/tip\n\n");
     let mut tampered_bytes = tampered_header.into_bytes();
     tampered_bytes.extend_from_slice(pack_data);
     std::fs::write(&bundle_result.bundle_path, tampered_bytes)

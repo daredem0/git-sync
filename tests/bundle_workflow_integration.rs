@@ -82,7 +82,11 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
 
     let script_arg_owned = script_path.to_string_lossy().into_owned();
     let fixture_arg_owned = fixture_repo.to_string_lossy().into_owned();
-    run_checked_command("bash", &[&script_arg_owned, &fixture_arg_owned], Some(&manifest_dir));
+    run_checked_command(
+        "bash",
+        &[&script_arg_owned, &fixture_arg_owned],
+        Some(&manifest_dir),
+    );
     assert!(
         fixture_repo.join(".git").exists(),
         "fixture repo should be initialized"
@@ -130,7 +134,9 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
         "zip archive should contain sync.bundle"
     );
     assert!(
-        entries.iter().any(|entry| entry == "sync.bundle.caudit.json"),
+        entries
+            .iter()
+            .any(|entry| entry == "sync.bundle.caudit.json"),
         "zip archive should contain sync.bundle.caudit.json"
     );
 
@@ -255,7 +261,12 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
     );
     let receiver_tip_commit = run_checked_command(
         "git",
-        &["-C", &receiver_arg_owned, "rev-parse", "refs/tags/sync/tip^{commit}"],
+        &[
+            "-C",
+            &receiver_arg_owned,
+            "rev-parse",
+            "refs/tags/sync/tip^{commit}",
+        ],
         Some(&manifest_dir),
     );
     assert_eq!(
