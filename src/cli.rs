@@ -58,6 +58,8 @@ pub enum Command {
         bundle: PathBuf,
         #[arg(long, default_value_t = false)]
         verify_metadata: bool,
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 

@@ -285,6 +285,7 @@ fn receive_bundle_input_with_options_rejects_tampered_metadata_when_verification
         &receiver_dir,
         ReceiveBundleOptions {
             verify_metadata: true,
+            dry_run: false,
         },
     );
     assert!(
@@ -360,6 +361,7 @@ fn receive_bundle_input_with_options_allows_tampered_metadata_when_verification_
         &receiver_dir,
         ReceiveBundleOptions {
             verify_metadata: false,
+            dry_run: false,
         },
     )
     .expect("receive with verify_metadata=false should not block on tampered metadata");
@@ -492,6 +494,7 @@ fn receive_bundle_input_with_options_accepts_plain_bundle_with_verification() {
         &receiver_dir,
         ReceiveBundleOptions {
             verify_metadata: true,
+            dry_run: false,
         },
     )
     .expect("receive should succeed with plain bundle input when metadata is valid");
@@ -517,6 +520,188 @@ fn receive_bundle_input_with_options_accepts_plain_bundle_with_verification() {
         tip_ref.target(),
         Some(tip_commit_id),
         "tip ref should match"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that dry-run receive reports imported heads but does not write refs or packfiles.
+#[test]
+fn receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-dry-run", false);
+    let receiver_dir = temp_repo_dir("receive-dry-run-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite");
+
+    let pack_dir = receiver_dir.join("objects").join("pack");
+    let mut pack_entries_before = match std::fs::read_dir(&pack_dir) {
+        Ok(entries) => entries
+            .map(|entry| {
+                entry
+                    .expect("pack dir entry should be readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => panic!("must list receiver pack dir entries before dry-run: {err}"),
+    };
+    pack_entries_before.sort();
+
+    let receive_result = receive_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: true,
+        },
+    )
+    .expect("dry-run receive should succeed");
+    assert!(
+        receive_result.can_apply_without_conflicts,
+        "dry-run should confirm package can be applied without conflicts"
+    );
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture bundle should still report one imported head during dry-run"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].oid, tip_commit_id,
+        "dry-run should report the same head oid that would be imported"
+    );
+    assert!(
+        receive_result
+            .line_stats
+            .iter()
+            .any(|stat| stat.path == "f.txt" && stat.additions > 0 && stat.deletions > 0),
+        "dry-run should include modified file line stats"
+    );
+    assert!(
+        receive_result
+            .line_stats
+            .iter()
+            .any(|stat| stat.path == "new.txt" && stat.additions > 0),
+        "dry-run should include added file line stats"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let base_ref = receiver_repo
+        .find_reference("refs/heads/base")
+        .expect("base prerequisite ref should exist");
+    assert_eq!(
+        base_ref.target(),
+        Some(base_commit_id),
+        "base prerequisite ref should remain unchanged"
+    );
+    assert!(
+        receiver_repo.find_reference("refs/heads/tip").is_err(),
+        "dry-run must not create or update tip refs"
+    );
+
+    let mut pack_entries_after = match std::fs::read_dir(&pack_dir) {
+        Ok(entries) => entries
+            .map(|entry| {
+                entry
+                    .expect("pack dir entry should be readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => panic!("must list receiver pack dir entries after dry-run: {err}"),
+    };
+    pack_entries_after.sort();
+    assert_eq!(
+        pack_entries_after, pack_entries_before,
+        "dry-run must not add new packfiles to receiver object database"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that dry-run receive still enforces metadata verification when requested.
+#[test]
+fn receive_bundle_input_with_options_dry_run_rejects_tampered_metadata_when_verification_enabled() {
+    let repo_dir = temp_repo_dir("receive-dry-run-verify-metadata-fail");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    let metadata_bytes = std::fs::read(&caudit_path).expect("must read generated metadata");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+    metadata["bundle_sha256"] =
+        serde_json::Value::String("00000000000000000000000000000000".to_string());
+    std::fs::write(
+        &caudit_path,
+        serde_json::to_vec_pretty(&metadata).expect("must serialize tampered metadata"),
+    )
+    .expect("must write tampered metadata");
+
+    let receiver_dir = temp_repo_dir("receive-dry-run-verify-metadata-fail-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let receive_result = receive_bundle_input_with_options(
+        &bundle_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: true,
+            dry_run: true,
+        },
+    );
+    assert!(
+        receive_result.is_err(),
+        "dry-run receive with verify_metadata=true must reject tampered metadata"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    assert!(
+        receiver_repo.find_reference("refs/heads/tip").is_err(),
+        "failed dry-run must not create tip ref"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

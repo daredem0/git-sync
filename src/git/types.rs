@@ -67,6 +67,15 @@ pub struct RepoAuditRange {
 pub struct ReceiveBundleResult {
     pub bundle_version: BundleVersion,
     pub imported_heads: Vec<BundleHead>,
+    pub can_apply_without_conflicts: bool,
+    pub line_stats: Vec<FileLineStat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileLineStat {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,6 +86,7 @@ pub struct CreateBundleOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReceiveBundleOptions {
     pub verify_metadata: bool,
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

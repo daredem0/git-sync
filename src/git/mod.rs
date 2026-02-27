@@ -29,7 +29,8 @@ pub use range::resolve_repo_audit_range;
 #[allow(unused_imports)]
 pub use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, ChangedFile, CreateBundleOptions,
-    CreateBundleResult, OpenContext, ReceiveBundleOptions, ReceiveBundleResult, RepoAuditRange,
+    CreateBundleResult, FileLineStat, OpenContext, ReceiveBundleOptions, ReceiveBundleResult,
+    RepoAuditRange,
 };
 
 #[cfg(test)]
