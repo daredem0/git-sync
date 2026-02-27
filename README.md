@@ -221,7 +221,7 @@ Preview:
 
 ```text
 ┌Diff View─────────────────────────────────────────────────────────────────────────────────────────┐
-│Commit 4/? | aa7406fc5178e46f570027914655aeb27b550a15                                             │
+│Commit 4/13 | aa7406fc5178e46f570027914655aeb27b550a15                                            │
 │Change: Add zip-bundle audit flow and end-to-end fixture test                                     │
 │file: src/git/mod.rs                                                                              │
 │syntax: Rust | selected file index: 3                                                             │

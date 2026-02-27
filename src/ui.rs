@@ -93,6 +93,7 @@ struct AppState {
 #[derive(Debug, Clone)]
 struct DiffViewState {
     commit_index: usize,
+    commit_total: usize,
     file_index: usize,
     commit_id: git2::Oid,
     commit_subject: String,
@@ -288,6 +289,7 @@ impl AppState {
                     render_patch_with_syntax(&file_path, &patch_text, &model.syntax_highlighter);
                 self.diff_view = Some(DiffViewState {
                     commit_index,
+                    commit_total: entries.len(),
                     file_index,
                     commit_id: commit_entry.commit_id,
                     commit_subject: commit_entry.subject.clone(),
@@ -416,29 +418,39 @@ fn run_loop(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Esc => {
-                    if state.is_diff_open() {
-                        state.close_diff();
-                    } else {
-                        break;
-                    }
-                }
-                KeyCode::Char('?') => state.show_help = !state.show_help,
-                _ => {
-                    if state.is_diff_open() {
-                        handle_diff_keys(state, key.code);
-                    } else {
-                        handle_page_keys(state, model, key.code);
-                    }
-                }
+            if handle_key_press(state, model, key.code) {
+                break;
             }
         }
     }
 
     Ok(())
+}
+
+fn handle_key_press(state: &mut AppState, model: &AuditModel, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('q') => true,
+        KeyCode::Esc => {
+            if state.is_diff_open() {
+                state.close_diff();
+                false
+            } else {
+                true
+            }
+        }
+        KeyCode::Char('?') => {
+            state.show_help = !state.show_help;
+            false
+        }
+        _ => {
+            if state.is_diff_open() {
+                handle_diff_keys(state, code);
+            } else {
+                handle_page_keys(state, model, code);
+            }
+            false
+        }
+    }
 }
 
 fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
@@ -496,8 +508,9 @@ fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
         .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "Commit {}/? | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}",
+        "Commit {}/{} | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}",
         diff_view.commit_index + 1,
+        diff_view.commit_total,
         diff_view.commit_id,
         diff_view.commit_subject,
         diff_view.file_path,
@@ -1078,7 +1091,16 @@ fn render_footer_text(state: &AppState) -> String {
 fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
     let area = centered_rect(75, 45, frame.area());
     frame.render_widget(Clear, area);
-    let help_text = if in_diff_view {
+    let help_text = help_text_for_mode(in_diff_view);
+
+    let help = Paragraph::new(help_text)
+        .block(Block::default().borders(Borders::ALL).title("Keymap"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(help, area);
+}
+
+fn help_text_for_mode(in_diff_view: bool) -> &'static str {
+    if in_diff_view {
         "Navigation (Diff View)\n\
          - j / Down: scroll down\n\
          - k / Up: scroll up\n\
@@ -1100,12 +1122,7 @@ fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
          - Enter: open selected file diff view\n\
          - ?: toggle this help\n\
          - q / Esc: quit"
-    };
-
-    let help = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::ALL).title("Keymap"))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(help, area);
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -1167,6 +1184,130 @@ fn format_git_timestamp(seconds: i64, offset_minutes: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Debug)]
+    struct DiffFixture {
+        source_dir: PathBuf,
+        receiver_dir: PathBuf,
+        bundle_archive_path: PathBuf,
+        entries: Vec<CommitAuditEntry>,
+    }
+
+    impl Drop for DiffFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.source_dir);
+            let _ = fs::remove_dir_all(&self.receiver_dir);
+        }
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "git-sync-audit-ui-{}-{}-{}",
+            prefix,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn commit_from_files(
+        repo: &git2::Repository,
+        message: &str,
+        files: &[(&str, &str)],
+        parent_oids: &[git2::Oid],
+    ) -> git2::Oid {
+        let mut builder = repo.treebuilder(None).expect("must create tree builder");
+        for (path, content) in files {
+            let blob_id = repo
+                .blob(content.as_bytes())
+                .expect("must create blob object");
+            builder
+                .insert(*path, blob_id, 0o100644)
+                .expect("must insert file entry");
+        }
+        let tree_id = builder.write().expect("must write tree");
+        let tree = repo.find_tree(tree_id).expect("must find written tree");
+        let parent_commits: Vec<git2::Commit<'_>> = parent_oids
+            .iter()
+            .map(|oid| repo.find_commit(*oid).expect("must resolve parent"))
+            .collect();
+        let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
+        let sig = git2::Signature::now("UI Test", "ui-test@example.com")
+            .expect("must create commit signature");
+        repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+            .expect("must create commit")
+    }
+
+    fn create_diff_fixture() -> DiffFixture {
+        let source_dir = unique_temp_dir("source");
+        fs::create_dir_all(&source_dir).expect("must create source dir");
+        let source_repo = git2::Repository::init(&source_dir).expect("must init source repo");
+
+        let base_commit = commit_from_files(
+            &source_repo,
+            "base",
+            &[("f.rs", "fn value() -> i32 { 1 }\n")],
+            &[],
+        );
+        let tip_commit = commit_from_files(
+            &source_repo,
+            "tip",
+            &[
+                ("f.rs", "fn value() -> i32 { 2 }\n"),
+                ("g.txt", "new file\n"),
+            ],
+            &[base_commit],
+        );
+        source_repo
+            .reference("refs/heads/base", base_commit, true, "create base ref")
+            .expect("must create base ref");
+        source_repo
+            .reference("refs/heads/tip", tip_commit, true, "create tip ref")
+            .expect("must create tip ref");
+
+        let bundle_path = source_dir.join("sync.bundle");
+        let bundle_result = git::create_bundle(
+            &source_dir,
+            "refs/heads/base",
+            "refs/heads/tip",
+            &bundle_path,
+        )
+        .expect("must create bundle package");
+        git::remove_unarchived_bundle_artifacts(&bundle_result)
+            .expect("must remove unarchived artifacts");
+
+        let receiver_dir = unique_temp_dir("receiver");
+        fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+        let receiver_repo = git2::Repository::init_bare(&receiver_dir).expect("must init receiver");
+        let mut source_remote = receiver_repo
+            .remote_anonymous(source_dir.to_str().expect("source path should be utf-8"))
+            .expect("must create source remote");
+        source_remote
+            .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+            .expect("must fetch prerequisite base ref");
+
+        let entries = git::collect_commit_audit_entries_for_bundle_input(
+            &bundle_result.archive_path,
+            &receiver_dir,
+        )
+        .expect("must collect commit entries for fixture bundle");
+        assert_eq!(
+            entries.len(),
+            1,
+            "fixture should contain one commit in base..tip"
+        );
+
+        DiffFixture {
+            source_dir,
+            receiver_dir,
+            bundle_archive_path: bundle_result.archive_path,
+            entries,
+        }
+    }
 
     fn sample_model(commit_count: usize, files_per_commit: usize) -> AuditModel {
         let commit_pages = CommitPagesModel::Ok(
@@ -1210,6 +1351,23 @@ mod tests {
             commit_pages,
             repo_path: PathBuf::from("."),
             bundle_path: PathBuf::from("sync.bundle.zip"),
+            syntax_highlighter: SyntaxHighlighter::load(),
+        }
+    }
+
+    fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
+        AuditModel {
+            overview: OverviewModel {
+                repo_path: fixture.receiver_dir.display().to_string(),
+                bundle_path: fixture.bundle_archive_path.display().to_string(),
+                base_ref: "sync/last".to_string(),
+                tip_ref: "-".to_string(),
+                metadata_verification: StatusLine::Ok,
+                dry_run: DryRunLine::Failed("not needed for ui unit tests".to_string()),
+            },
+            commit_pages: CommitPagesModel::Ok(fixture.entries.clone()),
+            repo_path: fixture.receiver_dir.clone(),
+            bundle_path: fixture.bundle_archive_path.clone(),
             syntax_highlighter: SyntaxHighlighter::load(),
         }
     }
@@ -1339,6 +1497,230 @@ mod tests {
         assert!(
             state.diff_view.is_none(),
             "diff view should remain closed when not on a commit page"
+        );
+    }
+
+    // Verifies that opening a selected diff on a commit page creates a populated diff view model.
+    #[test]
+    fn open_selected_diff_creates_diff_view_for_selected_file() {
+        let fixture = create_diff_fixture();
+        let model = build_model_from_fixture(&fixture);
+        let mut state = AppState::new(&model);
+        state.next_page(&model);
+        let commit_index = 0usize;
+        let target_index = fixture.entries[commit_index]
+            .files
+            .iter()
+            .position(|file| file.path == "f.rs")
+            .expect("fixture commit should contain f.rs");
+        state.selected_file_indices[commit_index] = target_index;
+
+        state.open_selected_diff(&model);
+
+        let diff_view = state
+            .diff_view
+            .as_ref()
+            .expect("diff view should be opened for selected file");
+        assert_eq!(
+            diff_view.commit_total,
+            fixture.entries.len(),
+            "diff view should carry total commit count for header rendering"
+        );
+        assert_eq!(
+            diff_view.file_path, "f.rs",
+            "diff view should open the selected commit file path"
+        );
+        assert!(
+            !diff_view.lines.is_empty(),
+            "diff view should include rendered patch lines"
+        );
+        assert!(
+            diff_view.syntax_name.contains("Rust"),
+            "syntax detection should identify Rust for .rs files"
+        );
+        assert!(
+            state.action_message.is_none(),
+            "opening valid diff should not set an error/action message"
+        );
+    }
+
+    // Verifies that diff scrolling clamps to valid bounds and never underflows/overflows.
+    #[test]
+    fn diff_scroll_is_bounded() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.diff_view = Some(DiffViewState {
+            commit_index: 0,
+            commit_total: 1,
+            file_index: 0,
+            commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                .expect("valid oid"),
+            commit_subject: "subject".to_string(),
+            file_path: "f.rs".to_string(),
+            syntax_name: "Rust".to_string(),
+            lines: vec![
+                Line::from("line 1"),
+                Line::from("line 2"),
+                Line::from("line 3"),
+            ],
+            max_line_width: 12,
+            scroll_y: 0,
+            scroll_x: 0,
+        });
+
+        state.scroll_diff_up(100);
+        state.scroll_diff_left(100);
+        assert_eq!(state.diff_view.as_ref().expect("diff view").scroll_y, 0);
+        assert_eq!(state.diff_view.as_ref().expect("diff view").scroll_x, 0);
+
+        state.scroll_diff_down(100);
+        state.scroll_diff_right(100);
+        assert_eq!(
+            state.diff_view.as_ref().expect("diff view").scroll_y,
+            2,
+            "vertical diff scroll should clamp to last line index"
+        );
+        assert_eq!(
+            state.diff_view.as_ref().expect("diff view").scroll_x,
+            11,
+            "horizontal diff scroll should clamp to max_line_width - 1"
+        );
+
+        state.reset_diff_scroll();
+        assert_eq!(state.diff_view.as_ref().expect("diff view").scroll_y, 0);
+        assert_eq!(state.diff_view.as_ref().expect("diff view").scroll_x, 0);
+    }
+
+    // Verifies that Esc closes diff view without requesting app exit, and Esc exits when no diff is open.
+    #[test]
+    fn handle_key_press_esc_closes_diff_then_exits() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.diff_view = Some(DiffViewState {
+            commit_index: 0,
+            commit_total: 1,
+            file_index: 0,
+            commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                .expect("valid oid"),
+            commit_subject: "subject".to_string(),
+            file_path: "f.rs".to_string(),
+            syntax_name: "Rust".to_string(),
+            lines: vec![Line::from("line 1")],
+            max_line_width: 10,
+            scroll_y: 0,
+            scroll_x: 0,
+        });
+
+        let should_exit_with_diff = handle_key_press(&mut state, &model, KeyCode::Esc);
+        assert!(
+            !should_exit_with_diff,
+            "Esc should close active diff view instead of exiting application"
+        );
+        assert!(
+            state.diff_view.is_none(),
+            "Esc should clear diff view state when diff is open"
+        );
+
+        let should_exit_without_diff = handle_key_press(&mut state, &model, KeyCode::Esc);
+        assert!(
+            should_exit_without_diff,
+            "Esc should request exit when no diff view is active"
+        );
+    }
+
+    // Verifies that line-number column tracking stays consistent across context/delete/add sequences.
+    #[test]
+    fn line_number_columns_tracks_old_and_new_counters() {
+        let mut old = Some(10usize);
+        let mut new = Some(20usize);
+
+        let context = line_number_columns(PatchLineKind::Context, &mut old, &mut new);
+        assert_eq!(context, ("10".to_string(), "20".to_string()));
+        assert_eq!(old, Some(11));
+        assert_eq!(new, Some(21));
+
+        let deleted = line_number_columns(PatchLineKind::Deleted, &mut old, &mut new);
+        assert_eq!(deleted, ("11".to_string(), "".to_string()));
+        assert_eq!(old, Some(12));
+        assert_eq!(new, Some(21));
+
+        let added = line_number_columns(PatchLineKind::Added, &mut old, &mut new);
+        assert_eq!(added, ("".to_string(), "21".to_string()));
+        assert_eq!(old, Some(12));
+        assert_eq!(new, Some(22));
+    }
+
+    // Verifies that file-header lines with +++/--- are classified as headers, not add/delete content.
+    #[test]
+    fn classify_patch_line_treats_file_headers_as_headers() {
+        assert_eq!(
+            classify_patch_line("+++ b/src/main.rs"),
+            PatchLineKind::Header
+        );
+        assert_eq!(
+            classify_patch_line("--- a/src/main.rs"),
+            PatchLineKind::Header
+        );
+    }
+
+    // Verifies that syntax resolution falls back to plain text when file extension is unknown.
+    #[test]
+    fn resolve_syntax_for_unknown_extension_falls_back_to_plain_text() {
+        let highlighter = SyntaxHighlighter::load();
+        let (_, syntax_name) = highlighter.resolve_syntax_for_path("file.unknownext");
+        assert_eq!(
+            syntax_name,
+            highlighter.syntax_set.find_syntax_plain_text().name,
+            "unknown extensions should fall back to plain text syntax"
+        );
+    }
+
+    // Verifies that footer text switches to diff controls only when a diff view is active.
+    #[test]
+    fn render_footer_text_switches_between_page_and_diff_modes() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+
+        let page_footer = render_footer_text(&state);
+        assert!(
+            page_footer.contains("Enter open diff"),
+            "page mode footer should include commit-page action hints"
+        );
+
+        state.diff_view = Some(DiffViewState {
+            commit_index: 0,
+            commit_total: 1,
+            file_index: 0,
+            commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+                .expect("valid oid"),
+            commit_subject: "subject".to_string(),
+            file_path: "f.rs".to_string(),
+            syntax_name: "Rust".to_string(),
+            lines: vec![Line::from("line 1")],
+            max_line_width: 10,
+            scroll_y: 0,
+            scroll_x: 0,
+        });
+        let diff_footer = render_footer_text(&state);
+        assert!(
+            diff_footer.contains("PgUp/PgDn"),
+            "diff mode footer should include scrolling key hints"
+        );
+    }
+
+    // Verifies that help text content changes between page mode and diff mode.
+    #[test]
+    fn help_text_for_mode_switches_content_by_view() {
+        let page_help = help_text_for_mode(false);
+        assert!(
+            page_help.contains("Enter: open selected file diff view"),
+            "page help should mention opening a file diff"
+        );
+
+        let diff_help = help_text_for_mode(true);
+        assert!(
+            diff_help.contains("Esc: close diff and return to commit page"),
+            "diff help should mention returning from diff view"
         );
     }
 }
