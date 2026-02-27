@@ -1016,6 +1016,183 @@ fn render_manifest_json_formats_entries_and_preserves_order() {
     );
 }
 
+// Verifies that create_bundle writes a v2 bundle with prerequisite and tip lines followed by PACK data.
+#[test]
+fn create_bundle_writes_valid_bundle_header_and_pack_data() {
+    let repo_dir = temp_repo_dir("create-bundle-file");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed for a linear range");
+
+    assert_eq!(
+        result.from_commit_id, base_commit_id,
+        "from commit in result should match resolved base ref"
+    );
+    assert_eq!(
+        result.to_commit_id, tip_commit_id,
+        "to commit in result should match resolved tip ref"
+    );
+    assert_eq!(
+        result.tip_ref_name, "refs/heads/tip",
+        "tip ref name should preserve the resolved tip reference when available"
+    );
+
+    let bytes = std::fs::read(&bundle_path).expect("must read created bundle");
+    assert!(
+        bytes.starts_with(b"# v2 git bundle\n"),
+        "bundle should start with the v2 bundle signature line"
+    );
+
+    let header_preview = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    assert!(
+        header_preview.contains(&format!("-{base_commit_id}")),
+        "bundle header should contain prerequisite commit line"
+    );
+    assert!(
+        header_preview.contains(&format!("{tip_commit_id} refs/heads/tip")),
+        "bundle header should contain tip commit to ref mapping"
+    );
+    assert!(
+        bytes.windows(4).any(|w| w == b"PACK"),
+        "bundle should contain a packfile payload"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that create_bundle rejects ranges where the end commit does not descend from the start commit.
+#[test]
+fn create_bundle_fails_when_to_commit_is_not_descendant_of_from_commit() {
+    let repo_dir = temp_repo_dir("create-bundle-not-descendant");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let root_commit_id = commit_from_files(&repo, "root commit", &[("f.txt", "root")], &[]);
+    let base_commit_id = commit_from_files(
+        &repo,
+        "base branch commit",
+        &[("f.txt", "base branch")],
+        &[root_commit_id],
+    );
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "diverged tip commit",
+        &[("f.txt", "tip branch")],
+        &[root_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path);
+    assert!(
+        result.is_err(),
+        "create_bundle must reject non-linear ranges for deterministic incremental export"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that a created bundle can be fetched into another repo when prerequisite commits are present.
+#[test]
+fn create_bundle_can_be_fetched_when_prerequisite_is_present() {
+    use std::io::Write as _;
+
+    let repo_dir = temp_repo_dir("create-bundle-fetch");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let receiver_dir = temp_repo_dir("create-bundle-fetch-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+
+    // First, seed prerequisite history into receiver (simulates receiver already having base).
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite");
+
+    // Then apply bundle pack payload into receiver object database via Indexer.
+    let bundle_bytes = std::fs::read(&bundle_path).expect("must read created bundle");
+    let pack_offset = bundle_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .expect("bundle must contain PACK payload");
+    let pack_data = &bundle_bytes[pack_offset..];
+
+    let odb = receiver_repo.odb().expect("must open receiver odb");
+    let mut indexer = git2::Indexer::new(
+        Some(&odb),
+        receiver_repo.path().join("objects").join("pack").as_path(),
+        0o644,
+        true,
+    )
+    .expect("must create indexer");
+    indexer
+        .write_all(pack_data)
+        .expect("must write pack payload into indexer");
+    indexer.commit().expect("must finalize indexed pack");
+
+    let imported_tip = receiver_repo
+        .find_commit(tip_commit_id)
+        .expect("tip commit from bundle pack should be present after indexing");
+    assert_eq!(
+        imported_tip.id(),
+        tip_commit_id,
+        "imported tip commit should match original tip commit id"
+    );
+    assert_eq!(
+        result.tip_ref_name, "refs/heads/tip",
+        "result metadata should preserve exported tip ref name"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "git-sync-audit-{}-{}-{}",

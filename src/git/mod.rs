@@ -2,8 +2,9 @@ use crate::app::AppConfig;
 use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
 use std::fs::File;
+use std::io::Write;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundleVersion {
@@ -35,6 +36,14 @@ pub struct ChangedFile {
     pub old_path: Option<String>,
     pub old_oid: Option<git2::Oid>,
     pub new_oid: Option<git2::Oid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateBundleResult {
+    pub from_commit_id: git2::Oid,
+    pub to_commit_id: git2::Oid,
+    pub tip_ref_name: String,
+    pub bundle_path: PathBuf,
 }
 
 pub fn render_manifest(changes: &[ChangedFile]) -> String {
@@ -70,6 +79,58 @@ pub fn render_manifest_json(changes: &[ChangedFile]) -> Result<String> {
         })
         .collect();
     Ok(serde_json::to_string_pretty(&entries)?)
+}
+
+pub fn create_bundle(
+    repo_path: &Path,
+    from_rev: &str,
+    to_rev: &str,
+    bundle_path: &Path,
+) -> Result<CreateBundleResult> {
+    let repo = git2::Repository::open(repo_path)?;
+
+    let from_obj = repo.revparse_single(from_rev)?;
+    let from_commit = from_obj.peel_to_commit()?;
+    let from_commit_id = from_commit.id();
+
+    let (to_obj, to_ref) = repo.revparse_ext(to_rev)?;
+    let to_commit = to_obj.peel_to_commit()?;
+    let to_commit_id = to_commit.id();
+
+    if from_commit_id != to_commit_id && !repo.graph_descendant_of(to_commit_id, from_commit_id)? {
+        bail!(
+            "to commit '{}' must be the same as or a descendant of from commit '{}'",
+            to_rev,
+            from_rev
+        );
+    }
+
+    let tip_ref_name = to_ref
+        .and_then(|reference| reference.name().map(|name| name.to_string()))
+        .unwrap_or_else(|| format!("refs/heads/bundle-tip-{}", &to_commit_id.to_string()[..12]));
+
+    let mut walk = repo.revwalk()?;
+    walk.push(to_commit_id)?;
+    walk.hide(from_commit_id)?;
+
+    let mut packbuilder = repo.packbuilder()?;
+    packbuilder.insert_walk(&mut walk)?;
+    let mut pack_buffer = git2::Buf::new();
+    packbuilder.write_buf(&mut pack_buffer)?;
+
+    let mut file = File::create(bundle_path)?;
+    writeln!(file, "# v2 git bundle")?;
+    writeln!(file, "-{from_commit_id}")?;
+    writeln!(file, "{to_commit_id} {tip_ref_name}")?;
+    writeln!(file)?;
+    file.write_all(&pack_buffer)?;
+
+    Ok(CreateBundleResult {
+        from_commit_id,
+        to_commit_id,
+        tip_ref_name,
+        bundle_path: bundle_path.to_path_buf(),
+    })
 }
 
 pub fn open_context(config: &AppConfig) -> Result<OpenContext> {

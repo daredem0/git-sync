@@ -13,6 +13,21 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Command::Create {
+            repo,
+            from,
+            to,
+            output,
+        }) => {
+            let result = git::create_bundle(&repo, &from, &to, &output)?;
+            println!(
+                "bundle created: path={}, from={}, to={}, tip_ref={}",
+                result.bundle_path.display(),
+                result.from_commit_id,
+                result.to_commit_id,
+                result.tip_ref_name
+            );
+        }
         Some(Command::Audit {
             repo,
             bundle,

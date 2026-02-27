@@ -14,6 +14,16 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    Create {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
     Audit {
         #[arg(long)]
         repo: PathBuf,
