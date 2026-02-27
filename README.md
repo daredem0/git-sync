@@ -34,6 +34,12 @@ Run only the end-to-end integration test:
 cargo test --test bundle_workflow_integration -- --nocapture
 ```
 
+## Coverage
+
+```bash
+cargo llvm-cov --workspace --all-features --summary-only
+```
+
 ## Commands
 
 ### Create bundle package
@@ -85,3 +91,11 @@ cargo run -- receive --repo /path/to/receiver-repo --bundle /path/to/sync.bundle
 - `receive` requires the receiver repo to already contain prerequisite history referenced by the bundle.
 - `receive --verify-metadata` verifies bundle and sidecar integrity before import.
 - Metadata schema is defined in `schemas/sync.bundle.caudit.schema.json`.
+
+## Open TODO
+
+- Add package authenticity verification using detached `Ed25519` signatures.
+- Signing target: the final transfer artifact (`sync.bundle.zip`) as raw bytes.
+- Planned output on create: `sync.bundle.zip.sig`.
+- Planned verification inputs on audit/receive: detached signature + trusted public key.
+- Enforcement goal: reject package when signature is missing or invalid.

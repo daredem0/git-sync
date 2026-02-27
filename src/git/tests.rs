@@ -1266,6 +1266,107 @@ fn receive_bundle_input_imports_zip_bundle_and_updates_heads_when_prerequisite_e
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that receiving the same bundle package twice is idempotent and does not create additional packfiles.
+#[test]
+fn receive_bundle_input_is_idempotent_when_same_package_is_applied_twice() {
+    let repo_dir = temp_repo_dir("receive-bundle-idempotent");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    remove_unarchived_bundle_artifacts(&bundle_result).expect("must remove loose bundle artifacts");
+
+    let receiver_dir = temp_repo_dir("receive-bundle-idempotent-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let first_receive = receive_bundle_input(&bundle_result.archive_path, &receiver_dir)
+        .expect("first receive should succeed");
+    assert_eq!(
+        first_receive.imported_heads.len(),
+        1,
+        "fixture range should import exactly one head"
+    );
+
+    let pack_dir = receiver_dir.join("objects").join("pack");
+    let mut pack_entries_after_first = std::fs::read_dir(&pack_dir)
+        .expect("receiver pack dir should exist")
+        .map(|entry| {
+            entry
+                .expect("pack dir entry should be readable")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    pack_entries_after_first.sort();
+
+    let second_receive = receive_bundle_input(&bundle_result.archive_path, &receiver_dir)
+        .expect("second receive should also succeed");
+    assert_eq!(
+        second_receive.imported_heads,
+        first_receive.imported_heads,
+        "idempotent receive should report the same imported heads"
+    );
+
+    let mut pack_entries_after_second = std::fs::read_dir(&pack_dir)
+        .expect("receiver pack dir should still exist")
+        .map(|entry| {
+            entry
+                .expect("pack dir entry should be readable")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    pack_entries_after_second.sort();
+    assert_eq!(
+        pack_entries_after_second, pack_entries_after_first,
+        "second receive should not add new pack files when package is already applied"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip ref should exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "tip ref should remain pinned to the imported tip commit after repeated receive"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that receive_bundle_input fails when the receiver lacks prerequisite objects required by the bundle pack.
 #[test]
 fn receive_bundle_input_fails_when_prerequisite_is_missing() {
@@ -2059,6 +2160,817 @@ fn resolve_repo_audit_range_rejects_non_descendant_tip() {
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that inspect_bundle rejects non-existent bundle paths.
+#[test]
+fn inspect_bundle_rejects_missing_path() {
+    let missing_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-missing-inspect-bundle-{}-{}.bundle",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+
+    let result = inspect_bundle(&missing_path);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject non-existent bundle paths"
+    );
+}
+
+// Verifies that inspect_bundle rejects paths that are directories instead of files.
+#[test]
+fn inspect_bundle_rejects_directory_path() {
+    let bundle_dir = temp_repo_dir("inspect-bundle-dir");
+    std::fs::create_dir_all(&bundle_dir).expect("must create bundle directory");
+
+    let result = inspect_bundle(&bundle_dir);
+    assert!(
+        result.is_err(),
+        "inspect_bundle must reject directory paths"
+    );
+
+    let _ = std::fs::remove_dir_all(bundle_dir);
+}
+
+// Verifies that extract_bundle_archive rejects missing archive paths.
+#[test]
+fn extract_bundle_archive_rejects_missing_path() {
+    let missing_archive = std::env::temp_dir().join(format!(
+        "git-sync-audit-missing-archive-{}-{}.zip",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+
+    let result = extract_bundle_archive(&missing_archive);
+    assert!(
+        result.is_err(),
+        "extract_bundle_archive must reject non-existent archive paths"
+    );
+}
+
+// Verifies that extract_bundle_archive rejects archive paths that are directories.
+#[test]
+fn extract_bundle_archive_rejects_directory_path() {
+    let archive_dir = temp_repo_dir("extract-archive-dir");
+    std::fs::create_dir_all(&archive_dir).expect("must create archive directory");
+
+    let result = extract_bundle_archive(&archive_dir);
+    assert!(
+        result.is_err(),
+        "extract_bundle_archive must reject directory archive paths"
+    );
+
+    let _ = std::fs::remove_dir_all(archive_dir);
+}
+
+// Verifies that extract_bundle_archive rejects zip archives without any .bundle entry.
+#[test]
+fn extract_bundle_archive_rejects_zip_without_bundle_entry() {
+    let work_dir = temp_repo_dir("extract-archive-no-bundle");
+    std::fs::create_dir_all(&work_dir).expect("must create work dir");
+    let archive_path = work_dir.join("input.zip");
+    write_test_zip(&archive_path, &[("note.txt", b"not a bundle")]);
+
+    let result = extract_bundle_archive(&archive_path);
+    assert!(
+        result.is_err(),
+        "archive extraction must fail when no .bundle entry exists"
+    );
+
+    let _ = std::fs::remove_dir_all(work_dir);
+}
+
+// Verifies that extract_bundle_archive rejects zip archives containing multiple .bundle entries.
+#[test]
+fn extract_bundle_archive_rejects_zip_with_multiple_bundle_entries() {
+    let work_dir = temp_repo_dir("extract-archive-multi-bundle");
+    std::fs::create_dir_all(&work_dir).expect("must create work dir");
+    let archive_path = work_dir.join("input.zip");
+    write_test_zip(
+        &archive_path,
+        &[("a.bundle", b"# v2 git bundle\n\nPACK"), ("b.bundle", b"# v2 git bundle\n\nPACK")],
+    );
+
+    let result = extract_bundle_archive(&archive_path);
+    assert!(
+        result.is_err(),
+        "archive extraction must fail when multiple .bundle entries exist"
+    );
+
+    let _ = std::fs::remove_dir_all(work_dir);
+}
+
+// Verifies that metadata integrity validation rejects unsupported schema versions.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_unsupported_schema_version() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-schema", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["schema_version"] = serde_json::json!("999");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject unsupported schema version values"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects bundle header version mismatches.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_header_version_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-header", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["bundle_header_version"] = serde_json::json!("v9");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject mismatched bundle_header_version values"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects prerequisite lists that do not match bundle header prerequisites.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_prerequisite_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-prereq", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["prerequisites"] = serde_json::json!([]);
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject prerequisite mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects head entries that do not match the bundle header.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_heads_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-heads", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["heads"][0]["reference"] = serde_json::json!("refs/heads/other");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject head mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects tip_ref/range_to_oid combinations that do not match any head entry.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_tip_head_consistency_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-tip", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["tip_ref"] = serde_json::json!("refs/heads/does-not-exist");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject tip_ref/range_to_oid mismatches against head list"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects unsupported patch sidecar format values.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_patch_sidecar_unsupported_format() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-format", true);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["patch_sidecar"]["format"] = serde_json::json!("unknown-format");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject unsupported patch sidecar formats"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects missing patch sidecar paths.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_missing_patch_sidecar_path() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-missing", true);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    let missing_patch_path = repo_dir.join("missing-sidecar.patch");
+    metadata["patch_sidecar"]["path"] = serde_json::json!(missing_patch_path.display().to_string());
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject missing patch sidecar paths"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects patch sidecars with mismatched size values.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_patch_sidecar_size_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-size", true);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    let size = metadata["patch_sidecar"]["size_bytes"]
+        .as_u64()
+        .expect("patch sidecar size should be present");
+    metadata["patch_sidecar"]["size_bytes"] = serde_json::json!(size + 1);
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject patch sidecar size mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata integrity validation rejects patch sidecars with mismatched SHA-256 values.
+#[test]
+fn verify_bundle_metadata_integrity_rejects_patch_sidecar_sha_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("integrity-patch-sha", true);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["patch_sidecar"]["sha256"] =
+        serde_json::json!("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_integrity(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "metadata integrity must reject patch sidecar sha mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that collect_changed_files_from_bundle_input rejects unknown status codes in metadata.
+#[test]
+fn collect_changed_files_from_bundle_input_rejects_unknown_status_code() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("parse-status", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["changed_files"][0]["status"] = serde_json::json!("Z");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = collect_changed_files_from_bundle_input(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "changed-file parsing must reject unknown status codes"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that collect_changed_files_from_bundle_input rejects invalid object IDs in metadata.
+#[test]
+fn collect_changed_files_from_bundle_input_rejects_invalid_oid() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("parse-oid", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["changed_files"][0]["new_oid"] = serde_json::json!("not-an-oid");
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = collect_changed_files_from_bundle_input(&bundle_result.bundle_path);
+    assert!(
+        result.is_err(),
+        "changed-file parsing must reject invalid oid values"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that receive_bundle_input rejects bundles that do not declare any head entries.
+#[test]
+fn receive_bundle_input_rejects_bundle_without_heads() {
+    let work_dir = temp_repo_dir("receive-no-heads");
+    std::fs::create_dir_all(&work_dir).expect("must create work dir");
+    let bundle_path = work_dir.join("empty-heads.bundle");
+    std::fs::write(&bundle_path, b"# v2 git bundle\n\nPACK").expect("must write bundle file");
+
+    let receiver_dir = temp_repo_dir("receive-no-heads-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+
+    let result = receive_bundle_input(&bundle_path, &receiver_dir);
+    assert!(
+        result.is_err(),
+        "receive must reject bundle payloads without any head entries"
+    );
+
+    let _ = std::fs::remove_dir_all(work_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that is_head_already_applied resolves symbolic refs (such as HEAD) before comparing target OIDs.
+#[test]
+fn is_head_already_applied_resolves_symbolic_reference_targets() {
+    let repo_dir = temp_repo_dir("receive-symbolic-head");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let commit_id = commit_from_files(&repo, "commit", &[("f.txt", "content")], &[]);
+    repo.reference("refs/heads/main", commit_id, true, "set main")
+        .expect("must create main ref");
+    repo.set_head("refs/heads/main")
+        .expect("must set HEAD symbolic ref");
+
+    let applied = is_head_already_applied(
+        &repo,
+        &BundleHead {
+            oid: commit_id,
+            reference: "HEAD".to_string(),
+        },
+    )
+    .expect("symbolic reference resolution should not fail");
+    assert!(
+        applied,
+        "symbolic HEAD should resolve to refs/heads/main and match commit id"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that is_head_already_applied returns false when symbolic refs cannot be resolved.
+#[test]
+fn is_head_already_applied_returns_false_for_broken_symbolic_reference() {
+    let repo_dir = temp_repo_dir("receive-broken-symbolic");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let commit_id = commit_from_files(&repo, "commit", &[("f.txt", "content")], &[]);
+    repo.reference_symbolic(
+        "refs/heads/broken-symbolic",
+        "refs/heads/does-not-exist",
+        true,
+        "create broken symbolic ref",
+    )
+    .expect("must create broken symbolic ref");
+
+    let applied = is_head_already_applied(
+        &repo,
+        &BundleHead {
+            oid: commit_id,
+            reference: "refs/heads/broken-symbolic".to_string(),
+        },
+    )
+    .expect("broken symbolic ref lookup should not return hard error");
+    assert!(
+        !applied,
+        "broken symbolic refs should not be treated as already applied"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata verification rejects ranges whose from/to commits are present but not in ancestor-descendant order.
+#[test]
+fn verify_bundle_metadata_against_repo_rejects_non_linear_range_in_metadata() {
+    let repo_dir = temp_repo_dir("verify-caudit-non-linear-range");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let root_commit_id = commit_from_files(&repo, "root", &[("f.txt", "root")], &[]);
+    let base_commit_id = commit_from_files(
+        &repo,
+        "base",
+        &[("f.txt", "base")],
+        &[root_commit_id],
+    );
+    let tip_commit_id = commit_from_files(&repo, "tip", &[("f.txt", "tip")], &[base_commit_id]);
+    let side_commit_id = commit_from_files(
+        &repo,
+        "side",
+        &[("f.txt", "side")],
+        &[root_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    let mut metadata = read_json_value(&caudit_path);
+    metadata["range_from_oid"] = serde_json::json!(side_commit_id.to_string());
+    write_json_value(&caudit_path, &metadata);
+
+    let result = verify_bundle_metadata_against_repo(&bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "verification must reject metadata where range_from_oid is not an ancestor of range_to_oid"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata verification rejects mismatched commit_chain values even when commit ids are valid and linear.
+#[test]
+fn verify_bundle_metadata_against_repo_rejects_commit_chain_mismatch() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("verify-caudit-chain", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["commit_chain"] = serde_json::json!([]);
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_against_repo(&bundle_result.bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "verification must reject metadata commit_chain mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata verification rejects mismatched changed_files values even when commit ids are valid and linear.
+#[test]
+fn verify_bundle_metadata_against_repo_rejects_changed_files_mismatch() {
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("verify-caudit-changes", false);
+    let mut metadata = read_json_value(&bundle_result.audit_path);
+    metadata["changed_files"] = serde_json::json!([]);
+    write_json_value(&bundle_result.audit_path, &metadata);
+
+    let result = verify_bundle_metadata_against_repo(&bundle_result.bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "verification must reject metadata changed_files mismatches"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that verify_bundle_metadata_against_repo_input supports plain .bundle input paths in addition to zip archives.
+#[test]
+fn verify_bundle_metadata_against_repo_input_accepts_plain_bundle_input() {
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("verify-caudit-plain-input", false);
+
+    verify_bundle_metadata_against_repo_input(&bundle_result.bundle_path, &repo_dir)
+        .expect("verification should succeed for plain bundle inputs");
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that receive with verify_metadata=true supports plain .bundle input paths (non-zip) on the success path.
+#[test]
+fn receive_bundle_input_with_options_accepts_plain_bundle_with_verification() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-plain-verify", false);
+    let receiver_dir = temp_repo_dir("receive-plain-verify-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite");
+
+    let receive_result = receive_bundle_input_with_options(
+        &bundle_result.bundle_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: true,
+        },
+    )
+    .expect("receive should succeed with plain bundle input when metadata is valid");
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture bundle should import exactly one head"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let base_ref = receiver_repo
+        .find_reference("refs/heads/base")
+        .expect("base prerequisite ref should exist");
+    assert_eq!(base_ref.target(), Some(base_commit_id), "base ref should match");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip ref should exist");
+    assert_eq!(tip_ref.target(), Some(tip_commit_id), "tip ref should match");
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that verify_bundle_metadata_integrity_input accepts plain .bundle input paths on the success path.
+#[test]
+fn verify_bundle_metadata_integrity_input_accepts_plain_bundle_input() {
+    let (repo_dir, bundle_result, _, _) =
+        create_linear_bundle_fixture("integrity-plain-input", false);
+    verify_bundle_metadata_integrity_input(&bundle_result.bundle_path)
+        .expect("integrity verification should succeed for valid plain bundle input");
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that removing unarchived artifacts also removes optional patch sidecar files when present.
+#[test]
+fn remove_unarchived_bundle_artifacts_removes_optional_patch_sidecar() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("remove-artifacts-patch", true);
+    let patch_path = bundle_result
+        .patch_audit_path
+        .as_ref()
+        .expect("patch sidecar path should be present when enabled")
+        .clone();
+    assert!(patch_path.exists(), "patch sidecar should exist before cleanup");
+
+    remove_unarchived_bundle_artifacts(&bundle_result)
+        .expect("cleanup should succeed when patch sidecar exists");
+    assert!(
+        !bundle_result.bundle_path.exists(),
+        "bundle file should be removed by cleanup"
+    );
+    assert!(
+        !bundle_result.audit_path.exists(),
+        "audit json should be removed by cleanup"
+    );
+    assert!(
+        !patch_path.exists(),
+        "patch sidecar should be removed by cleanup"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that remove_file_if_exists returns an error for paths that exist but are directories.
+#[test]
+fn remove_file_if_exists_rejects_directory_paths() {
+    let dir_path = temp_repo_dir("remove-file-dir");
+    std::fs::create_dir_all(&dir_path).expect("must create test directory");
+
+    let result = remove_file_if_exists(&dir_path);
+    assert!(
+        result.is_err(),
+        "remove_file_if_exists should error when given a directory path"
+    );
+
+    let _ = std::fs::remove_dir_all(dir_path);
+}
+
+// Verifies that write_zip_archive rejects missing archive input files.
+#[test]
+fn write_zip_archive_rejects_missing_input_file() {
+    let work_dir = temp_repo_dir("zip-missing-input");
+    std::fs::create_dir_all(&work_dir).expect("must create work dir");
+    let archive_path = work_dir.join("out.zip");
+    let missing_input = work_dir.join("missing.txt");
+
+    let result = write_zip_archive(&archive_path, &[missing_input]);
+    assert!(
+        result.is_err(),
+        "write_zip_archive should reject missing input paths"
+    );
+
+    let _ = std::fs::remove_dir_all(work_dir);
+}
+
+// Verifies that write_zip_archive rejects directory inputs in the file list.
+#[test]
+fn write_zip_archive_rejects_directory_input() {
+    let work_dir = temp_repo_dir("zip-directory-input");
+    std::fs::create_dir_all(&work_dir).expect("must create work dir");
+    let archive_path = work_dir.join("out.zip");
+    let input_dir = work_dir.join("dir-input");
+    std::fs::create_dir_all(&input_dir).expect("must create directory input");
+
+    let result = write_zip_archive(&archive_path, &[input_dir]);
+    assert!(
+        result.is_err(),
+        "write_zip_archive should reject directory input entries"
+    );
+
+    let _ = std::fs::remove_dir_all(work_dir);
+}
+
+// Verifies that load_bundle_metadata_from_path rejects missing metadata sidecar files.
+#[test]
+fn load_bundle_metadata_from_path_rejects_missing_path() {
+    let missing_path = std::env::temp_dir().join(format!(
+        "git-sync-audit-missing-caudit-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+
+    let result = load_bundle_metadata_from_path(&missing_path);
+    assert!(
+        result.is_err(),
+        "metadata loader should reject missing paths"
+    );
+}
+
+// Verifies that load_bundle_metadata_from_path rejects directory paths.
+#[test]
+fn load_bundle_metadata_from_path_rejects_directory_path() {
+    let metadata_dir = temp_repo_dir("load-metadata-dir");
+    std::fs::create_dir_all(&metadata_dir).expect("must create metadata dir");
+
+    let result = load_bundle_metadata_from_path(&metadata_dir);
+    assert!(
+        result.is_err(),
+        "metadata loader should reject directory paths"
+    );
+
+    let _ = std::fs::remove_dir_all(metadata_dir);
+}
+
+// Verifies that resolve_patch_sidecar_path falls back to metadata sibling directory when explicit path does not exist.
+#[test]
+fn resolve_patch_sidecar_path_uses_sibling_when_explicit_path_is_missing() {
+    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("resolve-sidecar-sibling", true);
+    let patch_path = bundle_result
+        .patch_audit_path
+        .as_ref()
+        .expect("patch sidecar path should exist")
+        .clone();
+    let patch_file_name = patch_path
+        .file_name()
+        .expect("patch sidecar should have file name")
+        .to_string_lossy()
+        .to_string();
+
+    let patch_sidecar = CreateBundleAuditPatchSidecar {
+        path: format!("missing-dir/{patch_file_name}"),
+        format: "unified-diff".to_string(),
+        size_bytes: 0,
+        sha256: String::new(),
+    };
+    let resolved_path = resolve_patch_sidecar_path(&bundle_result.audit_path, &patch_sidecar)
+        .expect("sibling resolution should succeed");
+    assert_eq!(
+        resolved_path, patch_path,
+        "patch sidecar resolution should fallback to metadata sibling directory"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that receive rejects bundles whose header head OID is missing after pack import.
+#[test]
+fn receive_bundle_input_rejects_when_head_oid_is_missing_after_import() {
+    let (repo_dir, bundle_result, base_commit_id, _) =
+        create_linear_bundle_fixture("receive-missing-head-commit", false);
+    let bundle_bytes =
+        std::fs::read(&bundle_result.bundle_path).expect("must read generated bundle bytes");
+    let pack_offset = bundle_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .expect("bundle must contain pack payload");
+    let pack_data = &bundle_bytes[pack_offset..];
+
+    let fake_head_oid = "ffffffffffffffffffffffffffffffffffffffff";
+    let tampered_header = format!(
+        "# v2 git bundle\n-{base_commit_id}\n{fake_head_oid} refs/heads/tip\n\n"
+    );
+    let mut tampered_bytes = tampered_header.into_bytes();
+    tampered_bytes.extend_from_slice(pack_data);
+    std::fs::write(&bundle_result.bundle_path, tampered_bytes)
+        .expect("must write tampered bundle header");
+
+    let receiver_dir = temp_repo_dir("receive-missing-head-commit-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let receive_result = receive_bundle_input(&bundle_result.bundle_path, &receiver_dir);
+    assert!(
+        receive_result.is_err(),
+        "receive should fail when declared head oid is missing after pack import"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that is_head_already_applied returns false when the current ref target OID differs from requested head OID.
+#[test]
+fn is_head_already_applied_returns_false_when_ref_target_differs() {
+    let repo_dir = temp_repo_dir("head-applied-target-differs");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init repo");
+
+    let commit_a = commit_from_files(&repo, "A", &[("f.txt", "a")], &[]);
+    let commit_b = commit_from_files(&repo, "B", &[("f.txt", "b")], &[commit_a]);
+    repo.reference("refs/heads/main", commit_a, true, "set main")
+        .expect("must create main ref");
+
+    let applied = is_head_already_applied(
+        &repo,
+        &BundleHead {
+            oid: commit_b,
+            reference: "refs/heads/main".to_string(),
+        },
+    )
+    .expect("ref comparison should not fail");
+    assert!(
+        !applied,
+        "head should not be treated as applied when target oid differs"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+fn create_linear_bundle_fixture(
+    suffix: &str,
+    include_patch_sidecar: bool,
+) -> (PathBuf, CreateBundleResult, git2::Oid, git2::Oid) {
+    let repo_dir = temp_repo_dir(suffix);
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = if include_patch_sidecar {
+        create_bundle_with_options(
+            &repo_dir,
+            "refs/heads/base",
+            "refs/heads/tip",
+            &bundle_path,
+            CreateBundleOptions {
+                include_patch_sidecar: true,
+            },
+        )
+        .expect("create_bundle_with_options should succeed")
+    } else {
+        create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+            .expect("create_bundle should succeed")
+    };
+
+    (repo_dir, result, base_commit_id, tip_commit_id)
+}
+
+fn read_json_value(path: &std::path::Path) -> serde_json::Value {
+    let bytes = std::fs::read(path).expect("must read json file");
+    serde_json::from_slice(&bytes).expect("json content should be valid")
+}
+
+fn write_json_value(path: &std::path::Path, value: &serde_json::Value) {
+    let serialized = serde_json::to_vec_pretty(value).expect("must serialize json value");
+    std::fs::write(path, serialized).expect("must write json file");
+}
+
+fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+    use std::io::Write as _;
+    use zip::write::FileOptions;
+
+    let file = std::fs::File::create(path).expect("must create zip file");
+    let mut writer = zip::ZipWriter::new(file);
+    for (name, bytes) in entries {
+        writer
+            .start_file(
+                *name,
+                FileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            )
+            .expect("must start zip entry");
+        writer
+            .write_all(bytes)
+            .expect("must write zip entry content");
+    }
+    writer.finish().expect("must finish zip archive");
 }
 
 fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {

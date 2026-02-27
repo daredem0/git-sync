@@ -731,6 +731,20 @@ fn receive_bundle(bundle_path: &Path, receiver_repo_path: &Path) -> Result<Recei
     }
 
     let repo = git2::Repository::open(receiver_repo_path)?;
+    if inspection
+        .heads
+        .iter()
+        .map(|head| is_head_already_applied(&repo, head))
+        .collect::<Result<Vec<bool>>>()?
+        .into_iter()
+        .all(std::convert::identity)
+    {
+        return Ok(ReceiveBundleResult {
+            bundle_version: inspection.version,
+            imported_heads: inspection.heads,
+        });
+    }
+
     let bundle_bytes = fs::read(bundle_path)?;
     let pack_offset = bundle_bytes
         .windows(4)
@@ -755,6 +769,9 @@ fn receive_bundle(bundle_path: &Path, receiver_repo_path: &Path) -> Result<Recei
     }
 
     for head in &inspection.heads {
+        if is_head_already_applied(&repo, head)? {
+            continue;
+        }
         repo.reference(&head.reference, head.oid, true, "receive bundle import")?;
     }
 
@@ -762,6 +779,28 @@ fn receive_bundle(bundle_path: &Path, receiver_repo_path: &Path) -> Result<Recei
         bundle_version: inspection.version,
         imported_heads: inspection.heads,
     })
+}
+
+fn is_head_already_applied(repo: &git2::Repository, head: &BundleHead) -> Result<bool> {
+    let current_target = match repo.find_reference(&head.reference) {
+        Ok(reference) => reference.target().or_else(|| {
+            reference
+                .resolve()
+                .ok()
+                .and_then(|resolved| resolved.target())
+        }),
+        Err(err) if err.code() == git2::ErrorCode::NotFound => None,
+        Err(err) => return Err(err.into()),
+    };
+
+    let Some(current_target) = current_target else {
+        return Ok(false);
+    };
+    if current_target != head.oid {
+        return Ok(false);
+    }
+
+    Ok(repo.find_commit(head.oid).is_ok())
 }
 
 fn collect_changed_files_for_metadata(
