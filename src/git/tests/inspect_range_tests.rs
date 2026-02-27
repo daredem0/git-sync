@@ -229,8 +229,11 @@ fn inspect_bundle_rejects_invalid_oid_tokens() {
             .expect("clock should be valid")
             .as_nanos()
     ));
-    std::fs::write(&bundle_path, b"# v2 git bundle\nnotanod refs/heads/main\n\n")
-        .expect("must write malformed oid bundle");
+    std::fs::write(
+        &bundle_path,
+        b"# v2 git bundle\nnotanod refs/heads/main\n\n",
+    )
+    .expect("must write malformed oid bundle");
 
     let result = inspect_bundle(&bundle_path);
     assert!(

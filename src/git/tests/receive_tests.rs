@@ -2,6 +2,104 @@ use super::support::*;
 use super::*;
 use std::path::PathBuf;
 
+fn commit_from_entries(
+    repo: &git2::Repository,
+    message: &str,
+    entries: &[(&str, &[u8], i32)],
+    parent_oids: &[git2::Oid],
+) -> git2::Oid {
+    let mut builder = repo.treebuilder(None).expect("must create tree builder");
+    for (path, content, mode) in entries {
+        let blob_id = repo.blob(content).expect("must create blob object");
+        builder
+            .insert(*path, blob_id, *mode)
+            .expect("must insert tree entry");
+    }
+    let tree_id = builder.write().expect("must write tree");
+    let tree = repo.find_tree(tree_id).expect("must resolve written tree");
+
+    let parent_commits: Vec<git2::Commit<'_>> = parent_oids
+        .iter()
+        .map(|oid| repo.find_commit(*oid).expect("must resolve parent commit"))
+        .collect();
+    let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
+    let sig = git2::Signature::now("Test User", "test@example.com").expect("must create sig");
+
+    repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+        .expect("must create commit")
+}
+
+fn create_symlink_bundle_fixture(
+    suffix: &str,
+) -> (PathBuf, CreateBundleResult, git2::Oid, git2::Oid) {
+    let repo_dir = temp_repo_dir(suffix);
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_entries(
+        &source_repo,
+        "base commit",
+        &[("f.txt", b"base content\n", 0o100644)],
+        &[],
+    );
+    let tip_commit_id = commit_from_entries(
+        &source_repo,
+        "tip commit adds symlink",
+        &[
+            ("f.txt", b"base content\n", 0o100644),
+            ("link-to-f", b"f.txt", 0o120000),
+        ],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed for symlink fixture");
+    remove_unarchived_bundle_artifacts(&bundle_result).expect("must remove loose artifacts");
+
+    (repo_dir, bundle_result, base_commit_id, tip_commit_id)
+}
+
+fn create_binary_bundle_fixture(
+    suffix: &str,
+) -> (PathBuf, CreateBundleResult, git2::Oid, git2::Oid) {
+    let repo_dir = temp_repo_dir(suffix);
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_entries(
+        &source_repo,
+        "base commit",
+        &[("payload.bin", b"\x00\x01\x02\x03\x04", 0o100644)],
+        &[],
+    );
+    let tip_commit_id = commit_from_entries(
+        &source_repo,
+        "tip commit modifies binary",
+        &[("payload.bin", b"\x00\x01\x02\x03\x05", 0o100644)],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed for binary fixture");
+    remove_unarchived_bundle_artifacts(&bundle_result).expect("must remove loose artifacts");
+
+    (repo_dir, bundle_result, base_commit_id, tip_commit_id)
+}
+
 // Focus: receive workflow correctness, prerequisite handling, idempotency, and ref-application checks.
 // Verifies that receive_bundle_input imports a zip-packaged bundle and updates exported head refs when prerequisites exist.
 #[test]
@@ -904,6 +1002,130 @@ fn collect_commit_file_patch_for_bundle_input_rejects_missing_path() {
     assert!(
         result.is_err(),
         "collecting a patch for an unchanged path must fail"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that dry-run line statistics ignore non-text entries (for example symlinks) by reporting 0/0 line deltas.
+#[test]
+fn receive_bundle_input_with_options_dry_run_reports_zero_line_stats_for_symlink_changes() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_symlink_bundle_fixture("receive-dry-run-symlink-zero-stats");
+
+    let receiver_dir = temp_repo_dir("receive-dry-run-symlink-zero-stats-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let dry_run = receive_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: true,
+        },
+    )
+    .expect("dry-run receive should succeed for symlink fixture");
+
+    let symlink_stat = dry_run
+        .line_stats
+        .iter()
+        .find(|stat| stat.path == "link-to-f")
+        .expect("dry-run line stats should include symlink path");
+    assert_eq!(
+        symlink_stat.additions, 0,
+        "non-text symlink changes must not report textual additions"
+    );
+    assert_eq!(
+        symlink_stat.deletions, 0,
+        "non-text symlink changes must not report textual deletions"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that dry-run line statistics ignore binary content deltas by reporting 0/0 line counts.
+#[test]
+fn receive_bundle_input_with_options_dry_run_reports_zero_line_stats_for_binary_changes() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_binary_bundle_fixture("receive-dry-run-binary-zero-stats");
+
+    let receiver_dir = temp_repo_dir("receive-dry-run-binary-zero-stats-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let dry_run = receive_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: true,
+        },
+    )
+    .expect("dry-run receive should succeed for binary fixture");
+
+    let binary_stat = dry_run
+        .line_stats
+        .iter()
+        .find(|stat| stat.path == "payload.bin")
+        .expect("dry-run line stats should include binary path");
+    assert_eq!(
+        binary_stat.additions, 0,
+        "binary changes must not report textual additions"
+    );
+    assert_eq!(
+        binary_stat.deletions, 0,
+        "binary changes must not report textual deletions"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that collecting a per-file patch for a non-text entry (for example symlink) returns a clean rejection error.
+#[test]
+fn collect_commit_file_patch_for_bundle_input_rejects_non_text_path() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_symlink_bundle_fixture("receive-commit-file-patch-symlink");
+
+    let receiver_dir = temp_repo_dir("receive-commit-file-patch-symlink-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let result = collect_commit_file_patch_for_bundle_input(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        tip_commit_id,
+        "link-to-f",
+    );
+    let err = result.expect_err("non-text path patch extraction must fail");
+    assert!(
+        err.to_string()
+            .contains("textual diff unavailable for non-text path"),
+        "error should explain that textual patch extraction is unavailable for non-text paths"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

@@ -303,6 +303,9 @@ impl AppState {
                 self.action_message = None;
             }
             Err(err) => {
+                if is_non_text_patch_unavailable_error(&err) {
+                    return;
+                }
                 self.action_message = Some(format!(
                     "failed to open patch view: {}",
                     single_line_error(&err)
@@ -1169,6 +1172,11 @@ fn single_line_error(err: &anyhow::Error) -> String {
     err.to_string().replace('\n', " ")
 }
 
+fn is_non_text_patch_unavailable_error(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .contains("textual diff unavailable for non-text path")
+}
+
 fn format_identity(identity: &CommitAuditIdentity) -> String {
     format!("{} <{}>", identity.name, identity.email)
 }
@@ -1184,8 +1192,8 @@ fn format_git_timestamp(seconds: i64, offset_minutes: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1230,6 +1238,32 @@ mod tests {
             builder
                 .insert(*path, blob_id, 0o100644)
                 .expect("must insert file entry");
+        }
+        let tree_id = builder.write().expect("must write tree");
+        let tree = repo.find_tree(tree_id).expect("must find written tree");
+        let parent_commits: Vec<git2::Commit<'_>> = parent_oids
+            .iter()
+            .map(|oid| repo.find_commit(*oid).expect("must resolve parent"))
+            .collect();
+        let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
+        let sig = git2::Signature::now("UI Test", "ui-test@example.com")
+            .expect("must create commit signature");
+        repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+            .expect("must create commit")
+    }
+
+    fn commit_from_entries(
+        repo: &git2::Repository,
+        message: &str,
+        entries: &[(&str, &[u8], i32)],
+        parent_oids: &[git2::Oid],
+    ) -> git2::Oid {
+        let mut builder = repo.treebuilder(None).expect("must create tree builder");
+        for (path, content, mode) in entries {
+            let blob_id = repo.blob(content).expect("must create blob object");
+            builder
+                .insert(*path, blob_id, *mode)
+                .expect("must insert tree entry");
         }
         let tree_id = builder.write().expect("must write tree");
         let tree = repo.find_tree(tree_id).expect("must find written tree");
@@ -1301,6 +1335,69 @@ mod tests {
             entries.len(),
             1,
             "fixture should contain one commit in base..tip"
+        );
+
+        DiffFixture {
+            source_dir,
+            receiver_dir,
+            bundle_archive_path: bundle_result.archive_path,
+            entries,
+        }
+    }
+
+    fn create_non_text_diff_fixture() -> DiffFixture {
+        let source_dir = unique_temp_dir("source-non-text");
+        fs::create_dir_all(&source_dir).expect("must create source dir");
+        let source_repo = git2::Repository::init(&source_dir).expect("must init source repo");
+
+        let base_commit =
+            commit_from_entries(&source_repo, "base", &[("f.txt", b"base\n", 0o100644)], &[]);
+        let tip_commit = commit_from_entries(
+            &source_repo,
+            "tip",
+            &[
+                ("f.txt", b"base\n", 0o100644),
+                ("link-to-f", b"f.txt", 0o120000),
+            ],
+            &[base_commit],
+        );
+        source_repo
+            .reference("refs/heads/base", base_commit, true, "create base ref")
+            .expect("must create base ref");
+        source_repo
+            .reference("refs/heads/tip", tip_commit, true, "create tip ref")
+            .expect("must create tip ref");
+
+        let bundle_path = source_dir.join("sync.bundle");
+        let bundle_result = git::create_bundle(
+            &source_dir,
+            "refs/heads/base",
+            "refs/heads/tip",
+            &bundle_path,
+        )
+        .expect("must create bundle package");
+        git::remove_unarchived_bundle_artifacts(&bundle_result)
+            .expect("must remove unarchived artifacts");
+
+        let receiver_dir = unique_temp_dir("receiver-non-text");
+        fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+        let receiver_repo = git2::Repository::init_bare(&receiver_dir).expect("must init receiver");
+        let mut source_remote = receiver_repo
+            .remote_anonymous(source_dir.to_str().expect("source path should be utf-8"))
+            .expect("must create source remote");
+        source_remote
+            .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+            .expect("must fetch prerequisite base ref");
+
+        let entries = git::collect_commit_audit_entries_for_bundle_input(
+            &bundle_result.archive_path,
+            &receiver_dir,
+        )
+        .expect("must collect commit entries for non-text fixture bundle");
+        assert_eq!(
+            entries.len(),
+            1,
+            "non-text fixture should contain one commit in base..tip"
         );
 
         DiffFixture {
@@ -1530,6 +1627,16 @@ mod tests {
         assert_eq!(parse_hunk_header("not a hunk"), None);
     }
 
+    // Verifies that non-text patch-load errors are recognized so Enter can no-op on binary/symlink paths.
+    #[test]
+    fn is_non_text_patch_unavailable_error_detects_expected_message() {
+        let err = anyhow::anyhow!("textual diff unavailable for non-text path 'link-to-f'");
+        assert!(
+            is_non_text_patch_unavailable_error(&err),
+            "helper should detect non-text patch availability errors"
+        );
+    }
+
     // Verifies that rendered patch output includes line-number prefix and styled content rows.
     #[test]
     fn render_patch_with_syntax_includes_line_number_column() {
@@ -1605,6 +1712,34 @@ mod tests {
         assert!(
             state.action_message.is_none(),
             "opening valid diff should not set an error/action message"
+        );
+    }
+
+    // Verifies that opening a non-text changed path (for example symlink) is a no-op and does not show an error.
+    #[test]
+    fn open_selected_diff_noop_for_non_text_changed_file() {
+        let fixture = create_non_text_diff_fixture();
+        let model = build_model_from_fixture(&fixture);
+        let mut state = AppState::new(&model);
+        state.next_page(&model);
+
+        let commit_index = 0usize;
+        let target_index = fixture.entries[commit_index]
+            .files
+            .iter()
+            .position(|file| file.path == "link-to-f")
+            .expect("fixture commit should contain symlink path");
+        state.selected_file_indices[commit_index] = target_index;
+
+        state.open_selected_diff(&model);
+
+        assert!(
+            state.diff_view.is_none(),
+            "diff view should stay closed for non-text changed paths"
+        );
+        assert!(
+            state.action_message.is_none(),
+            "non-text path open attempts should not surface an error banner"
         );
     }
 
@@ -1997,10 +2132,7 @@ mod tests {
             "precondition: help starts hidden for new app state"
         );
         let should_exit = handle_key_press(&mut state, &model, KeyCode::Char('?'));
-        assert!(
-            !should_exit,
-            "toggling help should not request app exit"
-        );
+        assert!(!should_exit, "toggling help should not request app exit");
         assert!(state.show_help, "help flag should flip to true");
     }
 

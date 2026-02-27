@@ -192,12 +192,16 @@ fn collect_line_stats_for_head(
     let mut stats = Vec::new();
     for (index, delta) in diff.deltas().enumerate() {
         let path = path_to_string(delta.new_file().path().or(delta.old_file().path()))?;
-        let (additions, deletions) = match git2::Patch::from_diff(&diff, index)? {
-            Some(patch) => {
-                let (_, additions, deletions) = patch.line_stats()?;
-                (additions, deletions)
+        let (additions, deletions) = if is_non_text_delta(&delta) {
+            (0, 0)
+        } else {
+            match git2::Patch::from_diff(&diff, index)? {
+                Some(patch) => {
+                    let (_, additions, deletions) = patch.line_stats()?;
+                    (additions, deletions)
+                }
+                None => (0, 0),
             }
-            None => (0, 0),
         };
         stats.push(FileLineStat {
             path,
@@ -270,6 +274,9 @@ fn collect_commit_file_patch(
         if old_path != path && new_path != path {
             continue;
         }
+        if is_non_text_delta(&delta) {
+            bail!("textual diff unavailable for non-text path '{path}'");
+        }
 
         let patch = git2::Patch::from_diff(&diff, index)?;
         let Some(mut patch) = patch else {
@@ -320,12 +327,16 @@ fn collect_line_stats_for_tree_diff(
     let mut stats = Vec::new();
     for (index, delta) in diff.deltas().enumerate() {
         let path = path_to_string(delta.new_file().path().or(delta.old_file().path()))?;
-        let (additions, deletions) = match git2::Patch::from_diff(&diff, index)? {
-            Some(patch) => {
-                let (_, additions, deletions) = patch.line_stats()?;
-                (additions, deletions)
+        let (additions, deletions) = if is_non_text_delta(&delta) {
+            (0, 0)
+        } else {
+            match git2::Patch::from_diff(&diff, index)? {
+                Some(patch) => {
+                    let (_, additions, deletions) = patch.line_stats()?;
+                    (additions, deletions)
+                }
+                None => (0, 0),
             }
-            None => (0, 0),
         };
         stats.push(FileLineStat {
             path,
@@ -395,6 +406,27 @@ pub(crate) fn is_head_already_applied(repo: &git2::Repository, head: &BundleHead
     }
 
     Ok(repo.find_commit(head.oid).is_ok())
+}
+
+fn is_non_text_delta(delta: &git2::DiffDelta<'_>) -> bool {
+    let old_file = delta.old_file();
+    let new_file = delta.new_file();
+
+    if old_file.is_binary() || new_file.is_binary() {
+        return true;
+    }
+
+    let old_mode = u32::from(old_file.mode());
+    let new_mode = u32::from(new_file.mode());
+
+    let old_regular = !old_file.exists() || is_regular_blob_mode(old_mode);
+    let new_regular = !new_file.exists() || is_regular_blob_mode(new_mode);
+
+    !(old_regular && new_regular)
+}
+
+fn is_regular_blob_mode(mode: u32) -> bool {
+    mode == 0o100644 || mode == 0o100755
 }
 
 struct TempBareRepo {

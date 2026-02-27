@@ -78,7 +78,11 @@ fn create_fixture() -> Fixture {
     let source_repo = root.join("source");
     fs::create_dir_all(&source_repo).expect("must create fixture source repo dir");
 
-    let init = run_command("git", &["init", source_repo.to_string_lossy().as_ref()], None);
+    let init = run_command(
+        "git",
+        &["init", source_repo.to_string_lossy().as_ref()],
+        None,
+    );
     assert_success(&init, "git init source repo");
 
     let set_name = run_command(
@@ -302,7 +306,11 @@ fn audit_verify_metadata_json_outputs_verification_ok() {
 fn receive_dry_run_prints_would_change_table_for_pending_import() {
     let fixture = create_fixture();
     let receiver = fixture.root.join("receiver-pending");
-    let init_receiver = run_command("git", &["init", "--bare", receiver.to_string_lossy().as_ref()], None);
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
     assert_success(&init_receiver, "init pending receiver");
 
     let fetch_base = run_command(
@@ -350,7 +358,11 @@ fn receive_dry_run_prints_would_change_table_for_pending_import() {
 fn receive_dry_run_prints_no_changes_when_head_already_applied() {
     let fixture = create_fixture();
     let receiver = fixture.root.join("receiver-applied");
-    let init_receiver = run_command("git", &["init", "--bare", receiver.to_string_lossy().as_ref()], None);
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
     assert_success(&init_receiver, "init applied receiver");
 
     let fetch_base_and_tip = run_command(
