@@ -11,7 +11,7 @@ use git::{
     CreateBundleOptions, collect_changed_files, collect_changed_files_from_bundle_input,
     create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts, render_manifest,
     render_manifest_json, resolve_repo_audit_range, verify_bundle_metadata_against_repo_input,
-    receive_bundle_input,
+    receive_bundle_input, receive_bundle_input_with_options, ReceiveBundleOptions,
 };
 
 fn main() -> Result<()> {
@@ -141,8 +141,22 @@ fn main() -> Result<()> {
             println!("UI command scaffold is ready.");
             println!("Implementation is intentionally pending.");
         }
-        Some(Command::Receive { repo, bundle }) => {
-            let result = receive_bundle_input(&bundle, &repo)?;
+        Some(Command::Receive {
+            repo,
+            bundle,
+            verify_metadata,
+        }) => {
+            let result = if verify_metadata {
+                receive_bundle_input_with_options(
+                    &bundle,
+                    &repo,
+                    ReceiveBundleOptions {
+                        verify_metadata: true,
+                    },
+                )?
+            } else {
+                receive_bundle_input(&bundle, &repo)?
+            };
             let version = match result.bundle_version {
                 git::BundleVersion::V2 => "v2",
                 git::BundleVersion::V3 => "v3",

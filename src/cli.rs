@@ -56,6 +56,8 @@ pub enum Command {
         repo: PathBuf,
         #[arg(long)]
         bundle: PathBuf,
+        #[arg(long, default_value_t = false)]
+        verify_metadata: bool,
     },
 }
 

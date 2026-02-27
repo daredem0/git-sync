@@ -1317,6 +1317,167 @@ fn receive_bundle_input_fails_when_prerequisite_is_missing() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that receive_bundle_input_with_options rejects imports when metadata verification is enabled and sidecar content is tampered.
+#[test]
+fn receive_bundle_input_with_options_rejects_tampered_metadata_when_verification_enabled() {
+    let repo_dir = temp_repo_dir("receive-bundle-verify-metadata-fail");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    let metadata_bytes = std::fs::read(&caudit_path).expect("must read generated metadata");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+    metadata["bundle_sha256"] =
+        serde_json::Value::String("00000000000000000000000000000000".to_string());
+    std::fs::write(
+        &caudit_path,
+        serde_json::to_vec_pretty(&metadata).expect("must serialize tampered metadata"),
+    )
+    .expect("must write tampered metadata");
+
+    let receiver_dir = temp_repo_dir("receive-bundle-verify-metadata-fail-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let receive_result = receive_bundle_input_with_options(
+        &bundle_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: true,
+        },
+    );
+    assert!(
+        receive_result.is_err(),
+        "receive with verify_metadata=true must reject tampered metadata"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    assert!(
+        receiver_repo.find_reference("refs/heads/tip").is_err(),
+        "failed receive should not update tip ref"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that receive_bundle_input_with_options can import when metadata verification is disabled even if metadata sidecar was tampered.
+#[test]
+fn receive_bundle_input_with_options_allows_tampered_metadata_when_verification_disabled() {
+    let repo_dir = temp_repo_dir("receive-bundle-verify-metadata-disabled");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let source_repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(
+        &source_repo,
+        "base commit",
+        &[("f.txt", "base content")],
+        &[],
+    );
+    let tip_commit_id = commit_from_files(
+        &source_repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("g.txt", "extra")],
+        &[base_commit_id],
+    );
+    source_repo
+        .reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    source_repo
+        .reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+
+    let caudit_path = PathBuf::from(format!("{}.caudit.json", bundle_path.display()));
+    let metadata_bytes = std::fs::read(&caudit_path).expect("must read generated metadata");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("metadata should be valid json");
+    metadata["bundle_sha256"] =
+        serde_json::Value::String("ffffffffffffffffffffffffffffffff".to_string());
+    std::fs::write(
+        &caudit_path,
+        serde_json::to_vec_pretty(&metadata).expect("must serialize tampered metadata"),
+    )
+    .expect("must write tampered metadata");
+
+    let receiver_dir = temp_repo_dir("receive-bundle-verify-metadata-disabled-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let receive_result = receive_bundle_input_with_options(
+        &bundle_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+        },
+    )
+    .expect("receive with verify_metadata=false should not block on tampered metadata");
+
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "receive should import one head from this bundle range"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].oid, tip_commit_id,
+        "imported head must point to source tip commit"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip ref should exist after receive");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "receiver tip ref should match source tip commit"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that create_bundle writes a .caudit.json sidecar with core audit identity fields.
 #[test]
 fn create_bundle_writes_caudit_metadata_file_with_core_identity_fields() {

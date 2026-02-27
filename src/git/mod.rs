@@ -162,6 +162,11 @@ pub struct CreateBundleOptions {
     pub include_patch_sidecar: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReceiveBundleOptions {
+    pub verify_metadata: bool,
+}
+
 pub fn render_manifest(changes: &[ChangedFile]) -> String {
     let mut out = String::from("STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n");
     for change in changes {
@@ -479,6 +484,141 @@ pub fn collect_changed_files_from_bundle_input(
 }
 
 pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path) -> Result<()> {
+    let metadata = verify_bundle_metadata_integrity(bundle_path)?;
+
+    let repo = git2::Repository::open(repo_path)?;
+
+    let from_commit_id = git2::Oid::from_str(&metadata.range_from_oid)?;
+    let to_commit_id = git2::Oid::from_str(&metadata.range_to_oid)?;
+
+    repo.find_commit(from_commit_id)?;
+    repo.find_commit(to_commit_id)?;
+
+    if to_commit_id != from_commit_id && !repo.graph_descendant_of(to_commit_id, from_commit_id)? {
+        bail!(
+            "metadata range is not linear in repository: to={} from={}",
+            to_commit_id,
+            from_commit_id
+        );
+    }
+
+    let expected_commit_chain =
+        collect_commit_chain_for_metadata(&repo, from_commit_id, to_commit_id)?;
+    if metadata.commit_chain != expected_commit_chain {
+        bail!("metadata commit_chain does not match repository truth");
+    }
+
+    let expected_changed_files =
+        collect_changed_files_for_metadata(&repo, from_commit_id, to_commit_id)?;
+    if metadata.changed_files != expected_changed_files {
+        bail!("metadata changed_files does not match repository truth");
+    }
+
+    Ok(())
+}
+
+pub fn verify_bundle_metadata_against_repo_input(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+) -> Result<()> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        verify_bundle_metadata_against_repo(&extracted.bundle_path, repo_path)
+    } else {
+        verify_bundle_metadata_against_repo(bundle_input_path, repo_path)
+    }
+}
+
+pub fn receive_bundle_input(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+) -> Result<ReceiveBundleResult> {
+    receive_bundle_input_with_options(
+        bundle_input_path,
+        receiver_repo_path,
+        ReceiveBundleOptions::default(),
+    )
+}
+
+pub fn receive_bundle_input_with_options(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    options: ReceiveBundleOptions,
+) -> Result<ReceiveBundleResult> {
+    if options.verify_metadata {
+        verify_bundle_metadata_integrity_input(bundle_input_path)?;
+    }
+
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        receive_bundle(&extracted.bundle_path, receiver_repo_path)
+    } else {
+        receive_bundle(bundle_input_path, receiver_repo_path)
+    }
+}
+
+pub fn resolve_repo_audit_range(
+    repo_path: &Path,
+    from_rev: &str,
+    to_rev: &str,
+) -> Result<RepoAuditRange> {
+    let repo = git2::Repository::open(repo_path)?;
+
+    let base_obj = repo.revparse_single(from_rev)?;
+    let base_commit = base_obj.peel_to_commit()?;
+    let base_commit_id = base_commit.id();
+
+    let tip_obj = repo.revparse_single(to_rev)?;
+    let tip_commit = tip_obj.peel_to_commit()?;
+    let tip_commit_id = tip_commit.id();
+
+    if tip_commit_id != base_commit_id
+        && !repo.graph_descendant_of(tip_commit_id, base_commit_id)?
+    {
+        bail!(
+            "to rev '{}' must be the same commit as from rev '{}' or a descendant of it",
+            to_rev,
+            from_rev
+        );
+    }
+
+    Ok(RepoAuditRange {
+        base_commit_id,
+        tip_commit_id,
+    })
+}
+
+pub fn collect_changed_files(
+    repo_path: &Path,
+    base_commit_id: git2::Oid,
+    tip_commit_id: git2::Oid,
+) -> Result<Vec<ChangedFile>> {
+    let repo = git2::Repository::open(repo_path)?;
+    let diff_entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)?;
+    Ok(diff_entries
+        .into_iter()
+        .map(|entry| ChangedFile {
+            status: entry.status,
+            path: entry.path,
+            old_path: entry.old_path,
+            old_oid: entry.old_oid,
+            new_oid: entry.new_oid,
+        })
+        .collect())
+}
+
+fn verify_bundle_metadata_integrity_input(bundle_input_path: &Path) -> Result<()> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        verify_bundle_metadata_integrity(&extracted.bundle_path)?;
+        Ok(())
+    } else {
+        verify_bundle_metadata_integrity(bundle_input_path)?;
+        Ok(())
+    }
+}
+
+fn verify_bundle_metadata_integrity(bundle_path: &Path) -> Result<CreateBundleAuditMetadata> {
     if !bundle_path.exists() {
         bail!("bundle path does not exist: {}", bundle_path.display());
     }
@@ -487,22 +627,7 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
     }
 
     let metadata_path = caudit_sidecar_path(bundle_path);
-    if !metadata_path.exists() {
-        bail!(
-            "bundle audit metadata path does not exist: {}",
-            metadata_path.display()
-        );
-    }
-    if !metadata_path.is_file() {
-        bail!(
-            "bundle audit metadata path is not a file: {}",
-            metadata_path.display()
-        );
-    }
-
-    let metadata_bytes = fs::read(&metadata_path)?;
-    let metadata: CreateBundleAuditMetadata = serde_json::from_slice(&metadata_bytes)?;
-
+    let metadata = load_bundle_metadata_from_path(&metadata_path)?;
     if metadata.schema_version != "1" {
         bail!(
             "unsupported caudit schema version: '{}'",
@@ -568,34 +693,6 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
         bail!("metadata tip_ref/range_to_oid must match one bundle head entry");
     }
 
-    let repo = git2::Repository::open(repo_path)?;
-
-    let from_commit_id = git2::Oid::from_str(&metadata.range_from_oid)?;
-    let to_commit_id = git2::Oid::from_str(&metadata.range_to_oid)?;
-
-    repo.find_commit(from_commit_id)?;
-    repo.find_commit(to_commit_id)?;
-
-    if to_commit_id != from_commit_id && !repo.graph_descendant_of(to_commit_id, from_commit_id)? {
-        bail!(
-            "metadata range is not linear in repository: to={} from={}",
-            to_commit_id,
-            from_commit_id
-        );
-    }
-
-    let expected_commit_chain =
-        collect_commit_chain_for_metadata(&repo, from_commit_id, to_commit_id)?;
-    if metadata.commit_chain != expected_commit_chain {
-        bail!("metadata commit_chain does not match repository truth");
-    }
-
-    let expected_changed_files =
-        collect_changed_files_for_metadata(&repo, from_commit_id, to_commit_id)?;
-    if metadata.changed_files != expected_changed_files {
-        bail!("metadata changed_files does not match repository truth");
-    }
-
     if let Some(patch_sidecar) = &metadata.patch_sidecar {
         if patch_sidecar.format != "unified-diff" {
             bail!(
@@ -624,81 +721,7 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
         }
     }
 
-    Ok(())
-}
-
-pub fn verify_bundle_metadata_against_repo_input(
-    bundle_input_path: &Path,
-    repo_path: &Path,
-) -> Result<()> {
-    if is_zip_bundle_input_path(bundle_input_path) {
-        let extracted = extract_bundle_archive(bundle_input_path)?;
-        verify_bundle_metadata_against_repo(&extracted.bundle_path, repo_path)
-    } else {
-        verify_bundle_metadata_against_repo(bundle_input_path, repo_path)
-    }
-}
-
-pub fn receive_bundle_input(
-    bundle_input_path: &Path,
-    receiver_repo_path: &Path,
-) -> Result<ReceiveBundleResult> {
-    if is_zip_bundle_input_path(bundle_input_path) {
-        let extracted = extract_bundle_archive(bundle_input_path)?;
-        receive_bundle(&extracted.bundle_path, receiver_repo_path)
-    } else {
-        receive_bundle(bundle_input_path, receiver_repo_path)
-    }
-}
-
-pub fn resolve_repo_audit_range(
-    repo_path: &Path,
-    from_rev: &str,
-    to_rev: &str,
-) -> Result<RepoAuditRange> {
-    let repo = git2::Repository::open(repo_path)?;
-
-    let base_obj = repo.revparse_single(from_rev)?;
-    let base_commit = base_obj.peel_to_commit()?;
-    let base_commit_id = base_commit.id();
-
-    let tip_obj = repo.revparse_single(to_rev)?;
-    let tip_commit = tip_obj.peel_to_commit()?;
-    let tip_commit_id = tip_commit.id();
-
-    if tip_commit_id != base_commit_id
-        && !repo.graph_descendant_of(tip_commit_id, base_commit_id)?
-    {
-        bail!(
-            "to rev '{}' must be the same commit as from rev '{}' or a descendant of it",
-            to_rev,
-            from_rev
-        );
-    }
-
-    Ok(RepoAuditRange {
-        base_commit_id,
-        tip_commit_id,
-    })
-}
-
-pub fn collect_changed_files(
-    repo_path: &Path,
-    base_commit_id: git2::Oid,
-    tip_commit_id: git2::Oid,
-) -> Result<Vec<ChangedFile>> {
-    let repo = git2::Repository::open(repo_path)?;
-    let diff_entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)?;
-    Ok(diff_entries
-        .into_iter()
-        .map(|entry| ChangedFile {
-            status: entry.status,
-            path: entry.path,
-            old_path: entry.old_path,
-            old_oid: entry.old_oid,
-            new_oid: entry.new_oid,
-        })
-        .collect())
+    Ok(metadata)
 }
 
 fn receive_bundle(bundle_path: &Path, receiver_repo_path: &Path) -> Result<ReceiveBundleResult> {

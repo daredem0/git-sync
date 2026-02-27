@@ -1,21 +1,14 @@
 # git-sync-audit
 
-Scaffold for an air-gap Git sync audit tool.
+Air-gap Git sync and audit tool built in Rust.
 
-Planned characteristics:
-- Rust implementation.
-- Uses `libgit2` bindings via the `git2` crate (no `git` CLI in core logic).
-- Supports bundle/repo inspection and a terminal UI workflow.
-
-Current status:
-- Project and command structure are bootstrapped.
-- `create` writes a bundle and a `.caudit.json` metadata sidecar.
-- `.caudit.json` is compact by default (no inline file patch content).
-- `create --with-patches` adds an optional `.caudit.patch` sidecar.
-- `audit --bundle` renders changed-file manifests from bundled metadata.
-- `audit --repo --from --to` renders changed-file manifests directly from a repository range.
-- `audit --verify-metadata` validates bundled metadata against repository truth.
-- `receive --repo --bundle` imports a bundle package into a receiver repository and updates exported refs.
+Implementation notes:
+- Uses `libgit2` bindings through the `git2` crate.
+- Core Git operations are implemented in-process (no `git` CLI calls in core logic).
+- Bundle transport format is a `.zip` package containing:
+  - `<name>.bundle`
+  - `<name>.bundle.caudit.json`
+  - optional `<name>.bundle.caudit.patch`
 
 ## Build
 
@@ -29,30 +22,28 @@ For an optimized release binary:
 cargo build --release
 ```
 
-## Run unit tests
+## Test
 
 ```bash
 cargo test
 ```
 
-Run only the end-to-end workflow integration test:
+Run only the end-to-end integration test:
 
 ```bash
 cargo test --test bundle_workflow_integration -- --nocapture
 ```
 
-## Create bundle + metadata
+## Commands
+
+### Create bundle package
 
 ```bash
 cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundle
 ```
 
-This creates:
-- `sync.bundle.zip` only
-
-The archive contains:
-- `sync.bundle`
-- `sync.bundle.caudit.json`
+Output:
+- only `sync.bundle.zip` is kept on disk by the CLI
 
 To include a full unified patch sidecar:
 
@@ -60,83 +51,37 @@ To include a full unified patch sidecar:
 cargo run -- create --repo . --from <from-rev> --to <to-rev> --output sync.bundle --with-patches
 ```
 
-This additionally creates:
-- no extra loose files; `sync.bundle.caudit.patch` is included inside the zip archive
+### Audit bundle package
 
-The metadata JSON schema is defined at:
-- `schemas/sync.bundle.caudit.schema.json`
+```bash
+cargo run -- audit --bundle sync.bundle.zip --format tsv
+```
 
-For audit commands, pass the zip package path via `--bundle` (for example `sync.bundle.zip`).
-`audit --bundle ...` renders changed-file manifest data from the bundled `.caudit.json`.
+### Audit repo range
 
-## Verify bundle metadata against a repo
+```bash
+cargo run -- audit --repo . --from <from-rev> --to <to-rev> --format tsv
+```
+
+### Verify bundle metadata against a repo
 
 ```bash
 cargo run -- audit --bundle sync.bundle.zip --repo . --verify-metadata --format tsv
 ```
 
-This validates:
-- bundle hash and size recorded in `.caudit.json`
-- bundle header fields (`version`, `prerequisites`, `heads`)
-- metadata `commit_chain` and `changed_files` against repository truth for `range_from_oid..range_to_oid`
-- optional patch sidecar hash/size when present
-
-## Receive bundle into a repo
-
-Receiver must already contain prerequisite history referenced by the bundle.
+### Receive bundle into receiver repo
 
 ```bash
-cargo run -- receive --repo /path/to/receiver-repo --bundle /path/to/sync.bundle.zip
+cargo run -- receive --repo /path/to/receiver-repo --bundle /path/to/sync.bundle.zip --verify-metadata
 ```
 
-## End-to-end test flow with merge fixture
+## Constraints
 
-Generate a deterministic repo with merge commits and anchor tags (`sync/base`, `sync/tip`):
-
-```bash
-./scripts/generate-merge-graph-repo.sh /tmp/git-sync-fixture
-```
-
-Create the bundle package:
-
-```bash
-cargo run -- create --repo /tmp/git-sync-fixture --from sync/base --to sync/tip --output /tmp/sync.bundle
-```
-
-Audit from the bundle package:
-
-```bash
-cargo run -- audit --bundle /tmp/sync.bundle.zip --format tsv
-```
-
-Audit the same range directly from the repo:
-
-```bash
-cargo run -- audit --repo /tmp/git-sync-fixture --from sync/base --to sync/tip --format tsv
-```
-
-Verify metadata against the repo:
-
-```bash
-cargo run -- audit --bundle /tmp/sync.bundle.zip --repo /tmp/git-sync-fixture --verify-metadata --format tsv
-```
-
-Create receiver repo and seed prerequisite commit history:
-
-```bash
-git init --bare /tmp/git-sync-receiver
-git -C /tmp/git-sync-receiver fetch /tmp/git-sync-fixture refs/tags/sync/base:refs/tags/sync/base
-```
-
-Receive the bundle into the receiver:
-
-```bash
-cargo run -- receive --repo /tmp/git-sync-receiver --bundle /tmp/sync.bundle.zip
-```
-
-Verify receiver tip ref matches source tip commit:
-
-```bash
-git -C /tmp/git-sync-fixture rev-parse sync/tip^{commit}
-git -C /tmp/git-sync-receiver rev-parse refs/tags/sync/tip^{commit}
-```
+- `create --from ... --to ...` requires `to` to be the same as or a descendant of `from`.
+- `audit` mode is exclusive:
+  - bundle mode: `--bundle` only
+  - repo mode: `--repo --from --to`
+- `audit --verify-metadata` requires both `--bundle` and `--repo` and checks metadata against repository truth.
+- `receive` requires the receiver repo to already contain prerequisite history referenced by the bundle.
+- `receive --verify-metadata` verifies bundle and sidecar integrity before import.
+- Metadata schema is defined in `schemas/sync.bundle.caudit.schema.json`.

@@ -235,6 +235,7 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
             &receiver_arg_owned,
             "--bundle",
             &bundle_arg_owned,
+            "--verify-metadata",
         ],
         Some(&manifest_dir),
     );
