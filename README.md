@@ -57,10 +57,13 @@ This additionally creates:
 The metadata JSON schema is defined at:
 - `schemas/sync.bundle.caudit.schema.json`
 
+For audit commands, pass the zip package path via `--bundle` (for example `sync.bundle.zip`).
+`audit --bundle ...` renders changed-file manifest data from the bundled `.caudit.json`.
+
 ## Verify bundle metadata against a repo
 
 ```bash
-cargo run -- audit --bundle sync.bundle --repo . --verify-metadata --format tsv
+cargo run -- audit --bundle sync.bundle.zip --repo . --verify-metadata --format tsv
 ```
 
 This validates:

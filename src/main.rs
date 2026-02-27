@@ -8,10 +8,9 @@ use app::AppConfig;
 use clap::Parser;
 use cli::{AuditTarget, Cli, Command, OutputFormat, resolve_audit_target};
 use git::{
-    CreateBundleOptions, collect_changed_files, create_bundle, create_bundle_with_options,
-    remove_unarchived_bundle_artifacts, render_bundle_inspection_json,
-    render_bundle_inspection_tsv, render_manifest, render_manifest_json, resolve_repo_audit_range,
-    verify_bundle_metadata_against_repo,
+    CreateBundleOptions, collect_changed_files, collect_changed_files_from_bundle_input,
+    create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts, render_manifest,
+    render_manifest_json, resolve_repo_audit_range, verify_bundle_metadata_against_repo_input,
 };
 
 fn main() -> Result<()> {
@@ -74,7 +73,7 @@ fn main() -> Result<()> {
                     anyhow::bail!("metadata verification does not accept --from or --to");
                 }
 
-                verify_bundle_metadata_against_repo(&bundle_path, &repo_path)?;
+                verify_bundle_metadata_against_repo_input(&bundle_path, &repo_path)?;
                 match format {
                     OutputFormat::Tsv => {
                         println!("VERIFY\tOK");
@@ -110,15 +109,15 @@ fn main() -> Result<()> {
                     }
                 }
                 AuditTarget::Bundle { bundle_path } => {
-                    let inspection = git::inspect_bundle(&bundle_path)?;
+                    let changes = collect_changed_files_from_bundle_input(&bundle_path)?;
                     match format {
                         OutputFormat::Tsv => {
-                            let output = render_bundle_inspection_tsv(&inspection);
-                            print!("{output}");
+                            let manifest = render_manifest(&changes);
+                            print!("{manifest}");
                         }
                         OutputFormat::Json => {
-                            let output = render_bundle_inspection_json(&inspection)?;
-                            println!("{output}");
+                            let manifest = render_manifest_json(&changes)?;
+                            println!("{manifest}");
                         }
                     }
                 }

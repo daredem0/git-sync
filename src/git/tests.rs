@@ -1527,6 +1527,79 @@ fn verify_bundle_metadata_against_repo_accepts_matching_metadata() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that collect_changed_files_from_bundle_input reads changed-file metadata from a zip-only bundle package.
+#[test]
+fn collect_changed_files_from_bundle_input_accepts_zip_archive_without_loose_bundle_files() {
+    let repo_dir = temp_repo_dir("collect-changes-input-zip");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base content")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip content"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    remove_unarchived_bundle_artifacts(&result).expect("must remove loose bundle artifacts");
+
+    let changes = collect_changed_files_from_bundle_input(&result.archive_path)
+        .expect("collect_changed_files_from_bundle_input should read metadata from zip package");
+    assert!(
+        !changes.is_empty(),
+        "zip-contained metadata should provide changed file entries"
+    );
+    assert!(
+        changes.iter().any(|entry| entry.path == "f.txt"),
+        "changed file list from zip metadata should include modified file paths"
+    );
+    assert!(
+        changes.iter().any(|entry| entry.path == "new.txt"),
+        "changed file list from zip metadata should include added file paths"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that metadata verification accepts zip-only bundle packages when no loose bundle files remain.
+#[test]
+fn verify_bundle_metadata_against_repo_input_accepts_zip_archive_without_loose_bundle_files() {
+    let repo_dir = temp_repo_dir("verify-caudit-input-zip");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip commit",
+        &[("f.txt", "tip"), ("new.txt", "added")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    remove_unarchived_bundle_artifacts(&result).expect("must remove loose bundle artifacts");
+
+    verify_bundle_metadata_against_repo_input(&result.archive_path, &repo_dir).expect(
+        "metadata verification should succeed when zip-contained bundle metadata matches repo truth",
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that bundle metadata validation rejects tampered metadata content.
 #[test]
 fn verify_bundle_metadata_against_repo_rejects_tampered_metadata() {

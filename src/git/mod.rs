@@ -6,7 +6,9 @@ use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use zip::CompressionMethod;
+use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::FileOptions;
 
@@ -187,46 +189,6 @@ pub fn render_manifest_json(changes: &[ChangedFile]) -> Result<String> {
         })
         .collect();
     Ok(serde_json::to_string_pretty(&entries)?)
-}
-
-pub fn render_bundle_inspection_tsv(inspection: &BundleInspection) -> String {
-    let mut out = String::from("SECTION\tOID\tREF\n");
-    out.push_str("VERSION\t");
-    out.push_str(bundle_version_code(inspection.version));
-    out.push_str("\t-\n");
-    for prerequisite in &inspection.prerequisites {
-        out.push_str("PREREQ\t");
-        out.push_str(&prerequisite.to_string());
-        out.push_str("\t-\n");
-    }
-    for head in &inspection.heads {
-        out.push_str("HEAD\t");
-        out.push_str(&head.oid.to_string());
-        out.push('\t');
-        out.push_str(&head.reference);
-        out.push('\n');
-    }
-    out
-}
-
-pub fn render_bundle_inspection_json(inspection: &BundleInspection) -> Result<String> {
-    let serializable = SerializableBundleInspection {
-        version: bundle_version_code(inspection.version).to_string(),
-        prerequisites: inspection
-            .prerequisites
-            .iter()
-            .map(|oid| oid.to_string())
-            .collect(),
-        heads: inspection
-            .heads
-            .iter()
-            .map(|head| SerializableBundleHead {
-                oid: head.oid.to_string(),
-                reference: head.reference.clone(),
-            })
-            .collect(),
-    };
-    Ok(serde_json::to_string_pretty(&serializable)?)
 }
 
 pub fn create_bundle(
@@ -491,6 +453,25 @@ pub fn inspect_bundle(bundle_path: &Path) -> Result<BundleInspection> {
     })
 }
 
+pub fn collect_changed_files_from_bundle_input(
+    bundle_input_path: &Path,
+) -> Result<Vec<ChangedFile>> {
+    let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
+    metadata
+        .changed_files
+        .into_iter()
+        .map(|entry| {
+            Ok(ChangedFile {
+                status: parse_status_code(&entry.status)?,
+                path: entry.path,
+                old_path: entry.old_path,
+                old_oid: parse_optional_oid(entry.old_oid.as_deref())?,
+                new_oid: parse_optional_oid(entry.new_oid.as_deref())?,
+            })
+        })
+        .collect()
+}
+
 pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path) -> Result<()> {
     if !bundle_path.exists() {
         bail!("bundle path does not exist: {}", bundle_path.display());
@@ -616,17 +597,7 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
                 patch_sidecar.format
             );
         }
-        let patch_path = PathBuf::from(&patch_sidecar.path);
-        if !patch_path.exists() {
-            bail!(
-                "patch sidecar path does not exist: {}",
-                patch_path.display()
-            );
-        }
-        if !patch_path.is_file() {
-            bail!("patch sidecar path is not a file: {}", patch_path.display());
-        }
-
+        let patch_path = resolve_patch_sidecar_path(&metadata_path, patch_sidecar)?;
         let patch_bytes = fs::read(&patch_path)?;
         let actual_patch_size = patch_bytes.len() as u64;
         if patch_sidecar.size_bytes != actual_patch_size {
@@ -648,6 +619,18 @@ pub fn verify_bundle_metadata_against_repo(bundle_path: &Path, repo_path: &Path)
     }
 
     Ok(())
+}
+
+pub fn verify_bundle_metadata_against_repo_input(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+) -> Result<()> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        verify_bundle_metadata_against_repo(&extracted.bundle_path, repo_path)
+    } else {
+        verify_bundle_metadata_against_repo(bundle_input_path, repo_path)
+    }
 }
 
 pub fn resolve_repo_audit_range(
@@ -913,6 +896,170 @@ fn write_zip_archive(archive_path: &Path, files: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+fn is_zip_bundle_input_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+}
+
+fn load_bundle_metadata_from_input(bundle_input_path: &Path) -> Result<CreateBundleAuditMetadata> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        let metadata_path = caudit_sidecar_path(&extracted.bundle_path);
+        return load_bundle_metadata_from_path(&metadata_path);
+    }
+
+    let metadata_path = caudit_sidecar_path(bundle_input_path);
+    load_bundle_metadata_from_path(&metadata_path)
+}
+
+fn load_bundle_metadata_from_path(metadata_path: &Path) -> Result<CreateBundleAuditMetadata> {
+    if !metadata_path.exists() {
+        bail!(
+            "bundle audit metadata path does not exist: {}",
+            metadata_path.display()
+        );
+    }
+    if !metadata_path.is_file() {
+        bail!(
+            "bundle audit metadata path is not a file: {}",
+            metadata_path.display()
+        );
+    }
+
+    let metadata_bytes = fs::read(metadata_path)?;
+    let metadata: CreateBundleAuditMetadata = serde_json::from_slice(&metadata_bytes)?;
+    Ok(metadata)
+}
+
+fn parse_optional_oid(value: Option<&str>) -> Result<Option<git2::Oid>> {
+    value
+        .map(git2::Oid::from_str)
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn parse_status_code(status: &str) -> Result<ChangeStatus> {
+    match status {
+        "A" => Ok(ChangeStatus::Added),
+        "M" => Ok(ChangeStatus::Modified),
+        "D" => Ok(ChangeStatus::Deleted),
+        "R" => Ok(ChangeStatus::Renamed),
+        "C" => Ok(ChangeStatus::Copied),
+        "T" => Ok(ChangeStatus::TypeChanged),
+        _ => bail!("unsupported change status code in metadata: '{status}'"),
+    }
+}
+
+fn resolve_patch_sidecar_path(
+    metadata_path: &Path,
+    patch_sidecar: &CreateBundleAuditPatchSidecar,
+) -> Result<PathBuf> {
+    let explicit_path = PathBuf::from(&patch_sidecar.path);
+    if explicit_path.exists() && explicit_path.is_file() {
+        return Ok(explicit_path);
+    }
+
+    let file_name = Path::new(&patch_sidecar.path)
+        .file_name()
+        .ok_or_else(|| anyhow!("patch sidecar path in metadata has no file name"))?;
+    let sibling_path = metadata_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(file_name);
+    if sibling_path.exists() && sibling_path.is_file() {
+        return Ok(sibling_path);
+    }
+
+    bail!(
+        "patch sidecar path does not exist: {} (or sibling {})",
+        explicit_path.display(),
+        sibling_path.display()
+    );
+}
+
+#[derive(Debug)]
+struct ExtractedBundleArchive {
+    temp_dir: PathBuf,
+    bundle_path: PathBuf,
+}
+
+impl Drop for ExtractedBundleArchive {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+fn extract_bundle_archive(archive_path: &Path) -> Result<ExtractedBundleArchive> {
+    if !archive_path.exists() {
+        bail!(
+            "bundle archive path does not exist: {}",
+            archive_path.display()
+        );
+    }
+    if !archive_path.is_file() {
+        bail!(
+            "bundle archive path is not a file: {}",
+            archive_path.display()
+        );
+    }
+
+    let archive_file = File::open(archive_path)?;
+    let mut archive = ZipArchive::new(archive_file)?;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "git-sync-audit-extract-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| anyhow!("system clock is before unix epoch"))?
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir)?;
+
+    let mut bundle_paths = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.name().ends_with('/') {
+            continue;
+        }
+
+        let file_name = Path::new(entry.name())
+            .file_name()
+            .ok_or_else(|| anyhow!("zip entry has no file name: '{}'", entry.name()))?;
+        let output_path = temp_dir.join(file_name);
+
+        let mut output_file = File::create(&output_path)?;
+        std::io::copy(&mut entry, &mut output_file)?;
+
+        if output_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bundle"))
+        {
+            bundle_paths.push(output_path);
+        }
+    }
+
+    if bundle_paths.is_empty() {
+        bail!(
+            "bundle archive does not contain a .bundle entry: {}",
+            archive_path.display()
+        );
+    }
+    if bundle_paths.len() > 1 {
+        bail!(
+            "bundle archive must contain exactly one .bundle entry, found {}",
+            bundle_paths.len()
+        );
+    }
+
+    Ok(ExtractedBundleArchive {
+        temp_dir,
+        bundle_path: bundle_paths.remove(0),
+    })
+}
+
 fn remove_file_if_exists(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -1030,19 +1177,6 @@ struct JsonChangedFile {
     old_path: Option<String>,
     old_oid: Option<String>,
     new_oid: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct SerializableBundleHead {
-    oid: String,
-    reference: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct SerializableBundleInspection {
-    version: String,
-    prerequisites: Vec<String>,
-    heads: Vec<SerializableBundleHead>,
 }
 
 #[cfg(test)]
