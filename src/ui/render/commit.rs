@@ -1,0 +1,96 @@
+use super::commit_table::render_commit_files_table;
+use super::render_footer_text;
+use crate::ui::format::{format_git_timestamp, format_identity};
+use crate::ui::types::{AppState, AuditModel, CommitPagesModel};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+
+pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(10),
+            Constraint::Min(10),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+
+    match &model.commit_pages {
+        CommitPagesModel::Failed(err) => {
+            let page_label = format!("page {}/{}", state.page_index + 1, state.total_pages(model));
+            let message = Paragraph::new(format!(
+                "Commit page data is unavailable ({})\nerror: {}\n\
+                 The overview page is still usable for package-level auditing.",
+                page_label, err
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Pages Unavailable"),
+            )
+            .wrap(Wrap { trim: false });
+            frame.render_widget(message, chunks[0]);
+            frame.render_widget(
+                Paragraph::new("No commit list can be rendered for this package.").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Changed Files"),
+                ),
+                chunks[1],
+            );
+            frame.render_widget(
+                Paragraph::new(render_footer_text(state))
+                    .style(Style::default().add_modifier(Modifier::ITALIC)),
+                chunks[2],
+            );
+        }
+        CommitPagesModel::Ok(entries) => {
+            let commit_index = state.page_index.saturating_sub(1);
+            let Some(entry) = entries.get(commit_index) else {
+                frame.render_widget(
+                    Paragraph::new("Page index is out of bounds for commit entries.")
+                        .block(Block::default().borders(Borders::ALL).title("Commit")),
+                    chunks[0],
+                );
+                frame.render_widget(
+                    Paragraph::new(render_footer_text(state))
+                        .style(Style::default().add_modifier(Modifier::ITALIC)),
+                    chunks[2],
+                );
+                return;
+            };
+
+            let header = Paragraph::new(format!(
+                "Commit {}/{} | {}\n{}\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
+                commit_index + 1,
+                entries.len(),
+                entry.commit_id,
+                entry.subject,
+                format_git_timestamp(
+                    entry.committer.time_seconds,
+                    entry.committer.offset_minutes,
+                ),
+                format_identity(&entry.committer),
+                format_git_timestamp(entry.author.time_seconds, entry.author.offset_minutes),
+                format_identity(&entry.author),
+                entry.files.len()
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Detail"),
+            )
+            .wrap(Wrap { trim: false });
+            frame.render_widget(header, chunks[0]);
+
+            render_commit_files_table(frame, entry, commit_index, state, chunks[1]);
+            frame.render_widget(
+                Paragraph::new(render_footer_text(state))
+                    .style(Style::default().add_modifier(Modifier::ITALIC)),
+                chunks[2],
+            );
+        }
+    }
+}

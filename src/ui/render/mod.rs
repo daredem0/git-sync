@@ -1,0 +1,97 @@
+mod commit;
+mod commit_table;
+mod diff_view;
+mod overview;
+mod overview_tables;
+
+use crate::ui::types::{AppState, AuditModel};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+
+pub(crate) use commit::render_commit_page;
+pub(crate) use diff_view::render_diff_view;
+pub(crate) use overview::render_overview_page;
+
+pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
+    if state.is_diff_open() {
+        render_diff_view(frame, state);
+    } else if state.page_index == 0 {
+        render_overview_page(frame, model, state);
+    } else {
+        render_commit_page(frame, model, state);
+    }
+
+    if state.show_help {
+        render_help_overlay(frame, state.is_diff_open());
+    }
+}
+
+pub(crate) fn render_footer_text(state: &AppState) -> String {
+    let base = if state.is_diff_open() {
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back | ? help | q quit"
+    } else {
+        "h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open diff | ? help | q quit"
+    };
+    match &state.action_message {
+        Some(message) => format!("{base} | {message}"),
+        None => base.to_string(),
+    }
+}
+
+pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, in_diff_view: bool) {
+    let area = centered_rect(75, 45, frame.area());
+    frame.render_widget(Clear, area);
+    let help_text = help_text_for_mode(in_diff_view);
+
+    let help = Paragraph::new(help_text)
+        .block(Block::default().borders(Borders::ALL).title("Keymap"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(help, area);
+}
+
+pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
+    if in_diff_view {
+        "Navigation (Diff View)\n\
+         - j / Down: scroll down\n\
+         - k / Up: scroll up\n\
+         - h / Left: horizontal scroll left\n\
+         - l / Right: horizontal scroll right\n\
+         - PgUp / PgDn: fast vertical scroll\n\
+         - Home: reset scroll\n\
+         - Esc: close diff and return to commit page\n\
+         - ?: toggle this help\n\
+         - q: quit"
+    } else {
+        "Navigation (Page View)\n\
+         - h / Left: previous page\n\
+         - l / Right: next page\n\
+         - j / Down: move file selection down on commit pages\n\
+         - k / Up: move file selection up on commit pages\n\
+         - g: first page\n\
+         - G: last page\n\
+         - Enter: open selected file diff view\n\
+         - ?: toggle this help\n\
+         - q / Esc: quit"
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
