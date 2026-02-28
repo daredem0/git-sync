@@ -26,7 +26,7 @@ pub(crate) enum CommitPagesModel {
 
 #[derive(Debug)]
 pub(crate) enum PayloadModel {
-    Ok(git::PayloadAudit),
+    Ok(Box<git::PayloadAudit>),
     Failed(String),
 }
 

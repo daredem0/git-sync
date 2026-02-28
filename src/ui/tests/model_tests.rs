@@ -6,8 +6,10 @@ use super::super::model::build_audit_model;
 use super::super::model::{derive_repo_name_from_remote_url, format_repo_display};
 use super::support::create_diff_fixture;
 use crate::app::AppConfig;
+use crate::git;
 use crate::ui::types::PayloadModel;
 use std::fs;
+use std::mem::size_of;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -101,4 +103,13 @@ fn payload_model_build_still_loads_with_existing_bundle_fixture() {
             panic!("payload model build should succeed for fixture: {err}")
         }
     }
+}
+
+// Verifies that payload model stores heavy payload data behind indirection to keep enum size small.
+#[test]
+fn payload_model_enum_is_smaller_than_payload_audit_type() {
+    assert!(
+        size_of::<PayloadModel>() < size_of::<git::PayloadAudit>(),
+        "payload model enum should remain compact versus full payload audit data"
+    );
 }

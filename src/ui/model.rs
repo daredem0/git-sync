@@ -25,7 +25,7 @@ pub(crate) fn build_audit_model(config: &AppConfig) -> AuditModel {
     let (payload, payload_session) =
         match git::open_payload_session(&config.bundle_path, &config.repo_path) {
             Ok(session) => {
-                let payload = PayloadModel::Ok(git::payload_audit_from_session(&session));
+                let payload = PayloadModel::Ok(Box::new(git::payload_audit_from_session(&session)));
                 (payload, Some(session))
             }
             Err(err) => (PayloadModel::Failed(single_line_error(&err)), None),
