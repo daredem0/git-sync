@@ -7,6 +7,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-28
+
+### Added
+- Multi-head history navigation in interactive audit (overview head selection plus per-head commit paging).
+- Payload audit main view with transport-entry table, pack-object table, and object drill-down.
+- Payload object-detail syntax highlighting (object-content view only, no synthetic diffs).
+- Payload navigation improvements: `PgUp`/`PgDn` jumps by 10 objects.
+- Payload sort-mode cycling (`s`) with a new context-oriented grouping mode.
+- Context metadata on payload objects (head index, commit order, path) to support audit-friendly grouping.
+
+### Changed
+- Interactive commit pages are now driven from bundle objects, while metadata verification remains surfaced in overview.
+- Payload view layout now dedicates the full right pane to object preview and keeps transport/pack tables on the left.
+- Payload preview now renders line numbers only for actual text-content lines, not metadata header lines.
+- Payload object detail rendering now includes line-number gutters.
+- Payload preview truncation marker (`... (N more lines)`) is dynamically anchored at the last visible row.
+- History/Payload view switching is constrained to the main page with context-aware footer hints.
+- Removed deprecated flat commit-audit path and standardized on head-scoped collectors.
+
+### Fixed
+- Fixed payload blob-path discovery so reachable objects resolve paths through reachable commit history (not only head trees).
+- Improved payload preview responsiveness by reusing imported payload sessions, caching detail/preview data, and highlighting only visible preview lines.
+- Bounded blob path scanning during preview/detail generation to keep UI interactions responsive.
+- Package metadata now records maintainer/packager as `f.leuze@outlook.de` for Debian and Arch outputs.
+
 ## [0.3.2] - 2026-02-28
 
 ### Added
@@ -80,7 +105,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/daredem0/git-sync/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/daredem0/git-sync/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/daredem0/git-sync/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/daredem0/git-sync/compare/v0.2.1...v0.3.0
