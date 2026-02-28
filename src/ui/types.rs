@@ -1,6 +1,6 @@
 //! TUI-layer types functionality.
 
-use crate::git::{self, CommitAuditEntry};
+use crate::git;
 use ratatui::text::Line;
 use std::path::PathBuf;
 use syntect::highlighting::Theme;
@@ -17,7 +17,7 @@ pub(crate) struct AuditModel {
 
 #[derive(Debug)]
 pub(crate) enum CommitPagesModel {
-    Ok(Vec<CommitAuditEntry>),
+    Ok(Vec<git::HeadAuditEntry>),
     Failed(String),
 }
 
@@ -47,7 +47,8 @@ pub(crate) enum DryRunLine {
 #[derive(Debug)]
 pub(crate) struct AppState {
     pub(crate) page_index: usize,
-    pub(crate) selected_file_indices: Vec<usize>,
+    pub(crate) selected_head_index: usize,
+    pub(crate) selected_file_indices: Vec<Vec<usize>>,
     pub(crate) show_help: bool,
     pub(crate) action_message: Option<String>,
     pub(crate) diff_view: Option<DiffViewState>,

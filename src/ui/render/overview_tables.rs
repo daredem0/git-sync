@@ -4,12 +4,13 @@ use crate::git::{self, BundleVersion};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 /// Renders the table of bundle heads that would be imported.
 pub(super) fn render_heads_table(
     frame: &mut Frame<'_>,
     result: &git::ReceiveBundleResult,
+    selected_head_index: usize,
     area: Rect,
 ) {
     let version = match result.bundle_version {
@@ -17,42 +18,61 @@ pub(super) fn render_heads_table(
         BundleVersion::V3 => "v3",
     };
 
+    let mut oid_occurrences = std::collections::BTreeMap::<git2::Oid, usize>::new();
+    for head in &result.imported_heads {
+        *oid_occurrences.entry(head.oid).or_insert(0) += 1;
+    }
+
     let rows: Vec<Row<'_>> = result
         .imported_heads
         .iter()
         .map(|head| {
+            let reference = if oid_occurrences.get(&head.oid).copied().unwrap_or(0) > 1 {
+                format!("{} (duplicate tip)", head.reference)
+            } else {
+                head.reference.clone()
+            };
             Row::new(vec![
                 Cell::from(head.oid.to_string()),
-                Cell::from(head.reference.clone()),
+                Cell::from(reference),
             ])
         })
         .collect();
     let heads_table = Table::new(rows, [Constraint::Length(40), Constraint::Min(20)])
         .header(Row::new(vec!["OID", "REF"]).style(Style::default().add_modifier(Modifier::BOLD)))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!("Heads To Import (bundle {version})")),
         )
         .column_spacing(2);
-    frame.render_widget(heads_table, area);
+
+    let mut table_state = TableState::default();
+    if !result.imported_heads.is_empty() {
+        table_state.select(Some(std::cmp::min(
+            selected_head_index,
+            result.imported_heads.len() - 1,
+        )));
+    }
+    frame.render_stateful_widget(heads_table, area, &mut table_state);
 }
 
 /// Renders per-file added/deleted line counts from dry-run analysis.
 pub(super) fn render_changes_table(
     frame: &mut Frame<'_>,
-    result: &git::ReceiveBundleResult,
+    line_stats: &[git::FileLineStat],
+    selected_head_label: &str,
     area: Rect,
 ) {
-    let rows: Vec<Row<'_>> = if result.line_stats.is_empty() {
+    let rows: Vec<Row<'_>> = if line_stats.is_empty() {
         vec![Row::new(vec![
             Cell::from("(no file content changes)"),
             Cell::from("-"),
             Cell::from("-"),
         ])]
     } else {
-        result
-            .line_stats
+        line_stats
             .iter()
             .map(|stat| {
                 Row::new(vec![
@@ -76,11 +96,9 @@ pub(super) fn render_changes_table(
         Row::new(vec!["PATH", "+LINES", "-LINES"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Would Change (per-file line diff summary)"),
-    )
+    .block(Block::default().borders(Borders::ALL).title(format!(
+        "Would Change (selected head: {selected_head_label})"
+    )))
     .column_spacing(2);
     frame.render_widget(changes_table, area);
 }

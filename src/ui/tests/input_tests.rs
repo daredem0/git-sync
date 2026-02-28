@@ -70,6 +70,22 @@ fn handle_key_press_question_toggles_help() {
     assert!(state.show_help, "help flag should flip to true");
 }
 
+// Verifies that Esc from a commit page returns to overview instead of exiting immediately.
+#[test]
+fn handle_key_press_esc_on_commit_page_returns_to_overview() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 1;
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Esc);
+
+    assert!(
+        !should_exit,
+        "Esc on a commit page should navigate back to overview"
+    );
+    assert_eq!(state.page_index, 0, "Esc should return to overview page");
+}
+
 // Verifies that Enter on commit pages sets an error message when patch loading fails.
 #[test]
 fn handle_page_keys_enter_sets_error_when_patch_load_fails() {
@@ -83,6 +99,25 @@ fn handle_page_keys_enter_sets_error_when_patch_load_fails() {
             .as_deref()
             .is_some_and(|msg| msg.contains("failed to open patch view")),
         "enter should expose a helpful failure message when patch load cannot be performed"
+    );
+}
+
+// Verifies that Enter on overview enters commit-page mode instead of attempting to open a diff.
+#[test]
+fn handle_page_keys_enter_on_overview_enters_commit_pages() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(state.page_index, 0, "precondition: start on overview page");
+
+    handle_page_keys(&mut state, &model, KeyCode::Enter);
+
+    assert_eq!(
+        state.page_index, 1,
+        "Enter on overview should navigate to first commit page"
+    );
+    assert!(
+        state.diff_view.is_none(),
+        "Enter on overview should not directly open a diff view"
     );
 }
 

@@ -12,7 +12,7 @@ use crate::version::APP_VERSION;
 /// the overview page remains usable.
 pub(crate) fn build_audit_model(config: &AppConfig) -> AuditModel {
     let overview = build_overview_model(config);
-    let commit_pages = match git::collect_commit_audit_entries_for_bundle_input(
+    let commit_pages = match git::collect_head_audit_entries_for_bundle_input(
         &config.bundle_path,
         &config.repo_path,
     ) {

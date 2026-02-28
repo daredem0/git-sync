@@ -143,6 +143,17 @@ pub struct CommitAuditEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Head-scoped commit and line-stat entries used by multi-head UI views.
+pub struct HeadAuditEntry {
+    /// Bundle head this entry represents.
+    pub head: BundleHead,
+    /// Per-head dry-run file summary.
+    pub line_stats: Vec<FileLineStat>,
+    /// Commit entries reachable from this head.
+    pub commits: Vec<CommitAuditEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Canonicalized git identity and timestamp offset information.
 pub struct CommitAuditIdentity {
     /// Identity name component.

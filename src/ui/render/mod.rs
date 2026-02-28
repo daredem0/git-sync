@@ -35,7 +35,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
         "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back | ? help | q quit"
     } else {
-        "h/Left prev page | l/Right next page | j/k or Up/Down move | Enter open diff | ? help | q quit"
+        "h/Left prev page | l/Right next page | j/k or Up/Down move selection | Enter open selected head/diff | Esc overview/quit | ? help | q quit"
     };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
@@ -72,13 +72,14 @@ pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
         "Navigation (Page View)\n\
          - h / Left: previous page\n\
          - l / Right: next page\n\
-         - j / Down: move file selection down on commit pages\n\
-         - k / Up: move file selection up on commit pages\n\
+         - j / Down: move head selection on overview, file selection on commit pages\n\
+         - k / Up: move head selection on overview, file selection on commit pages\n\
          - g: first page\n\
          - G: last page\n\
-         - Enter: open selected file diff view\n\
+         - Enter: open selected head (overview) or selected file diff (commit page)\n\
+         - Esc: return to overview or quit from overview\n\
          - ?: toggle this help\n\
-         - q / Esc: quit"
+         - q: quit"
     }
 }
 

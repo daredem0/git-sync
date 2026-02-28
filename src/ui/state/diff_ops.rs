@@ -22,8 +22,18 @@ impl AppState {
             self.action_message = Some("commit pages are unavailable".to_string());
             return;
         };
+        if entries.is_empty() {
+            self.action_message = Some("selected head has no commits to review".to_string());
+            return;
+        }
 
-        let Some(commit_entry) = entries.get(commit_index) else {
+        let selected_head_index = std::cmp::min(self.selected_head_index, entries.len() - 1);
+        let Some(head_entry) = entries.get(selected_head_index) else {
+            self.action_message = Some("selected head index is out of range".to_string());
+            return;
+        };
+
+        let Some(commit_entry) = head_entry.commits.get(commit_index) else {
             self.action_message = Some("commit index is out of range".to_string());
             return;
         };
@@ -46,7 +56,7 @@ impl AppState {
                     render_patch_with_syntax(&file_path, &patch_text, &model.syntax_highlighter);
                 self.diff_view = Some(DiffViewState {
                     commit_index,
-                    commit_total: entries.len(),
+                    commit_total: head_entry.commits.len(),
                     file_index,
                     commit_id: commit_entry.commit_id,
                     commit_subject: commit_entry.subject.clone(),

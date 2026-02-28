@@ -50,8 +50,24 @@ pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, stat
             );
         }
         CommitPagesModel::Ok(entries) => {
+            if entries.is_empty() {
+                frame.render_widget(
+                    Paragraph::new("No heads are available for commit-page rendering.")
+                        .block(Block::default().borders(Borders::ALL).title("Commit")),
+                    chunks[0],
+                );
+                frame.render_widget(
+                    Paragraph::new(render_footer_text(state))
+                        .style(Style::default().add_modifier(Modifier::ITALIC)),
+                    chunks[2],
+                );
+                return;
+            }
+
+            let selected_head_index = std::cmp::min(state.selected_head_index, entries.len() - 1);
+            let head_entry = &entries[selected_head_index];
             let commit_index = state.page_index.saturating_sub(1);
-            let Some(entry) = entries.get(commit_index) else {
+            let Some(entry) = head_entry.commits.get(commit_index) else {
                 frame.render_widget(
                     Paragraph::new("Page index is out of bounds for commit entries.")
                         .block(Block::default().borders(Borders::ALL).title("Commit")),
@@ -66,9 +82,12 @@ pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, stat
             };
 
             let header = Paragraph::new(format!(
-                "Commit {}/{} | {}\n{}\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
-                commit_index + 1,
+                "Head {}/{} | {}\nCommit {}/{} | {}\n{}\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
+                selected_head_index + 1,
                 entries.len(),
+                head_entry.head.reference,
+                commit_index + 1,
+                head_entry.commits.len(),
                 entry.commit_id,
                 entry.subject,
                 format_git_timestamp(

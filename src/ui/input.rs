@@ -15,6 +15,9 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
             if state.is_diff_open() {
                 state.close_diff();
                 false
+            } else if state.page_index > 0 {
+                state.first_page();
+                false
             } else {
                 true
             }
@@ -43,7 +46,13 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
         KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(model),
         KeyCode::Char('g') => state.first_page(),
         KeyCode::Char('G') => state.last_page(model),
-        KeyCode::Enter => state.open_selected_diff(model),
+        KeyCode::Enter => {
+            if state.page_index == 0 {
+                state.enter_selected_head(model);
+            } else {
+                state.open_selected_diff(model);
+            }
+        }
         _ => {}
     }
 }

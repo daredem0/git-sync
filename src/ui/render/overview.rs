@@ -3,7 +3,7 @@
 use super::overview_tables::{render_changes_table, render_heads_table};
 use super::render_footer_text;
 use crate::ui::format::{render_dry_run_status, render_status_line};
-use crate::ui::types::{AppState, AuditModel, DryRunLine};
+use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
@@ -60,8 +60,37 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
                 .split(chunks[2]);
-            render_heads_table(frame, result, detail_chunks[0]);
-            render_changes_table(frame, result, detail_chunks[1]);
+            render_heads_table(frame, result, state.selected_head_index, detail_chunks[0]);
+
+            let (selected_stats, selected_head_label) = match &model.commit_pages {
+                CommitPagesModel::Ok(entries) if !entries.is_empty() => {
+                    let selected_head_index =
+                        std::cmp::min(state.selected_head_index, entries.len() - 1);
+                    (
+                        entries[selected_head_index].line_stats.clone(),
+                        entries[selected_head_index].head.reference.clone(),
+                    )
+                }
+                _ => {
+                    let selected_head_index = if result.imported_heads.is_empty() {
+                        0
+                    } else {
+                        std::cmp::min(state.selected_head_index, result.imported_heads.len() - 1)
+                    };
+                    let selected_head_label = result
+                        .imported_heads
+                        .get(selected_head_index)
+                        .map(|head| head.reference.clone())
+                        .unwrap_or_else(|| "-".to_string());
+                    (result.line_stats.clone(), selected_head_label)
+                }
+            };
+            render_changes_table(
+                frame,
+                &selected_stats,
+                &selected_head_label,
+                detail_chunks[1],
+            );
         }
         DryRunLine::Failed(err) => {
             let failure = Paragraph::new(format!(

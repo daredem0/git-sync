@@ -17,7 +17,7 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
 
     let page_footer = render_footer_text(&state);
     assert!(
-        page_footer.contains("Enter open diff"),
+        page_footer.contains("Enter open selected head/diff"),
         "page mode footer should include commit-page action hints"
     );
 
@@ -47,7 +47,7 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
 fn help_text_for_mode_switches_content_by_view() {
     let page_help = help_text_for_mode(false);
     assert!(
-        page_help.contains("Enter: open selected file diff view"),
+        page_help.contains("Enter: open selected head"),
         "page help should mention opening a file diff"
     );
 
@@ -107,7 +107,7 @@ fn render_help_overlay_page_mode_renders_page_navigation_hints() {
         "page help overlay should label page-view help mode"
     );
     assert!(
-        output.contains("Enter: open selected file diff view"),
+        output.contains("Enter: open selected head"),
         "page help overlay should include diff open hint"
     );
 }

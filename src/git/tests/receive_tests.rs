@@ -937,6 +937,58 @@ fn collect_commit_audit_entries_includes_author_and_committer_identity() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that head-audit collection returns head-scoped line stats and commits for bundled history.
+#[test]
+fn collect_head_audit_entries_for_bundle_input_returns_head_scoped_entries() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-head-audit-entries", false);
+
+    let receiver_dir = temp_repo_dir("receive-head-audit-entries-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let entries =
+        collect_head_audit_entries_for_bundle_input(&bundle_result.archive_path, &receiver_dir)
+            .expect("must collect head-audit entries from package");
+    assert_eq!(
+        entries.len(),
+        1,
+        "single-tip fixture should yield one head entry"
+    );
+
+    let head_entry = &entries[0];
+    assert_eq!(
+        head_entry.head.reference, "refs/heads/tip",
+        "head entry should expose the imported tip reference"
+    );
+    assert_eq!(
+        head_entry.commits.len(),
+        1,
+        "fixture base..tip range should contain one commit for this head"
+    );
+    assert_eq!(
+        head_entry.commits[0].commit_id, tip_commit_id,
+        "head commit entry should target the bundled tip commit"
+    );
+    assert!(
+        head_entry
+            .line_stats
+            .iter()
+            .any(|stat| stat.path == "f.txt"),
+        "head line stats should include the changed file path from base..tip"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that commit-audit page data can be collected from a plain bundle even when the metadata sidecar is absent.
 #[test]
 fn collect_commit_audit_entries_for_plain_bundle_succeeds_without_metadata_sidecar() {

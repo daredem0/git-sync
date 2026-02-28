@@ -53,3 +53,34 @@ fn app_state_selection_movement_is_bounded() {
     state.move_selection_up(&model);
     assert_eq!(state.selected_file_index(0), 0);
 }
+
+// Verifies that overview up/down navigation changes selected head and updates available commit-page count.
+#[test]
+fn app_state_overview_head_navigation_updates_selected_head_and_total_pages() {
+    let model = sample_multi_head_model(&[1, 3]);
+    let mut state = super::super::types::AppState::new(&model);
+
+    assert_eq!(state.page_index, 0, "precondition: start on overview");
+    assert_eq!(
+        state.total_pages(&model),
+        2,
+        "first head with one commit should expose overview + one commit page"
+    );
+
+    state.move_selection_down(&model);
+    assert_eq!(
+        state.selected_head_index, 1,
+        "overview down should select next head"
+    );
+    assert_eq!(
+        state.total_pages(&model),
+        4,
+        "second head with three commits should expose overview + three commit pages"
+    );
+
+    state.move_selection_up(&model);
+    assert_eq!(
+        state.selected_head_index, 0,
+        "overview up should move back to previous head"
+    );
+}

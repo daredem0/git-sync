@@ -8,7 +8,8 @@ pub use create::{create_bundle, create_bundle_with_options, remove_unarchived_bu
 pub use inspect::inspect_bundle;
 pub use receive::{
     collect_commit_audit_entries_for_bundle_input, collect_commit_file_patch_for_bundle_input,
-    receive_bundle_input, receive_bundle_input_with_options,
+    collect_head_audit_entries_for_bundle_input, receive_bundle_input,
+    receive_bundle_input_with_options,
 };
 
 #[cfg(test)]

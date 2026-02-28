@@ -6,7 +6,7 @@ use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
 use crate::git::{
     BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
-    ReceiveBundleOptions, ReceiveBundleResult,
+    HeadAuditEntry, ReceiveBundleOptions, ReceiveBundleResult,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
@@ -73,6 +73,23 @@ pub fn collect_commit_audit_entries_for_bundle_input(
 ) -> Result<Vec<CommitAuditEntry>> {
     with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, inspection| {
         collect_commit_audit_entries(repo, inspection)
+    })
+}
+
+/// Collects head-scoped commit and line-stat entries for a bundle input.
+///
+/// This imports into a temporary mirror and computes per-head summaries
+/// without mutating the receiver repository.
+///
+/// # Errors
+///
+/// Returns an error when bundle inspection/import or commit traversal fails.
+pub fn collect_head_audit_entries_for_bundle_input(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+) -> Result<Vec<HeadAuditEntry>> {
+    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, inspection| {
+        collect_head_audit_entries(repo, inspection)
     })
 }
 
@@ -267,42 +284,10 @@ fn collect_commit_audit_entries(
     inspection: &BundleInspection,
 ) -> Result<Vec<CommitAuditEntry>> {
     let commit_ids = collect_imported_commit_ids(repo, inspection)?;
-    let mut entries = Vec::new();
-    for commit_id in commit_ids {
-        let commit = repo.find_commit(commit_id)?;
-        let tip_tree = commit.tree()?;
-        let base_tree = if commit.parent_count() == 0 {
-            None
-        } else {
-            Some(commit.parent(0)?.tree()?)
-        };
-
-        let files = collect_line_stats_for_tree_diff(repo, base_tree.as_ref(), &tip_tree)?;
-        let committer = commit.committer();
-        let author = commit.author();
-        entries.push(CommitAuditEntry {
-            commit_id,
-            subject: commit
-                .summary()
-                .map(std::string::ToString::to_string)
-                .unwrap_or_else(|| "<no subject>".to_string()),
-            committer: CommitAuditIdentity {
-                name: committer.name().unwrap_or("<unknown>").to_string(),
-                email: committer.email().unwrap_or("<unknown>").to_string(),
-                time_seconds: committer.when().seconds(),
-                offset_minutes: committer.when().offset_minutes(),
-            },
-            author: CommitAuditIdentity {
-                name: author.name().unwrap_or("<unknown>").to_string(),
-                email: author.email().unwrap_or("<unknown>").to_string(),
-                time_seconds: author.when().seconds(),
-                offset_minutes: author.when().offset_minutes(),
-            },
-            files,
-        });
-    }
-
-    Ok(entries)
+    commit_ids
+        .into_iter()
+        .map(|commit_id| build_commit_audit_entry(repo, commit_id))
+        .collect()
 }
 
 /// Enumerates commits carried by imported bundle heads, excluding prerequisites.
@@ -333,6 +318,89 @@ fn collect_imported_commit_ids(
         commits.push(oid_result?);
     }
     Ok(commits)
+}
+
+/// Builds head-scoped audit entries for imported bundle heads.
+fn collect_head_audit_entries(
+    repo: &git2::Repository,
+    inspection: &BundleInspection,
+) -> Result<Vec<HeadAuditEntry>> {
+    let mut entries = Vec::new();
+    for head in &inspection.heads {
+        let commit_ids =
+            collect_imported_commit_ids_for_head(repo, head, &inspection.prerequisites)?;
+        let commits = commit_ids
+            .into_iter()
+            .map(|commit_id| build_commit_audit_entry(repo, commit_id))
+            .collect::<Result<Vec<_>>>()?;
+        let line_stats = collect_line_stats_for_head(repo, head, &inspection.prerequisites)?;
+        entries.push(HeadAuditEntry {
+            head: head.clone(),
+            line_stats,
+            commits,
+        });
+    }
+    Ok(entries)
+}
+
+/// Enumerates imported commits for one head, excluding shared prerequisites.
+///
+/// Returned OIDs are ordered oldest-first for stable per-head page progression.
+fn collect_imported_commit_ids_for_head(
+    repo: &git2::Repository,
+    head: &BundleHead,
+    prerequisites: &[git2::Oid],
+) -> Result<Vec<git2::Oid>> {
+    let mut revwalk = repo.revwalk()?;
+    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME | git2::Sort::REVERSE)?;
+    revwalk.push(head.oid)?;
+    for prerequisite in prerequisites {
+        revwalk.hide(*prerequisite)?;
+    }
+
+    let mut commits = Vec::new();
+    for oid_result in revwalk {
+        commits.push(oid_result?);
+    }
+    Ok(commits)
+}
+
+/// Builds one commit-level audit entry with identity and file line stats.
+fn build_commit_audit_entry(
+    repo: &git2::Repository,
+    commit_id: git2::Oid,
+) -> Result<CommitAuditEntry> {
+    let commit = repo.find_commit(commit_id)?;
+    let tip_tree = commit.tree()?;
+    let base_tree = if commit.parent_count() == 0 {
+        None
+    } else {
+        Some(commit.parent(0)?.tree()?)
+    };
+
+    let files = collect_line_stats_for_tree_diff(repo, base_tree.as_ref(), &tip_tree)?;
+    let committer = commit.committer();
+    let author = commit.author();
+    Ok(CommitAuditEntry {
+        commit_id,
+        subject: commit
+            .summary()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| "<no subject>".to_string()),
+        committer: CommitAuditIdentity {
+            name: committer.name().unwrap_or("<unknown>").to_string(),
+            email: committer.email().unwrap_or("<unknown>").to_string(),
+            time_seconds: committer.when().seconds(),
+            offset_minutes: committer.when().offset_minutes(),
+        },
+        author: CommitAuditIdentity {
+            name: author.name().unwrap_or("<unknown>").to_string(),
+            email: author.email().unwrap_or("<unknown>").to_string(),
+            time_seconds: author.when().seconds(),
+            offset_minutes: author.when().offset_minutes(),
+        },
+        files,
+    })
 }
 
 /// Returns a textual patch for one file in a single commit.

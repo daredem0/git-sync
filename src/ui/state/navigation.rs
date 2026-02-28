@@ -1,16 +1,20 @@
 //! TUI-layer navigation functionality.
 
-use crate::ui::types::{AppState, AuditModel, CommitPagesModel};
+use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine};
 
 impl AppState {
     /// Creates initial UI state for the provided audit model.
     pub(crate) fn new(model: &AuditModel) -> Self {
         let selected_file_indices = match &model.commit_pages {
-            CommitPagesModel::Ok(entries) => vec![0; entries.len()],
+            CommitPagesModel::Ok(entries) => entries
+                .iter()
+                .map(|head_entry| vec![0; head_entry.commits.len()])
+                .collect(),
             CommitPagesModel::Failed(_) => Vec::new(),
         };
         Self {
             page_index: 0,
+            selected_head_index: 0,
             selected_file_indices,
             show_help: false,
             action_message: None,
@@ -25,7 +29,9 @@ impl AppState {
                 if entries.is_empty() {
                     1
                 } else {
-                    1 + entries.len()
+                    let selected_head_index = self.clamped_selected_head_index(entries.len());
+                    let commit_count = entries[selected_head_index].commits.len();
+                    1 + commit_count
                 }
             }
             CommitPagesModel::Failed(_) => 2,
@@ -57,25 +63,68 @@ impl AppState {
         self.action_message = None;
     }
 
+    /// Enters commit-page mode from overview, selecting the first commit page.
+    pub(crate) fn enter_selected_head(&mut self, model: &AuditModel) {
+        if self.page_index != 0 {
+            return;
+        }
+
+        if self.total_pages(model) > 1 {
+            self.page_index = 1;
+            self.action_message = None;
+        } else {
+            self.action_message = Some("selected head has no commits to review".to_string());
+        }
+    }
+
     /// Moves file selection down within the current commit page.
     pub(crate) fn move_selection_down(&mut self, model: &AuditModel) {
+        if self.page_index == 0 {
+            let head_count = self.available_head_count(model);
+            if head_count > 0 {
+                let selected = self.clamped_selected_head_index(head_count);
+                self.selected_head_index = std::cmp::min(selected + 1, head_count - 1);
+                self.action_message = None;
+            }
+            return;
+        }
+
         let Some((commit_index, file_count)) = self.current_commit_context(model) else {
             return;
         };
         if file_count == 0 {
             return;
         }
-        if let Some(selected) = self.selected_file_indices.get_mut(commit_index) {
+        if let Some(selected) = self
+            .selected_file_indices
+            .get_mut(self.selected_head_index)
+            .and_then(|head_indices| head_indices.get_mut(commit_index))
+        {
             *selected = std::cmp::min(*selected + 1, file_count - 1);
         }
     }
 
     /// Moves file selection up within the current commit page.
     pub(crate) fn move_selection_up(&mut self, model: &AuditModel) {
+        if self.page_index == 0 {
+            let head_count = self.available_head_count(model);
+            if head_count > 0 {
+                self.selected_head_index = self
+                    .clamped_selected_head_index(head_count)
+                    .saturating_sub(1);
+                self.action_message = None;
+            }
+            return;
+        }
+
         let Some((commit_index, _)) = self.current_commit_context(model) else {
             return;
         };
-        if let Some(selected) = self.selected_file_indices.get_mut(commit_index) {
+        if let Some(selected) = self
+            .selected_file_indices
+            .get_mut(self.selected_head_index)
+            .and_then(|head_indices| head_indices.get_mut(commit_index))
+        {
             *selected = selected.saturating_sub(1);
         }
     }
@@ -85,7 +134,8 @@ impl AppState {
     /// Returns `0` when no tracked selection exists for the commit index.
     pub(crate) fn selected_file_index(&self, commit_index: usize) -> usize {
         self.selected_file_indices
-            .get(commit_index)
+            .get(self.selected_head_index)
+            .and_then(|head_indices| head_indices.get(commit_index))
             .copied()
             .unwrap_or(0)
     }
@@ -97,8 +147,10 @@ impl AppState {
         }
         match &model.commit_pages {
             CommitPagesModel::Ok(entries) => {
+                let selected_head_index = self.clamped_selected_head_index(entries.len());
+                let head_entry = entries.get(selected_head_index)?;
                 let commit_index = self.page_index - 1;
-                let file_count = entries.get(commit_index)?.files.len();
+                let file_count = head_entry.commits.get(commit_index)?.files.len();
                 Some((commit_index, file_count))
             }
             CommitPagesModel::Failed(_) => None,
@@ -114,5 +166,25 @@ impl AppState {
     pub(crate) fn close_diff(&mut self) {
         self.diff_view = None;
         self.action_message = None;
+    }
+
+    /// Returns selected head index clamped to available head count.
+    fn clamped_selected_head_index(&self, head_count: usize) -> usize {
+        if head_count == 0 {
+            0
+        } else {
+            std::cmp::min(self.selected_head_index, head_count - 1)
+        }
+    }
+
+    /// Returns number of available heads in the current model.
+    fn available_head_count(&self, model: &AuditModel) -> usize {
+        match &model.commit_pages {
+            CommitPagesModel::Ok(entries) => entries.len(),
+            CommitPagesModel::Failed(_) => match &model.overview.dry_run {
+                DryRunLine::Ok(result) => result.imported_heads.len(),
+                DryRunLine::Failed(_) => 0,
+            },
+        }
     }
 }

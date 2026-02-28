@@ -29,7 +29,7 @@ fn open_selected_diff_creates_diff_view_for_selected_file() {
         .iter()
         .position(|file| file.path == "f.rs")
         .expect("fixture commit should contain f.rs");
-    state.selected_file_indices[commit_index] = target_index;
+    state.selected_file_indices[0][commit_index] = target_index;
 
     state.open_selected_diff(&model);
 
@@ -74,7 +74,7 @@ fn open_selected_diff_noop_for_non_text_changed_file() {
         .iter()
         .position(|file| file.path == "link-to-f")
         .expect("fixture commit should contain symlink path");
-    state.selected_file_indices[commit_index] = target_index;
+    state.selected_file_indices[0][commit_index] = target_index;
 
     state.open_selected_diff(&model);
 

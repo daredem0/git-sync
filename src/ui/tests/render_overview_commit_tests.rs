@@ -77,6 +77,27 @@ fn render_overview_page_with_dry_run_failed_shows_error_text() {
     );
 }
 
+// Verifies that overview would-change table follows the currently selected head on the heads table.
+#[test]
+fn render_overview_page_renders_selected_head_would_change_rows() {
+    let model = sample_multi_head_model(&[1, 1]);
+    let mut state = super::super::types::AppState::new(&model);
+    state.selected_head_index = 1;
+
+    let output = render_and_capture_text(140, 40, |frame| {
+        render_overview_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("head-2-file-1.txt"),
+        "selected head file rows should be shown in would-change table"
+    );
+    assert!(
+        !output.contains("head-1-file-1.txt"),
+        "unselected head file rows should not be shown in would-change table"
+    );
+}
+
 // Verifies that rendering commit page in normal mode shows commit metadata and changed-file table.
 #[test]
 fn render_commit_page_shows_commit_detail_and_changed_files() {
