@@ -10,6 +10,7 @@ homepage = "https://github.com/daredem0/git-sync"
 documentation = "https://daredem0.github.io/git-sync/"
 
 [package.metadata.deb]
+maintainer = "f.leuze@outlook.de"
 depends = "$auto"
 section = "utils"
 priority = "optional"

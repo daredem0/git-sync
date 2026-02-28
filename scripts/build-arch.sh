@@ -34,6 +34,7 @@ else
 fi
 
 PKGVER="$(grep -m1 '^version =' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
+PACKAGER_EMAIL="${GIT_SYNC_PACKAGER_EMAIL:-f.leuze@outlook.de}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
@@ -46,7 +47,7 @@ cp LICENSE "${WORK_DIR}/LICENSE"
 
 (
   cd "${WORK_DIR}"
-  PKGVER="${PKGVER}" makepkg -f --clean
+  PKGVER="${PKGVER}" PACKAGER="${PACKAGER:-${PACKAGER_EMAIL}}" makepkg -f --clean
 )
 
 mkdir -p target/arch
