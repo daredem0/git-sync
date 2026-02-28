@@ -26,24 +26,30 @@ Note: the `create` command keeps only `<name>.bundle.zip` on disk by default.
 
 ## Quick Start
 
-Build:
+If `git-sync` is already installed:
+
+```bash
+git-sync --help
+```
+
+From source:
 
 ```bash
 cargo build --release
+./target/release/git-sync --help
 ```
 
-Run with Cargo during development:
-
-```bash
-cargo run -- --help
-```
+All command examples below use `git-sync` directly.
 
 ## Typical Workflow
 
-### 1) Create a package from a commit range
+Core workflow is steps 1, 2, 4, 5, and 6 below.  
+Step 3 and the later non-interactive audit section are optional evidence/reporting paths.
+
+### 1) Create package on source side
 
 ```bash
-cargo run -- create \
+git-sync create \
   --repo /path/to/source-repo \
   --from <from-rev> \
   --to <to-rev> \
@@ -53,7 +59,7 @@ cargo run -- create \
 Include a patch sidecar:
 
 ```bash
-cargo run -- create \
+git-sync create \
   --repo /path/to/source-repo \
   --from <from-rev> \
   --to <to-rev> \
@@ -61,11 +67,13 @@ cargo run -- create \
   --with-patches
 ```
 
-### 2) Audit the package interactively (TUI)
+This produces `sync.bundle.zip`.
+
+### 2) Audit package on source side before transfer (TUI)
 
 ```bash
-cargo run -- audit \
-  --repo /path/to/repo \
+git-sync audit \
+  --repo /path/to/source-repo \
   --bundle /path/to/sync.bundle.zip
 ```
 
@@ -74,36 +82,58 @@ This opens a terminal UI with:
 - commit pages with per-file line stats
 - file-level diff viewer
 
-### 3) Audit in non-interactive mode
+Use this step to confirm exactly what would leave the source network.  
+Interactive `audit` verifies package metadata against the provided `--repo` automatically.
 
-From bundle metadata:
+### 3) Optional: verify metadata against source repository truth (auditor evidence)
 
-```bash
-cargo run -- audit --bundle sync.bundle.zip --format tsv
-cargo run -- audit --bundle sync.bundle.zip --format json
-```
-
-Directly from repository history:
+Interactive audit already performs this check.  
+Use this explicit non-interactive command when you need machine-readable proof for an auditor:
 
 ```bash
-cargo run -- audit --repo . --from <from-rev> --to <to-rev> --format tsv
-cargo run -- audit --repo . --from <from-rev> --to <to-rev> --format json
-```
-
-### 4) Verify metadata against repository truth
-
-```bash
-cargo run -- audit \
+git-sync audit \
   --bundle sync.bundle.zip \
-  --repo . \
+  --repo /path/to/source-repo \
   --verify-metadata \
   --format tsv
 ```
 
-### 5) Receive into target repository
+### 4) Transfer package across the air gap
+
+Move `sync.bundle.zip` to the disconnected target side using your approved transfer method.
+
+### 5) Audit package on target side after transfer (TUI, recommended)
 
 ```bash
-cargo run -- receive \
+git-sync audit \
+  --repo /path/to/target-repo \
+  --bundle /path/to/sync.bundle.zip
+```
+
+On target side, `--repo` provides the receiver context used for applicability and dry-run checks.
+
+### Optional) Non-interactive audit output (not part of core workflow)
+
+From bundle metadata (manifest/metadata view):
+
+```bash
+git-sync audit --bundle sync.bundle.zip --format tsv
+git-sync audit --bundle sync.bundle.zip --format json
+```
+
+This mode reports what is recorded in the package metadata. For full in-repo history comparison, use repo-range mode.
+
+Directly from repository history (repository-truth view):
+
+```bash
+git-sync audit --repo . --from <from-rev> --to <to-rev> --format tsv
+git-sync audit --repo . --from <from-rev> --to <to-rev> --format json
+```
+
+### 6) Receive into target repository
+
+```bash
+git-sync receive \
   --repo /path/to/receiver-repo \
   --bundle /path/to/sync.bundle.zip \
   --verify-metadata
@@ -112,7 +142,7 @@ cargo run -- receive \
 Dry-run receive (no writes to receiver repo):
 
 ```bash
-cargo run -- receive \
+git-sync receive \
   --repo /path/to/receiver-repo \
   --bundle /path/to/sync.bundle.zip \
   --verify-metadata \
@@ -124,7 +154,7 @@ cargo run -- receive \
 Run the interactive audit UI:
 
 ```bash
-cargo run -- audit --repo /path/to/repo --bundle /path/to/sync.bundle.zip
+git-sync audit --repo /path/to/repo --bundle /path/to/sync.bundle.zip
 ```
 
 ### Page 1: package overview
@@ -266,7 +296,8 @@ Diff mode:
 
 - `create --from ... --to ...` requires `to` to be equal to or a descendant of `from`.
 - `audit` without `--format` is interactive TUI mode and requires `--repo` and `--bundle`.
-- `audit --verify-metadata` is non-interactive and requires `--bundle`, `--repo`, and `--format`.
+- Interactive `audit` includes metadata verification against the provided `--repo`.
+- `audit --verify-metadata` is the explicit non-interactive verification path and requires `--bundle`, `--repo`, and `--format`.
 - `receive` requires prerequisite history to already exist in the receiver repository.
 - `receive --verify-metadata` validates bundle/sidecar integrity before import.
 - `receive --dry-run` applies into an isolated temporary bare mirror and does not mutate the receiver repo.
@@ -278,7 +309,8 @@ Diff mode:
 ```bash
 cargo build
 cargo build --release
-cargo run -- --help
+./target/debug/git-sync --help
+./target/release/git-sync --help
 ```
 
 ### Tests
@@ -336,14 +368,15 @@ Generated output:
 Prerequisites:
 
 ```bash
-# for man page generation
-sudo pacman -S pandoc
+# Debian/Ubuntu (man pages + .deb toolchain deps)
+sudo apt-get update
+sudo apt-get install -y pandoc dpkg-dev
 
-# for Debian package creation
+# Arch Linux (man pages + makepkg)
+sudo pacman -S --needed pandoc base-devel
+
+# cargo-deb (required for Debian package script)
 cargo install --locked cargo-deb
-
-# for Arch package creation (makepkg)
-sudo pacman -S base-devel
 ```
 
 Generate man pages from documentation (`README.md` and `SDD_SAD.md` -> section 7 man pages):
@@ -402,10 +435,10 @@ Notes:
 - Debian packaging uses `[package.metadata.deb]` in `Cargo.toml`.
 - Both package paths are printed by the scripts (`target/debian` and `target/arch`).
 
-### Release Workflow (cargo-release + CI)
+### Release Workflow (`cargo release` + CI)
 
 Target flow:
-1. Run `cargo-release` locally to create the release commit and tag.
+1. Run `cargo release` locally to create the release commit and tag.
 2. Push commit and tag.
 3. CI builds and packages with a consistent version everywhere.
 
@@ -415,18 +448,14 @@ Default local release command (no crates.io publish):
 cargo release <major.minor.patch> --no-publish --execute
 ```
 
-Example:
-
-```bash
-cargo release 0.2.0 --no-publish --execute
-```
-
 CI release/version behavior:
 - `scripts/verify-tag-version.sh` enforces: `git tag` version == `Cargo.toml` version.
 - On tagged commits, release binary build sets `GIT_SYNC_VERSION_OVERRIDE` from the Git tag.
 - `build-release` builds release binary + manpages exactly once and uploads them as `release-package-inputs`.
 - `package-deb` and `package-arch` download `release-package-inputs` and package from those prebuilt files.
 - `package-crate` runs `cargo package --locked` and uploads the produced `.crate`.
+- `release` publishes debug/release binaries, Debian/Arch packages, docs archive, and coverage report to GitHub Releases.
+- Release notes are generated from the matching version section in `CHANGELOG.md`.
 
 This keeps the release pipeline immutable for tagged builds and avoids rebuilding release binaries in package jobs.
 
@@ -461,9 +490,8 @@ cargo doc --no-deps --document-private-items
 - Architecture/design: [`SDD_SAD.md`](SDD_SAD.md)
 - Metadata schema: `schemas/sync.bundle.caudit.schema.json`
 
-## Implementation Snapshot
+## Technical Notes
 
-- Language: Rust (edition 2024)
-- Git operations: `git2` (libgit2 bindings)
-- TUI: `ratatui` + `crossterm`
-- Core logic runs in-process (no `git` CLI subprocesses in runtime Git paths)
+- Runtime Git operations are in-process via `git2` (libgit2 bindings); core `create`/`audit`/`receive` paths do not shell out to `git`.
+- Receiving the same package repeatedly is idempotent: existing refs/objects are reused and results remain deterministic.
+- Binary/symlink (non-text) file changes are handled safely: line counts are `0/0` and diff-open actions no-op for unavailable textual patches.
