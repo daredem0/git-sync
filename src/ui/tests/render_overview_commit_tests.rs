@@ -74,6 +74,10 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include pack checksum match status in general section"
     );
     assert!(
+        output.contains("bundle fully reachable from heads: no"),
+        "overview render should include bundle-to-history reachability status"
+    );
+    assert!(
         output.contains("file.txt"),
         "overview render should include rendered file stats rows"
     );
@@ -120,6 +124,30 @@ fn render_overview_page_shows_pack_proof_failure_summary() {
     assert!(
         output.contains("pack checksum: mismatch"),
         "overview render should flag checksum mismatch in general section"
+    );
+}
+
+// Verifies that overview bundle-integrity section marks full history coverage when all payload objects are reachable from heads.
+#[test]
+fn render_overview_page_shows_full_bundle_reachability_when_all_objects_are_reachable() {
+    let mut model = sample_overview_model(super::super::types::DryRunLine::Failed(
+        "dry-run failed".to_string(),
+    ));
+    let PayloadModel::Ok(payload) = &mut model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    for object in &mut payload.objects {
+        object.reachable_from_heads = true;
+    }
+    let state = super::super::types::AppState::new(&model);
+
+    let output = render_and_capture_text(140, 44, |frame| {
+        render_overview_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("bundle fully reachable from heads: yes"),
+        "overview render should show full bundle reachability when all payload objects are in head history"
     );
 }
 

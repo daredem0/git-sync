@@ -9,6 +9,9 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+const OVERVIEW_COLUMN_SPLIT: [Constraint; 2] =
+    [Constraint::Percentage(45), Constraint::Percentage(55)];
+
 /// Renders the overview page with validation, heads, and dry-run summaries.
 pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     let overview = &model.overview;
@@ -17,7 +20,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6),
-            Constraint::Length(11),
+            Constraint::Length(12),
             Constraint::Min(10),
             Constraint::Length(2),
         ])
@@ -41,6 +44,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         pack_checksum_status,
         pack_thin_status,
         pack_baseline_resolutions,
+        bundle_reachability_status,
     ) = render_pack_proof_summary(&model.payload);
     let general_left_lines = vec![
         format!("tool version: {}", overview.app_version),
@@ -65,12 +69,13 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         format!("pack entries materialized: {pack_entries_materialized}"),
         format!("transfer gate: {pack_transfer_status}"),
         format!("pack checksum: {pack_checksum_status}"),
+        format!("bundle fully reachable from heads: {bundle_reachability_status}"),
         format!("thin pack detected: {pack_thin_status}"),
         format!("baseline resolutions: {pack_baseline_resolutions}"),
     ];
     let general_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .constraints(OVERVIEW_COLUMN_SPLIT)
         .split(chunks[1]);
     let general_left = Paragraph::new(general_left_lines.join("\n"))
         .block(Block::default().borders(Borders::ALL).title("General"))
@@ -89,7 +94,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         DryRunLine::Ok(result) => {
             let detail_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .constraints(OVERVIEW_COLUMN_SPLIT)
                 .split(chunks[2]);
             render_heads_table(frame, result, state.selected_head_index, detail_chunks[0]);
 
@@ -141,7 +146,16 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
 /// Returns concise pack-proof status lines for overview's general section.
 fn render_pack_proof_summary(
     payload: &PayloadModel,
-) -> (String, String, String, String, String, String, String) {
+) -> (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+) {
     match payload {
         PayloadModel::Ok(audit) => {
             let proof = &audit.pack_proof;
@@ -181,6 +195,17 @@ fn render_pack_proof_summary(
             }
             .to_string();
             let baseline_resolutions = proof.baseline_resolutions_count.to_string();
+            let total_objects = audit.objects.len();
+            let unreachable_objects = audit
+                .objects
+                .iter()
+                .filter(|entry| !entry.reachable_from_heads)
+                .count();
+            let bundle_reachability = if total_objects == 0 || unreachable_objects == 0 {
+                "yes".to_string()
+            } else {
+                format!("no ({unreachable_objects}/{total_objects} unreachable)")
+            };
             (
                 status,
                 parsed,
@@ -189,6 +214,7 @@ fn render_pack_proof_summary(
                 checksum,
                 thin,
                 baseline_resolutions,
+                bundle_reachability,
             )
         }
         PayloadModel::Failed(err) => (
@@ -196,6 +222,7 @@ fn render_pack_proof_summary(
             "-".to_string(),
             "-".to_string(),
             "blocked".to_string(),
+            "-".to_string(),
             "-".to_string(),
             "-".to_string(),
             "-".to_string(),
