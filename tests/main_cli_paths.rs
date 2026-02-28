@@ -391,7 +391,7 @@ fn audit_non_interactive_payload_table_output_succeeds() {
     );
 }
 
-// Verifies that non-interactive audit supports payload JSON output for a bundle+repo input pair.
+// Verifies that non-interactive audit JSON includes the phase-2 payload document contract fields.
 #[test]
 fn audit_non_interactive_payload_json_output_succeeds() {
     let fixture = create_fixture();
@@ -412,8 +412,69 @@ fn audit_non_interactive_payload_json_output_succeeds() {
     let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("payload json output should parse as valid json");
     assert!(
+        value.get("schema_version").is_some(),
+        "payload json output must include schema_version"
+    );
+    assert!(
+        value.get("tool_version").is_some(),
+        "payload json output must include tool_version"
+    );
+    assert!(
+        value.get("generated_at_unix_secs").is_some(),
+        "payload json output must include generated_at_unix_secs"
+    );
+    assert!(
+        value.get("generated_by_username").is_some(),
+        "payload json output must include generated_by_username"
+    );
+    assert!(
+        value.get("generated_by_hostname").is_some(),
+        "payload json output must include generated_by_hostname"
+    );
+    assert!(
+        value.get("bundle_path").is_some(),
+        "payload json output must include bundle_path"
+    );
+    assert!(
+        value.get("bundle_size_bytes").is_some(),
+        "payload json output must include bundle_size_bytes"
+    );
+    assert!(
+        value.get("bundle_sha256").is_some(),
+        "payload json output must include bundle_sha256"
+    );
+    assert!(
+        value.get("bundle_header_version").is_some(),
+        "payload json output must include bundle_header_version"
+    );
+    assert!(
+        value.get("prerequisites").is_some(),
+        "payload json output must include prerequisites"
+    );
+    assert!(
+        value.get("heads").is_some(),
+        "payload json output must include heads"
+    );
+    assert!(
+        value.get("transport_entries").is_some(),
+        "payload json output should include transport_entries section"
+    );
+    assert!(
+        value.get("pack_summary").is_some(),
+        "payload json output should include pack_summary section"
+    );
+    assert!(
         value.get("pack_objects").is_some(),
         "payload json output should include pack_objects section"
+    );
+    assert!(
+        value.get("object_details").is_some(),
+        "payload json output should include object_details section"
+    );
+    assert_eq!(
+        value["schema_version"],
+        serde_json::json!("1"),
+        "payload json schema_version must be set to 1"
     );
 }
 

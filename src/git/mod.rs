@@ -14,10 +14,11 @@ mod util;
 pub use bundle::PayloadSession;
 #[allow(unused_imports)]
 pub use bundle::{
-    collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
-    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
-    collect_payload_object_detail_for_session, create_bundle, create_bundle_with_options,
-    inspect_bundle, open_payload_session, payload_audit_from_session, receive_bundle_input,
+    build_payload_audit_document_for_bundle_input, collect_commit_file_patch_for_bundle_input,
+    collect_head_audit_entries_for_bundle_input, collect_payload_audit_for_bundle_input,
+    collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
+    create_bundle, create_bundle_with_options, inspect_bundle, open_payload_session,
+    payload_audit_document_from_session, payload_audit_from_session, receive_bundle_input,
     receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
 };
 #[allow(unused_imports)]
@@ -37,8 +38,11 @@ pub use range::resolve_repo_audit_range;
 pub use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, ChangedFile, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
-    OpenContext, PayloadAudit, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadTransportEntry, ReceiveBundleOptions, ReceiveBundleResult, RepoAuditRange,
+    OpenContext, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
+    PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
+    PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
+    PayloadObjectEntry, PayloadObjectKind, PayloadTransportEntry, ReceiveBundleOptions,
+    ReceiveBundleResult, RepoAuditRange,
 };
 
 #[cfg(test)]

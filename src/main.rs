@@ -14,9 +14,9 @@ use app::AppConfig;
 use clap::Parser;
 use cli::{Cli, Command, OutputFormat, resolve_payload_audit_target};
 use git::{
-    CreateBundleOptions, ReceiveBundleOptions, collect_payload_audit_for_bundle_input,
-    create_bundle, create_bundle_with_options, receive_bundle_input,
-    receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
+    CreateBundleOptions, ReceiveBundleOptions, build_payload_audit_document_for_bundle_input,
+    collect_payload_audit_for_bundle_input, create_bundle, create_bundle_with_options,
+    receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
     verify_bundle_metadata_against_repo_input,
 };
 
@@ -114,15 +114,21 @@ fn main() -> Result<()> {
             let format = format.expect("format should be present in non-interactive audit mode");
 
             let target = resolve_payload_audit_target(repo, bundle, from, to)?;
-            let payload =
-                collect_payload_audit_for_bundle_input(&target.bundle_path, &target.repo_path)?;
             match format {
                 OutputFormat::Table => {
+                    let payload = collect_payload_audit_for_bundle_input(
+                        &target.bundle_path,
+                        &target.repo_path,
+                    )?;
                     let table = render_payload_audit_table(&payload);
                     println!("{table}");
                 }
                 OutputFormat::Json => {
-                    let payload_json = render_payload_audit_json(&payload)?;
+                    let payload_document = build_payload_audit_document_for_bundle_input(
+                        &target.bundle_path,
+                        &target.repo_path,
+                    )?;
+                    let payload_json = render_payload_audit_json(&payload_document)?;
                     println!("{payload_json}");
                 }
             }
@@ -309,35 +315,9 @@ fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
     out
 }
 
-/// Renders non-interactive payload audit as JSON.
-///
-/// This is a phase-1 contract shape and will be extended in subsequent phases.
-fn render_payload_audit_json(payload: &git::PayloadAudit) -> Result<String> {
-    let value = serde_json::json!({
-        "bundle_header_version": match payload.bundle_version {
-            git::BundleVersion::V2 => "v2",
-            git::BundleVersion::V3 => "v3",
-        },
-        "heads": payload.heads.iter().map(|head| serde_json::json!({
-            "oid": head.oid.to_string(),
-            "reference": head.reference,
-        })).collect::<Vec<_>>(),
-        "transport_entries": payload.transport_entries.iter().map(|entry| serde_json::json!({
-            "name": entry.name,
-            "size_bytes": entry.size_bytes,
-            "sha256": entry.sha256,
-        })).collect::<Vec<_>>(),
-        "pack_objects": payload.objects.iter().map(|object| serde_json::json!({
-            "oid": object.oid.to_string(),
-            "type": payload_kind_label(object.kind),
-            "size_bytes": object.size_bytes,
-            "reachable_from_heads": object.reachable_from_heads,
-            "context_head_index": object.context_head_index,
-            "context_commit_order": object.context_commit_order,
-            "context_path": object.context_path,
-        })).collect::<Vec<_>>(),
-    });
-    Ok(serde_json::to_string_pretty(&value)?)
+/// Renders non-interactive payload audit document as pretty-printed JSON.
+fn render_payload_audit_json(document: &git::PayloadAuditDocument) -> Result<String> {
+    Ok(serde_json::to_string_pretty(document)?)
 }
 
 /// Returns stable labels for payload object kinds.

@@ -77,7 +77,7 @@ pub enum Command {
 pub enum OutputFormat {
     /// Human-readable aligned payload table.
     Table,
-    /// Pretty-printed JSON manifest.
+    /// Pretty-printed JSON payload-audit document.
     Json,
 }
 

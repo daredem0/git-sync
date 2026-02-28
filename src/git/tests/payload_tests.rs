@@ -170,3 +170,95 @@ fn open_payload_session_allows_detail_lookup_without_bundle_file() {
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
+
+// Verifies that payload-audit schema file exists and declares phase-2 required top-level fields.
+#[test]
+fn payload_audit_schema_declares_phase2_required_fields() {
+    let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("schemas")
+        .join("sync.bundle.paudit.schema.json");
+    let schema_bytes = std::fs::read(&schema_path).expect("must read payload-audit schema file");
+    let schema_json: serde_json::Value =
+        serde_json::from_slice(&schema_bytes).expect("schema file must parse as valid json");
+
+    let required = schema_json
+        .get("required")
+        .and_then(|value| value.as_array())
+        .expect("schema must define required top-level field list");
+
+    for field in [
+        "schema_version",
+        "tool_version",
+        "generated_at_unix_secs",
+        "generated_by_username",
+        "generated_by_hostname",
+        "bundle_path",
+        "bundle_size_bytes",
+        "bundle_sha256",
+        "bundle_header_version",
+        "prerequisites",
+        "heads",
+        "transport_entries",
+        "pack_summary",
+        "pack_objects",
+        "object_details",
+    ] {
+        assert!(
+            required.iter().any(|value| value.as_str() == Some(field)),
+            "schema required field list must include '{field}'"
+        );
+    }
+}
+
+// Verifies that payload-audit JSON document builder emits required metadata and consistent summary counters.
+#[test]
+fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-shape", false);
+
+    let document =
+        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+            .expect("must build payload-audit document");
+
+    assert_eq!(
+        document.schema_version, "1",
+        "payload-audit document must advertise schema version 1"
+    );
+    assert!(
+        !document.tool_version.trim().is_empty(),
+        "payload-audit document must include non-empty tool_version"
+    );
+    assert!(
+        !document.bundle_path.trim().is_empty(),
+        "payload-audit document must include non-empty bundle_path"
+    );
+    assert!(
+        document.bundle_size_bytes > 0,
+        "payload-audit document must include positive bundle_size_bytes"
+    );
+    assert_eq!(
+        document.bundle_sha256.len(),
+        64,
+        "payload-audit document must include 64-char bundle SHA-256 digest"
+    );
+    assert!(
+        !document.heads.is_empty(),
+        "payload-audit document must include at least one advertised head"
+    );
+    assert!(
+        !document.pack_objects.is_empty(),
+        "payload-audit document must include at least one pack-object row"
+    );
+    assert_eq!(
+        document.pack_summary.total_objects,
+        document.pack_objects.len(),
+        "pack_summary.total_objects must match pack_objects length"
+    );
+    assert_eq!(
+        document.object_details.len(),
+        document.pack_objects.len(),
+        "payload-audit object_details should be available for all pack objects"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}

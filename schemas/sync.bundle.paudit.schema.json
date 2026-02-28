@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/sync.bundle.paudit.schema.json",
+  "title": "Git Sync Bundle Payload Audit Document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool_version",
+    "generated_at_unix_secs",
+    "generated_by_username",
+    "generated_by_hostname",
+    "bundle_path",
+    "bundle_size_bytes",
+    "bundle_sha256",
+    "bundle_header_version",
+    "prerequisites",
+    "heads",
+    "transport_entries",
+    "pack_summary",
+    "pack_objects",
+    "object_details"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_unix_secs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "generated_by_username": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_by_hostname": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bundle_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bundle_header_version": {
+      "type": "string",
+      "enum": [
+        "v2",
+        "v3"
+      ]
+    },
+    "prerequisites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/oid"
+      }
+    },
+    "heads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "oid",
+          "reference"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "transport_entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "size_bytes",
+          "sha256"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "pack_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_objects",
+        "reachable_objects",
+        "unreachable_objects",
+        "commit_objects",
+        "tree_objects",
+        "blob_objects",
+        "tag_objects",
+        "unknown_objects"
+      ],
+      "properties": {
+        "total_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reachable_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unreachable_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commit_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tree_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blob_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tag_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_objects": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "pack_objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "oid",
+          "kind",
+          "size_bytes",
+          "reachable_from_heads",
+          "context_head_index",
+          "context_commit_order",
+          "context_path"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "kind": {
+            "$ref": "#/$defs/object_kind"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reachable_from_heads": {
+            "type": "boolean"
+          },
+          "context_head_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "context_commit_order": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "context_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "object_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "oid",
+          "kind",
+          "size_bytes",
+          "syntax_path_hint",
+          "blob_paths",
+          "text_line_count",
+          "lines"
+        ],
+        "properties": {
+          "oid": {
+            "$ref": "#/$defs/oid"
+          },
+          "kind": {
+            "$ref": "#/$defs/object_kind"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "syntax_path_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blob_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text_line_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "oid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "object_kind": {
+      "type": "string",
+      "enum": [
+        "commit",
+        "tree",
+        "blob",
+        "tag",
+        "unknown"
+      ]
+    }
+  }
+}

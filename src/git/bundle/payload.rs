@@ -3,10 +3,15 @@
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
-    BundleInspection, PayloadAudit, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadTransportEntry,
+    BundleInspection, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
+    PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
+    PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
+    PayloadObjectEntry, PayloadObjectKind, PayloadTransportEntry,
 };
-use crate::git::util::sha256_hex;
+use crate::git::util::{
+    bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
+    sha256_hex,
+};
 use anyhow::{Result, anyhow, bail};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -24,6 +29,9 @@ pub struct PayloadSession {
     temp_repo: TempBareRepo,
     inspection: BundleInspection,
     payload: PayloadAudit,
+    bundle_path: String,
+    bundle_size_bytes: u64,
+    bundle_sha256: String,
 }
 
 /// Collects transport-entry and pack-object payload audit data for a bundle input.
@@ -39,6 +47,20 @@ pub fn collect_payload_audit_for_bundle_input(
 ) -> Result<PayloadAudit> {
     let session = open_payload_session(bundle_input_path, repo_path)?;
     Ok(payload_audit_from_session(&session))
+}
+
+/// Builds a serialized payload-audit JSON document for non-interactive CLI output.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails or object-detail
+/// materialization fails.
+pub fn build_payload_audit_document_for_bundle_input(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+) -> Result<PayloadAuditDocument> {
+    let session = open_payload_session(bundle_input_path, repo_path)?;
+    payload_audit_document_from_session(&session)
 }
 
 /// Collects detail lines for one selected payload object.
@@ -66,6 +88,12 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
     if is_zip_bundle_input_path(bundle_input_path) {
         let transport_entries = collect_transport_entries_for_zip(bundle_input_path)?;
         let extracted = extract_bundle_archive(bundle_input_path)?;
+        let bundle_bytes = fs::read(&extracted.bundle_path)?;
+        let bundle_path = extracted
+            .bundle_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| extracted.bundle_path.display().to_string());
         let inspection = inspect_bundle(&extracted.bundle_path)?;
         let temp_repo = TempBareRepo::new()?;
         let repo = git2::Repository::open_bare(&temp_repo.path)?;
@@ -88,10 +116,18 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
             temp_repo,
             inspection,
             payload,
+            bundle_path,
+            bundle_size_bytes: bundle_bytes.len() as u64,
+            bundle_sha256: sha256_hex(&bundle_bytes)?,
         });
     }
 
     let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
+    let bundle_bytes = fs::read(bundle_input_path)?;
+    let bundle_path = bundle_input_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| bundle_input_path.display().to_string());
     let inspection = inspect_bundle(bundle_input_path)?;
     let temp_repo = TempBareRepo::new()?;
     let repo = git2::Repository::open_bare(&temp_repo.path)?;
@@ -110,12 +146,121 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
         temp_repo,
         inspection,
         payload,
+        bundle_path,
+        bundle_size_bytes: bundle_bytes.len() as u64,
+        bundle_sha256: sha256_hex(&bundle_bytes)?,
     })
 }
 
 /// Returns a payload-audit snapshot captured in the provided session.
 pub fn payload_audit_from_session(session: &PayloadSession) -> PayloadAudit {
     session.payload.clone()
+}
+
+/// Builds a serialized payload-audit JSON document from a reusable session.
+///
+/// # Errors
+///
+/// Returns an error when object detail collection fails for any payload object.
+pub fn payload_audit_document_from_session(
+    session: &PayloadSession,
+) -> Result<PayloadAuditDocument> {
+    let mut pack_objects = Vec::<PayloadAuditDocumentPackObject>::new();
+    let mut object_details = Vec::<PayloadAuditDocumentObjectDetail>::new();
+
+    let mut reachable_objects = 0usize;
+    let mut commit_objects = 0usize;
+    let mut tree_objects = 0usize;
+    let mut blob_objects = 0usize;
+    let mut tag_objects = 0usize;
+    let mut unknown_objects = 0usize;
+
+    for object in &session.payload.objects {
+        if object.reachable_from_heads {
+            reachable_objects += 1;
+        }
+
+        match object.kind {
+            PayloadObjectKind::Commit => commit_objects += 1,
+            PayloadObjectKind::Tree => tree_objects += 1,
+            PayloadObjectKind::Blob => blob_objects += 1,
+            PayloadObjectKind::Tag => tag_objects += 1,
+            PayloadObjectKind::Unknown => unknown_objects += 1,
+        }
+
+        pack_objects.push(PayloadAuditDocumentPackObject {
+            oid: object.oid.to_string(),
+            kind: payload_kind_code(object.kind).to_string(),
+            size_bytes: object.size_bytes,
+            reachable_from_heads: object.reachable_from_heads,
+            context_head_index: object.context_head_index,
+            context_commit_order: object.context_commit_order,
+            context_path: object.context_path.clone(),
+        });
+
+        let detail = collect_payload_object_detail_for_session(session, object.oid)?;
+        object_details.push(PayloadAuditDocumentObjectDetail {
+            oid: detail.oid.to_string(),
+            kind: payload_kind_code(detail.kind).to_string(),
+            size_bytes: detail.size_bytes,
+            syntax_path_hint: detail.syntax_path_hint,
+            blob_paths: detail.blob_paths,
+            text_line_count: detail.text_line_count,
+            lines: detail.lines,
+        });
+    }
+
+    let total_objects = session.payload.objects.len();
+    let summary = PayloadAuditPackSummary {
+        total_objects,
+        reachable_objects,
+        unreachable_objects: total_objects.saturating_sub(reachable_objects),
+        commit_objects,
+        tree_objects,
+        blob_objects,
+        tag_objects,
+        unknown_objects,
+    };
+
+    Ok(PayloadAuditDocument {
+        schema_version: "1".to_string(),
+        tool_version: crate::version::APP_VERSION.to_string(),
+        generated_at_unix_secs: current_unix_timestamp_secs()?,
+        generated_by_username: current_username(),
+        generated_by_hostname: current_hostname(),
+        bundle_path: session.bundle_path.clone(),
+        bundle_size_bytes: session.bundle_size_bytes,
+        bundle_sha256: session.bundle_sha256.clone(),
+        bundle_header_version: bundle_version_code(session.inspection.version).to_string(),
+        prerequisites: session
+            .inspection
+            .prerequisites
+            .iter()
+            .map(|oid| oid.to_string())
+            .collect(),
+        heads: session
+            .inspection
+            .heads
+            .iter()
+            .map(|head| PayloadAuditDocumentHead {
+                oid: head.oid.to_string(),
+                reference: head.reference.clone(),
+            })
+            .collect(),
+        transport_entries: session
+            .payload
+            .transport_entries
+            .iter()
+            .map(|entry| PayloadAuditDocumentTransportEntry {
+                name: entry.name.clone(),
+                size_bytes: entry.size_bytes,
+                sha256: entry.sha256.clone(),
+            })
+            .collect(),
+        pack_summary: summary,
+        pack_objects,
+        object_details,
+    })
 }
 
 /// Collects detail lines for one selected payload object from a reusable session.
@@ -484,6 +629,17 @@ fn payload_kind_from_git(kind: git2::ObjectType) -> PayloadObjectKind {
         git2::ObjectType::Blob => PayloadObjectKind::Blob,
         git2::ObjectType::Tag => PayloadObjectKind::Tag,
         _ => PayloadObjectKind::Unknown,
+    }
+}
+
+/// Returns stable string code for payload object kinds.
+fn payload_kind_code(kind: PayloadObjectKind) -> &'static str {
+    match kind {
+        PayloadObjectKind::Commit => "commit",
+        PayloadObjectKind::Tree => "tree",
+        PayloadObjectKind::Blob => "blob",
+        PayloadObjectKind::Tag => "tag",
+        PayloadObjectKind::Unknown => "unknown",
     }
 }
 

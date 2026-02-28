@@ -180,6 +180,120 @@ pub struct PayloadObjectDetail {
     pub lines: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Serialized non-interactive payload-audit document (`audit --format json`).
+pub struct PayloadAuditDocument {
+    /// Schema version for payload-audit JSON.
+    pub schema_version: String,
+    /// Tool version that produced this document.
+    pub tool_version: String,
+    /// Generation timestamp in UNIX seconds.
+    pub generated_at_unix_secs: u64,
+    /// Local username on the auditing host.
+    pub generated_by_username: String,
+    /// Local hostname on the auditing host.
+    pub generated_by_hostname: String,
+    /// Audited raw bundle file path/name.
+    pub bundle_path: String,
+    /// Audited raw bundle byte size.
+    pub bundle_size_bytes: u64,
+    /// Audited raw bundle SHA-256 digest.
+    pub bundle_sha256: String,
+    /// Parsed bundle header version (`v2`/`v3`).
+    pub bundle_header_version: String,
+    /// Bundle prerequisite object ids.
+    pub prerequisites: Vec<String>,
+    /// Advertised bundle heads.
+    pub heads: Vec<PayloadAuditDocumentHead>,
+    /// All transport package entries hashed for audit.
+    pub transport_entries: Vec<PayloadAuditDocumentTransportEntry>,
+    /// Aggregate object-count summary by type/reachability.
+    pub pack_summary: PayloadAuditPackSummary,
+    /// Per-object listing from payload object enumeration.
+    pub pack_objects: Vec<PayloadAuditDocumentPackObject>,
+    /// Per-object textual detail content for deep review/export.
+    pub object_details: Vec<PayloadAuditDocumentObjectDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Serialized head entry in payload-audit document.
+pub struct PayloadAuditDocumentHead {
+    /// Head tip object id.
+    pub oid: String,
+    /// Head reference name.
+    pub reference: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Serialized transport-entry hash row in payload-audit document.
+pub struct PayloadAuditDocumentTransportEntry {
+    /// Transport entry name (zip member or raw bundle file name).
+    pub name: String,
+    /// Byte size of the entry.
+    pub size_bytes: u64,
+    /// SHA-256 digest of entry bytes.
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Aggregate pack summary counters in payload-audit document.
+pub struct PayloadAuditPackSummary {
+    /// Total objects enumerated.
+    pub total_objects: usize,
+    /// Objects reachable from advertised heads.
+    pub reachable_objects: usize,
+    /// Objects not reachable from advertised heads.
+    pub unreachable_objects: usize,
+    /// Commit object count.
+    pub commit_objects: usize,
+    /// Tree object count.
+    pub tree_objects: usize,
+    /// Blob object count.
+    pub blob_objects: usize,
+    /// Tag object count.
+    pub tag_objects: usize,
+    /// Unknown object count.
+    pub unknown_objects: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Serialized per-object row in payload-audit document.
+pub struct PayloadAuditDocumentPackObject {
+    /// Object id.
+    pub oid: String,
+    /// Object kind.
+    pub kind: String,
+    /// Uncompressed object size in bytes.
+    pub size_bytes: usize,
+    /// Reachability marker from advertised heads.
+    pub reachable_from_heads: bool,
+    /// Optional context head index for first-seen association.
+    pub context_head_index: Option<usize>,
+    /// Optional context commit order for first-seen association.
+    pub context_commit_order: Option<usize>,
+    /// Optional context path for first-seen association.
+    pub context_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Serialized per-object textual detail in payload-audit document.
+pub struct PayloadAuditDocumentObjectDetail {
+    /// Object id.
+    pub oid: String,
+    /// Object kind.
+    pub kind: String,
+    /// Uncompressed object size in bytes.
+    pub size_bytes: usize,
+    /// Optional syntax hint path for text rendering.
+    pub syntax_path_hint: Option<String>,
+    /// Reachable blob paths for blob objects.
+    pub blob_paths: Vec<String>,
+    /// Optional UTF-8 line count for text blobs.
+    pub text_line_count: Option<usize>,
+    /// Full textual representation/content lines.
+    pub lines: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Result of receiving a bundle or running receive in dry-run mode.
 pub struct ReceiveBundleResult {
