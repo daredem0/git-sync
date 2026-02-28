@@ -1,282 +1,403 @@
 # Software Design and Architecture Description (SDD/SAD)
 
 ## 1. Purpose
-This document describes the current software design of `git-sync` for developers working on the project.
+This document describes the current software design of `git-sync` for developers and auditors working on the project.
 
 Scope:
-- command and runtime architecture
-- module decomposition (`src/git`, `src/ui`, CLI entrypoints)
-- data artifacts (`.bundle`, `.caudit.json`, optional `.caudit.patch`, `.zip`)
-- auditability model and proof procedure
+- command/runtime architecture
+- module decomposition (`src/main.rs`, `src/git/*`, `src/ui/*`)
+- package artifacts (`.bundle`, `.caudit.json`, optional `.caudit.patch`, `.zip`)
+- auditability model and guarantees
 - build/versioning and test strategy
 
 ## 2. System Context
 `git-sync` is an offline-oriented Git transfer and audit tool for air-gap workflows.
 
 Primary workflows:
-- create package: `create`
-- inspect/audit package: `audit` (non-interactive manifest) and TUI (`audit` without `--format` or `ui`)
-- verify package metadata against repository truth: `audit --verify-metadata`
-- receive package into target repo: `receive` (optionally `--dry-run`)
+- create transport package: `create`
+- inspect package:
+  - interactive: `audit` without `--format` (preferred)
+  - non-interactive: `audit --format tsv|json`
+- verify metadata against repository truth: `audit --verify-metadata --format ...`
+- receive into target repository: `receive` (optionally `--dry-run`)
 
 ```mermaid
 flowchart LR
     SRC[(Source Git Repository)]
     CREATE[create]
     PKG[[sync.bundle.zip]]
-    AUDIT[audit/ui]
-    RCV[receive]
+    AUDIT[audit]
+    RECEIVE[receive]
     DST[(Receiver Repository)]
 
     SRC --> CREATE --> PKG
     PKG --> AUDIT
-    PKG --> RCV --> DST
+    PKG --> RECEIVE --> DST
 ```
 
 ## 3. Architectural Style
-The project is a single-process Rust CLI with explicit module boundaries:
-- `src/main.rs`: command dispatch and user-facing flow control
-- `src/git/*`: Git-domain operations and package artifacts
-- `src/ui/*`: terminal audit UI (Ratatui + Crossterm)
+The project is a single-process Rust CLI with explicit module boundaries and no shell-outs in core Git logic.
 
 Design characteristics:
-- in-process Git logic through `git2`/libgit2 (no git CLI in core paths)
-- deterministic, side-effect-minimized audit computations
-- strict input validation with explicit errors (`anyhow`)
-- optional isolated dry-run receive via temporary bare repository
+- in-process Git operations via `git2`/libgit2
+- deterministic data transformations where possible (sorted manifests, stable rendering order)
+- explicit validation and typed errors (`anyhow`)
+- isolation for risky operations (`receive --dry-run` in temporary bare mirror)
+- separation between transport-level inspection and repository-truth verification
 
 ## 4. Module Decomposition
-### 4.1 Entry and CLI
-- `src/main.rs`: subcommand dispatch (`create`, `audit`, `ui`, `receive`)
-- `src/cli.rs`: Clap models, validation of valid audit mode combinations
-- `src/app.rs`: shared runtime config model (`AppConfig`)
-- `src/version.rs` + `build.rs`: build-time version embedding
 
-CLI behavior details:
-- no subcommand prints scaffold/help guidance text
-- `audit` without `--format` enters interactive TUI mode
-- `ui` accepts explicit `--base/--tip`; interactive `audit` uses `base_ref=sync/last` and no `tip_ref`
+### 4.1 Entry and Command Dispatch
+- `src/main.rs`: top-level command routing and mode wiring
+- `src/cli.rs`: Clap models and audit-mode argument resolution
+- `src/app.rs`: shared `AppConfig`
+- `src/version.rs` + `build.rs`: runtime version embedding
 
-### 4.2 Git Layer (`src/git`)
-- `bundle/create.rs`: bundle generation, metadata generation, zip packaging
-- `bundle/inspect.rs`: bundle header parser (v2/v3 headers)
-- `bundle/receive.rs`: import, dry-run import mirror, line-stat collection, commit patch extraction
-- `metadata/collect.rs`: normalized commit chain and changed-file metadata generation
-- `metadata/load.rs`: metadata loading for `.bundle` and `.zip` inputs
+Command groups:
+- `create`: build package from linear `from..to` range
+- `audit`: interactive TUI or non-interactive TSV/JSON
+- `ui`: explicit interactive entrypoint (with manual `--base/--tip`)
+- `receive`: import package into receiver repo (`--verify-metadata`, `--dry-run`)
+
+### 4.2 Git Domain (`src/git`)
+- `bundle/create.rs`: bundle generation, metadata generation, optional patch, zip packaging
+- `bundle/inspect.rs`: bundle textual header parsing (`v2`/`v3`, prerequisites, heads)
+- `bundle/receive.rs`: receive/apply/dry-run, commit-page data collection, per-file patch extraction
+- `bundle/payload.rs`: payload session, transport entry inventory, pack-object inventory, object detail rendering
+- `metadata/collect.rs`: metadata commit chain + changed files
+- `metadata/load.rs`: metadata loading from `.bundle` or `.zip`
 - `metadata/verify.rs`: integrity checks and repository-truth checks
-- `metadata/patch.rs`: optional unified-diff sidecar generation
-- `archive.rs`: zip write/extract, sidecar path resolution
-- `diff.rs`: deterministic tree diff collection
-- `range.rs`: `from`/`to` commit range resolution with descendant check
-- `manifest.rs`: TSV/JSON manifest rendering
-- `context.rs`: repo/bundle context validation for UI startup
+- `metadata/patch.rs`: optional patch sidecar generation
+- `archive.rs`: archive write/extract and sidecar path resolution
+- `diff.rs`: deterministic changed-file collection
+- `range.rs`: linear range validation/resolution for repo-range audit
+- `manifest.rs`: TSV/JSON rendering
 - `types.rs`: shared domain models
-- `util.rs`: hashing, status/oid/path helpers
+- `util.rs`: OID/status/path/hash helpers and host/user capture
 
-### 4.3 UI Layer (`src/ui`)
-- `runtime.rs`: terminal lifecycle and event loop
-- `input.rs`: key handling for page and diff modes
-- `model.rs`: overview + commit-page model assembly
-- `render/*`: page rendering (`overview`, `commit`, `diff`)
-- `state/*`: navigation and diff view state mutations
-- `diff/*`: patch parsing/rendering + syntax highlighting integration
-- `types.rs`: UI data/state models
+### 4.3 UI Domain (`src/ui`)
+- `model.rs`: builds `AuditModel` (overview, commit pages, payload, syntax resources)
+- `runtime.rs`: terminal lifecycle + event loop
+- `input.rs`: key mapping and mode-sensitive input dispatch
+- `state/*`: navigation, diff operations, payload operations
+- `render/*`: overview page, commit page, diff view, payload page
+- `diff/*`: unified diff parse + syntax-aware render
+- `syntax.rs`: syntax/theme loading and syntax detection
+- `types.rs`: UI data/state types
+- `tests/*`: isolated UI behavior tests (input, rendering, state transitions)
 
 ```mermaid
 flowchart TD
-    MAIN[src/main.rs] --> CLI[src/cli.rs]
-    MAIN --> GIT[src/git]
-    MAIN --> UI[src/ui]
+    MAIN[src/main.rs]
+    CLI[src/cli.rs]
+    UI[src/ui/*]
+    GIT[src/git/*]
+    LIBGIT2[git2 / libgit2]
+    TERM[Ratatui + Crossterm]
+    SYN[Syntect]
+
+    MAIN --> CLI
+    MAIN --> UI
+    MAIN --> GIT
     UI --> GIT
-    GIT --> LIBGIT2[git2/libgit2]
+    UI --> TERM
+    UI --> SYN
+    GIT --> LIBGIT2
 ```
 
-## 5. Runtime Workflows
-### 5.1 Create Package
+## 5. Data and Artifact Model
+
+### 5.1 Transport Artifact Structure
+Create pipeline produces:
+- `<name>.bundle`
+- `<name>.bundle.caudit.json`
+- optional `<name>.bundle.caudit.patch` (when `--with-patches`)
+- packaged `<name>.bundle.zip`
+
+CLI `create` keeps only `<name>.bundle.zip` by default and removes loose sidecars/bundle.
+
+### 5.2 Metadata Sidecar Binding
+Metadata (`schema_version: "1"`) captures:
+- bundle identity: path, byte size, SHA-256
+- bundle header linkage: version, prerequisites, heads
+- claimed range: `range_from_oid`, `range_to_oid`, `tip_ref`
+- audit views: `commit_chain`, `changed_files`
+- optional patch sidecar integrity: path, format, size, SHA-256
+- generation provenance: timestamp, username, hostname
+
+Schema source: `schemas/sync.bundle.caudit.schema.json`.
+
+### 5.3 Runtime Models
+Core runtime structures:
+- `ReceiveBundleResult`: bundle version, imported heads, can-apply flag, dry-run line stats
+- `HeadAuditEntry`: per-head line stats + per-commit summaries
+- `PayloadAudit`: transport entry list + pack-object list
+- `PayloadObjectDetail`: per-object detail text/preview metadata
+
+Interactive model (`AuditModel`) bundles:
+- `overview` (metadata verification + dry-run status)
+- `commit_pages` (head-scoped commit graph view)
+- `payload` + optional `payload_session` (for cached object detail queries)
+
+## 6. Runtime Workflows
+
+### 6.1 Create Package
 `create_bundle_with_options`:
-1. resolves `from`/`to` commits and checks `to` is equal/descendant of `from`
-2. builds revwalk with `push(to)` + `hide(from)`
-3. writes bundle header + PACK payload to `.bundle`
-4. inspects generated bundle header
-5. computes metadata (`commit_chain`, `changed_files`, hashes, heads/prerequisites)
-6. optionally writes `.caudit.patch`
-7. writes `.caudit.json`
-8. writes `.zip` package containing produced artifacts
+1. resolve/validate `from` and `to` commits (`to` must be same/descendant of `from`)
+2. build revwalk (`push(to)`, `hide(from)`)
+3. generate `.bundle` header + PACK payload
+4. inspect generated bundle header
+5. compute metadata (`commit_chain`, `changed_files`, integrity fields)
+6. optionally write `.caudit.patch`
+7. write `.caudit.json`
+8. package selected artifacts into `.zip`
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant C as CLI create
     participant G as git::bundle::create
-    participant R as libgit2 Repository
+    participant R as libgit2 Repo
     participant A as archive writer
 
     U->>C: create --repo --from --to --output
     C->>G: create_bundle_with_options(...)
-    G->>R: revparse + revwalk + packbuilder
+    G->>R: revparse + graph check + revwalk
+    G->>R: packbuilder.insert_walk(...)
     R-->>G: PACK bytes
-    G->>G: write .bundle + metadata (+optional patch)
+    G->>G: write .bundle + .caudit.json (+ optional .caudit.patch)
     G->>A: write_zip_archive(...)
-    A-->>G: .zip package
+    A-->>G: .zip artifact
     G-->>C: CreateBundleResult
 ```
 
-### 5.2 Non-Interactive Audit
-- bundle mode: reads metadata from package input and renders TSV/JSON manifest
-- repo range mode: computes diff directly from repo `from..to` and renders TSV/JSON
-- verify mode (`--verify-metadata`): executes full metadata-vs-repo verification and prints deterministic OK output
+### 6.2 Non-Interactive Audit
+Audit non-interactive has three distinct modes:
 
-### 5.3 Interactive Audit UI
-`ui::model::build_audit_model` eagerly computes:
-- overview status (metadata verification and dry-run applicability)
-- commit pages (or failure reason)
-- syntax-highlighter resources for diff rendering
+1. Bundle manifest mode:
+- input: `--bundle`, `--format`
+- source of truth: metadata `changed_files` from package
+- output: TSV/JSON manifest
 
-The first overview page shows:
-- tool version
-- repo and bundle paths
-- metadata verification status
-- dry-run applicability and per-file line stats
-- heads to import
+2. Repository range mode:
+- input: `--repo`, `--from`, `--to`, `--format`
+- source of truth: direct tree diff in repository
+- output: TSV/JSON manifest
 
-If dry-run analysis fails, the overview page shows failure details instead of heads/per-file tables.
+3. Metadata verification mode:
+- input: `--bundle`, `--repo`, `--verify-metadata`, `--format`
+- validates metadata integrity and repository-truth equivalence
+- output:
+  - TSV: `VERIFY\tOK`
+  - JSON: `{"verification":"ok"}`
 
-### 5.4 Receive and Dry-Run
+### 6.3 Interactive Audit (History + Payload)
+`build_audit_model` eagerly computes:
+- overview:
+  - metadata verification against `--repo`
+  - dry-run applicability (`receive ... dry-run`) and line stats
+- history pages:
+  - `collect_head_audit_entries_for_bundle_input(...)`
+  - per head: commits (oldest->newest) and per-head line stats
+- payload page:
+  - `open_payload_session(...)`
+  - transport entry inventory (`zip` members or plain bundle)
+  - object inventory from imported temporary ODB
+  - object detail served through reusable session + caches
+
+Key behavior:
+- overview page selects current head
+- selected head drives both:
+  - `Would Change` table content
+  - commit page chain when entering history
+- payload page supports:
+  - canonical/context sort (`s`)
+  - preview panel
+  - drill-down object detail view
+
+```mermaid
+sequenceDiagram
+    participant UI as ui::run
+    participant M as build_audit_model
+    participant RV as receive(dry-run)
+    participant CP as collect_head_audit_entries
+    participant PS as open_payload_session
+    participant TMP as temp bare repo
+
+    UI->>M: build model
+    M->>RV: receive_bundle_input_with_options(dry_run=true)
+    M->>CP: collect_head_audit_entries_for_bundle_input(...)
+    M->>PS: open_payload_session(...)
+    PS->>TMP: import bundle pack into temp ODB
+    PS->>PS: collect transport entries + object inventory
+    M-->>UI: AuditModel
+```
+
+### 6.4 Receive and Dry-Run
 `receive_bundle_input_with_options`:
-- optional metadata integrity verification
-- supports raw `.bundle` or packaged `.zip`
-- imports PACK into ODB and updates refs
-- `--dry-run`: imports into temporary bare mirror and computes per-file line deltas without mutating receiver repo
+- optional integrity verification (`verify_bundle_metadata_integrity_input`)
+- supports `.bundle` and `.zip`
+- import path:
+  - parse header (`inspect_bundle`)
+  - import PACK via `git2::Indexer`
+  - verify head commits exist post-import
+  - update refs (skip already-applied heads)
+
+Dry-run specifics:
+- uses `TempBareRepo::from_existing(receiver_repo_path)` (fetched mirror)
+- applies identical bundle-import logic to mirror
+- computes per-file line deltas without mutating receiver repo
+- prints applicability summary + aligned would-change table
+
+Idempotency specifics:
+- if all advertised heads are already applied, receive exits with deterministic no-change result
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant RCV as receive
+    participant R as receive
     participant TMP as temp bare mirror
     participant REPO as receiver repo
 
-    U->>RCV: receive --bundle ... --repo ... --dry-run
-    RCV->>TMP: clone/fetch refs from receiver
-    RCV->>TMP: import bundle PACK + refs
-    RCV->>TMP: compute tree diffs per imported head
-    TMP-->>RCV: FileLineStat[]
-    RCV-->>U: can_apply + would-change table
+    U->>R: receive --repo --bundle --dry-run
+    R->>TMP: init mirror + fetch refs from REPO
+    R->>TMP: apply bundle PACK + ref updates (mirror only)
+    R->>TMP: compute head-scoped line stats
+    TMP-->>R: would-change summary
+    R-->>U: can_apply_without_conflicts + line table
 ```
 
-## 6. Data Artifacts
-Internal create pipeline produces:
-- `<name>.bundle`: git bundle (header + PACK)
-- `<name>.bundle.caudit.json`: audit metadata sidecar (schema in `schemas/sync.bundle.caudit.schema.json`)
-- `<name>.bundle.caudit.patch` (optional): unified diff across audited range
-- `<name>.bundle.zip`: transport artifact containing the above
+## 7. UI Interaction Model
 
-CLI `create` then removes loose artifacts and leaves only `<name>.bundle.zip` in normal command usage.
-
-Key metadata bindings:
-- `bundle_size_bytes` + `bundle_sha256` bind sidecar to exact bundle bytes
-- `bundle_header_version`, `prerequisites`, `heads` bind sidecar to parsed bundle header
-- `range_from_oid`, `range_to_oid`, `tip_ref` bind claimed audited range
-- `commit_chain` + `changed_files` bind presented audit details
-
-## 7. Auditability and Proof Model
-### 7.1 Security Objective
-For a trusted source repository state, show that:
-1. the transported bundle bytes are exactly the bytes audited
-2. the presented commit/file audit content is exactly the repository truth for the claimed range
-3. receive dry-run predictions are computed from the same imported objects used for actual receive logic
-
-### 7.2 Enforced Invariants
-`I1` Range-constrained object export:
-- create uses revwalk `push(to)` + `hide(from)` before PACK generation.
-- receive import uses explicit PACK indexing into ODB (`git2::Indexer`) and then validates head commit availability and updates refs.
-
-`I2` Artifact immutability binding:
-- metadata stores SHA-256 and size of `.bundle`.
-- verification recomputes both and fails on mismatch.
-
-`I3` Header-to-metadata consistency:
-- verification re-parses bundle header and checks version/prerequisites/heads equality.
-- verification checks `tip_ref/range_to_oid` is represented in heads.
-
-`I4` Repo-truth equivalence:
-- `verify_bundle_metadata_against_repo*` recomputes `commit_chain` and `changed_files` from the provided repo and requires exact equality.
-- any tampering in metadata range claims or file manifest causes verification failure.
-
-`I5` Dry-run/receive algorithm parity:
-- dry-run and apply paths share bundle import logic (`apply_bundle_to_repo`).
-- dry-run only changes target repo instance (temporary mirror), not algorithm.
-
-### 7.3 Operational Proof Procedure
-Recommended verification sequence for high-assurance transfer:
-1. produce package via `create` on trusted source repo state
-2. run `audit --bundle <pkg> --repo <trusted-source-repo> --verify-metadata --format tsv|json`
-3. require `VERIFY OK`
-4. run interactive `audit`/`ui` for human review of commit pages and per-file impact
-5. run `receive --verify-metadata --dry-run` on receiver to validate applicability and expected impact
-6. run `receive --verify-metadata` for actual import
-
-If step 2 succeeds, the audited `commit_chain` and `changed_files` are proven equal to repository truth for the claimed range.
-
-### 7.4 Guarantee Boundaries and Assumptions
-Guarantee holds under these assumptions:
-- verifier compares against a trusted and correct source repository state
-- local libgit2/git object model and cryptographic primitives behave correctly
-- filesystem and execution environment are not actively subverted
-
-Important limits:
-- package authenticity/signature verification is not implemented yet (see Section 11)
-- `receive --verify-metadata` currently checks integrity binding, not full repository-truth equivalence
-- Git object IDs are SHA-1 based; this inherits Git’s object identity model and collision assumptions
+### 7.1 View/Mode State Machine
+Interactive UI has five major modes:
+- history overview
+- history commit pages
+- diff view (history file patch)
+- payload main page
+- payload object detail
 
 ```mermaid
-flowchart TD
-    B[Bundle bytes]
-    M[Metadata sidecar]
-    R[Trusted source repository]
-    I[Integrity checks]
-    T[Truth checks]
-    O[Auditable outcome]
-
-    B --> I
-    M --> I
-    M --> T
-    R --> T
-    I --> O
-    T --> O
+stateDiagram-v2
+    [*] --> HistoryOverview
+    HistoryOverview --> HistoryCommit: Enter (selected head)
+    HistoryOverview --> PayloadMain: Tab/v or 2
+    PayloadMain --> HistoryOverview: Tab/v or 1
+    HistoryCommit --> DiffView: Enter (selected file)
+    DiffView --> HistoryCommit: Esc
+    PayloadMain --> PayloadObjectDetail: Enter (selected object)
+    PayloadObjectDetail --> PayloadMain: Esc
+    HistoryCommit --> HistoryOverview: Esc
+    HistoryOverview --> [*]: q or Esc
+    PayloadMain --> [*]: q or Esc
 ```
 
-## 8. Build and Versioning
-- `build.rs` resolves `GIT_SYNC_VERSION` using:
-  - `GIT_SYNC_VERSION_OVERRIDE` env var (if set)
-  - else `git describe --tags --dirty --always`
-  - fallback to `CARGO_PKG_VERSION`
-- CLI `--version` is provided by Clap using `crate::version::APP_VERSION`
-- overview page displays the same embedded version on page 1
-- metadata field `tool_version` in `.caudit.json` is currently populated from `CARGO_PKG_VERSION` (not `APP_VERSION`)
+### 7.2 Rendering and Input Highlights
+- overview:
+  - `Heads To Import` table (selected row)
+  - `Would Change` for selected head
+- history commit page:
+  - head index, commit index (`n/m`)
+  - author/committer identities and timestamps
+  - changed file table with `+LINES/-LINES`
+- diff view:
+  - first-parent unified patch
+  - old/new line number columns
+  - semantic + syntax-aware coloring
+- payload main:
+  - top-left transport entries
+  - bottom-left full pack object table
+  - right-side live preview (with truncation marker)
+- payload detail:
+  - full object text with line-number gutter and scrolling
 
-Build commands:
-- `cargo build`
-- `cargo build --release`
+Non-text behavior:
+- binary/symlink line stats reported as `0/0`
+- opening diff for non-text file is ignored (no hard failure in UI)
 
-## 9. Test Strategy
+## 8. Auditability Model
+
+### 8.1 Truth Sources by Command Surface
+- `audit --format ... --bundle`:
+  - truth source: metadata sidecar (`changed_files`)
+- `audit --verify-metadata --repo --bundle --format ...`:
+  - truth source: metadata + repository recomputation
+- interactive `audit` history pages:
+  - truth source: imported bundle object graph + head traversal
+- interactive `audit` payload page:
+  - truth source: imported temporary ODB object inventory
+
+This separation is intentional: metadata reporting and object-graph inspection are both available and explicit.
+
+### 8.2 Enforced Invariants
+`I1` Linear range creation:
+- `create` rejects non-linear `from..to`.
+
+`I2` Package integrity binding:
+- metadata stores bundle size + SHA-256.
+- verification recomputes and must match.
+
+`I3` Header-metadata consistency:
+- verification re-parses bundle header and checks version/prerequisites/heads.
+
+`I4` Metadata repository-truth equivalence:
+- `audit --verify-metadata` recomputes `commit_chain` and `changed_files` from repo and requires exact equality.
+
+`I5` Receive idempotency:
+- already-applied heads are detected and skipped.
+- fully-applied package yields deterministic no-change result.
+
+`I6` Dry-run/apply parity:
+- dry-run uses same bundle-import logic as real receive, but on isolated mirror.
+
+`I7` Payload visibility:
+- payload view enumerates all objects present in the temporary imported ODB for the audited bundle input.
+- reachability is explicitly marked relative to advertised heads.
+
+### 8.3 Recommended High-Assurance Procedure
+1. create package on trusted source repo
+2. run interactive `audit --repo <source> --bundle <pkg>` for human review
+3. run `audit --verify-metadata --repo <source> --bundle <pkg> --format tsv|json` for machine-verifiable source-truth proof
+4. transfer package across air gap
+5. run interactive audit on target side (`--repo <target>`) to review import impact in receiver context
+6. run `receive --verify-metadata --dry-run` on target to confirm applicability
+7. run `receive --verify-metadata` for actual import
+
+### 8.4 Boundaries and Assumptions
+Guarantees depend on:
+- trusted repository state used for verification
+- correct libgit2/object model behavior
+- non-subverted local execution environment
+
+Current limits:
+- no detached package signature verification yet
+- `receive --verify-metadata` performs metadata integrity checks, not full repository-truth equivalence
+- payload inventory is derived from imported ODB enumeration (not direct PACK stream parsing/count proof)
+
+## 9. Build and Versioning
+- `build.rs` injects `GIT_SYNC_VERSION` at compile time:
+  1. `GIT_SYNC_VERSION_OVERRIDE` environment override
+  2. else `git describe --tags --dirty --always` (normalized `v` prefix)
+  3. fallback `CARGO_PKG_VERSION`
+- CLI `--version` and UI overview consume the embedded `APP_VERSION`.
+- metadata `tool_version` currently uses `CARGO_PKG_VERSION`.
+
+## 10. Test Strategy
 Test layers:
-- unit tests under `src/git/tests` and `src/ui/tests`
-- integration tests under `tests/`
+- unit tests in `src/git/tests/*` and `src/ui/tests/*`
+- integration tests in `tests/*`
 
-Notable integration coverage:
-- end-to-end create/audit/verify/receive flow (`tests/bundle_workflow_integration.rs`)
-- CLI behavior contracts, including `--version` and dry-run output (`tests/main_cli_paths.rs`)
+Representative coverage areas:
+- create/inspect/metadata integrity/truth verification
+- receive path (normal + dry-run + rainy-day failures)
+- head-scoped history audit extraction
+- payload audit collection + object detail behavior
+- UI input/state/render contracts (history, payload, diff, help/footer behavior)
+- end-to-end workflow (`tests/bundle_workflow_integration.rs`)
+- CLI command-path contracts (`tests/main_cli_paths.rs`)
 
-## 10. Extension Points
-Near-term architecture extensions already anticipated by the current structure:
-- detached signature generation and verification for package authenticity
-- stronger receive-time policy gates (require repo-truth verification result before import)
-- additional machine-readable attestations for external compliance pipelines
-
-## 11. Package Authenticity TODO
-Planned authenticity design (not implemented yet):
-- add detached `Ed25519` signature verification for package authenticity
-- signing target: final transfer artifact (`<name>.bundle.zip`) as raw bytes
-- planned create output: sibling detached signature file (`<name>.bundle.zip.sig`)
-- planned verification inputs on `audit`/`receive`: detached signature + trusted public key
-- enforcement goal: reject package when signature is missing or invalid
+## 11. Open TODOs
+Planned but not implemented:
+- detached package signature verification (e.g. Ed25519) for authenticity
+- stronger policy gates for receive-time enforcement based on verification evidence
+- optional direct PACK parser mode for entry-count level completeness proof
