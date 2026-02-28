@@ -8,15 +8,11 @@ mod receive;
 pub use create::{create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts};
 pub use inspect::inspect_bundle;
 pub use payload::{
-    PayloadSession, build_payload_audit_document_for_bundle_input,
-    build_payload_audit_document_for_bundle_input_with_ledger_mode,
-    build_payload_audit_document_for_bundle_input_with_options,
-    collect_payload_audit_for_bundle_input,
+    PayloadSession, build_payload_audit_document_for_bundle_input_with_options,
     collect_payload_audit_for_bundle_input_with_resolve_mode,
     collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
     open_payload_session, open_payload_session_with_resolve_mode,
-    payload_audit_document_from_session, payload_audit_document_from_session_with_ledger_mode,
-    payload_audit_from_session, verify_pack_payload_with_ledger,
+    payload_audit_document_from_session_with_ledger_mode, payload_audit_from_session,
     verify_pack_payload_with_ledger_and_baseline_odb,
 };
 

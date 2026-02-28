@@ -46,25 +46,6 @@ struct ParsedPackObject {
     content: Vec<u8>,
 }
 
-/// Collects transport-entry and pack-object payload audit data for a bundle input.
-///
-/// # Errors
-///
-/// Returns an error when the bundle input cannot be parsed/imported or objects
-/// cannot be enumerated.
-#[allow(dead_code)]
-pub fn collect_payload_audit_for_bundle_input(
-    bundle_input_path: &Path,
-    repo_path: &Path,
-) -> Result<PayloadAudit> {
-    let session = open_payload_session_with_resolve_mode(
-        bundle_input_path,
-        repo_path,
-        PayloadResolveMode::PackOnly,
-    )?;
-    Ok(payload_audit_from_session(&session))
-}
-
 /// Collects transport-entry and pack-object payload audit data for a bundle input with explicit resolve mode.
 ///
 /// # Errors
@@ -79,45 +60,6 @@ pub fn collect_payload_audit_for_bundle_input_with_resolve_mode(
     let session =
         open_payload_session_with_resolve_mode(bundle_input_path, repo_path, resolve_mode)?;
     Ok(payload_audit_from_session(&session))
-}
-
-/// Builds a serialized payload-audit JSON document for non-interactive CLI output.
-///
-/// # Errors
-///
-/// Returns an error when bundle import/inspection fails or object-detail
-/// materialization fails.
-#[allow(dead_code)]
-pub fn build_payload_audit_document_for_bundle_input(
-    bundle_input_path: &Path,
-    repo_path: &Path,
-) -> Result<PayloadAuditDocument> {
-    build_payload_audit_document_for_bundle_input_with_options(
-        bundle_input_path,
-        repo_path,
-        PayloadAuditLedgerMode::Summary,
-        PayloadResolveMode::PackOnly,
-    )
-}
-
-/// Builds a serialized payload-audit JSON document with explicit entry-ledger mode.
-///
-/// # Errors
-///
-/// Returns an error when bundle import/inspection fails or object-detail
-/// materialization fails.
-#[allow(dead_code)]
-pub fn build_payload_audit_document_for_bundle_input_with_ledger_mode(
-    bundle_input_path: &Path,
-    repo_path: &Path,
-    ledger_mode: PayloadAuditLedgerMode,
-) -> Result<PayloadAuditDocument> {
-    build_payload_audit_document_for_bundle_input_with_options(
-        bundle_input_path,
-        repo_path,
-        ledger_mode,
-        PayloadResolveMode::PackOnly,
-    )
 }
 
 /// Builds a serialized payload-audit JSON document with explicit ledger and resolve modes.
@@ -276,18 +218,6 @@ pub fn open_payload_session_with_resolve_mode(
 /// Returns a payload-audit snapshot captured in the provided session.
 pub fn payload_audit_from_session(session: &PayloadSession) -> PayloadAudit {
     session.payload.clone()
-}
-
-/// Builds a serialized payload-audit JSON document from a reusable session.
-///
-/// # Errors
-///
-/// Returns an error when object detail collection fails for any payload object.
-#[allow(dead_code)]
-pub fn payload_audit_document_from_session(
-    session: &PayloadSession,
-) -> Result<PayloadAuditDocument> {
-    payload_audit_document_from_session_with_ledger_mode(session, PayloadAuditLedgerMode::Summary)
 }
 
 /// Builds a serialized payload-audit JSON document from a reusable session using a selected ledger mode.
@@ -671,14 +601,6 @@ fn ensure_materialized_index_matches_pack_proof(
         );
     }
     Ok(())
-}
-
-/// Verifies payload PACK bytes and returns proof + entry ledger truth.
-#[allow(dead_code)]
-pub fn verify_pack_payload_with_ledger(
-    pack_data: &[u8],
-) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
-    verify_pack_payload_impl(pack_data, None)
 }
 
 /// Verifies payload PACK bytes and returns proof + entry ledger truth with optional baseline ODB resolution.

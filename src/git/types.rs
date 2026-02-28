@@ -454,7 +454,6 @@ pub enum PackEntryBaseRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Source used to resolve/materialize a PACK entry.
-#[allow(dead_code)]
 pub enum ResolutionSource {
     /// Fully resolved from in-pack data.
     InPack,

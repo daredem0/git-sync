@@ -11,8 +11,12 @@ fn verify_pack_payload_parses_declared_count_for_normal_bundle() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-proof-normal-count", false);
 
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.bundle_path, &repo_dir)
-        .expect("must collect payload audit for plain bundle input");
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must collect payload audit for plain bundle input");
     assert!(
         payload.pack_proof.declared_object_count > 0,
         "pack proof should report a non-zero declared object count for generated bundle"
@@ -51,7 +55,11 @@ fn verify_pack_payload_parses_declared_count_for_delta_bundle() {
     let bundle_path = repo_dir.join("delta.bundle");
     std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic delta bundle");
 
-    let result = collect_payload_audit_for_bundle_input(&bundle_path, &repo_dir);
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
     assert!(
         result.is_err(),
         "synthetic delta bundle with unresolved external base must fail closed"
@@ -83,7 +91,11 @@ fn verify_pack_payload_validates_trailer_checksum() {
     let tampered_bundle_path = repo_dir.join("tampered-trailer.bundle");
     std::fs::write(&tampered_bundle_path, bytes).expect("must write tampered bundle");
 
-    let result = collect_payload_audit_for_bundle_input(&tampered_bundle_path, &repo_dir);
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &tampered_bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
     assert!(
         result.is_err(),
         "payload audit should fail when pack trailer checksum is tampered"
@@ -331,10 +343,18 @@ fn payload_objects_view_remains_stable_for_existing_fixture() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-objects-stable-after-phase2", false);
 
-    let first = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("first payload collection should succeed");
-    let second = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("second payload collection should succeed");
+    let first = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("first payload collection should succeed");
+    let second = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("second payload collection should succeed");
     assert_eq!(
         first.objects, second.objects,
         "payload object rows should remain stable across repeated runs"
@@ -448,8 +468,12 @@ fn collect_payload_audit_for_bundle_input_includes_transport_entries_and_objects
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-list", false);
 
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("must collect payload audit for archive input");
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must collect payload audit for archive input");
     assert!(
         payload
             .transport_entries
@@ -505,8 +529,12 @@ fn large_blob_is_materialized_via_export_even_if_preview_is_partial() {
     let bundle_path = repo_dir.join("range.bundle");
     let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
         .expect("create_bundle should succeed");
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("must collect payload audit from bundle archive");
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must collect payload audit from bundle archive");
     assert!(
         payload.pack_proof.transfer_allowed,
         "large textual blob should still be fully materialized for transfer-gate completeness"
@@ -544,8 +572,12 @@ fn large_blob_is_materialized_via_export_even_if_preview_is_partial() {
 fn collect_payload_object_detail_for_bundle_input_returns_detail_lines() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-detail", false);
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("must collect payload audit for archive input");
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must collect payload audit for archive input");
     let target = payload
         .objects
         .iter()
@@ -575,8 +607,12 @@ fn collect_payload_object_detail_for_bundle_input_returns_detail_lines() {
 fn collect_payload_object_detail_for_text_blob_includes_paths_and_line_count() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-blob-metadata", false);
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("must collect payload audit for archive input");
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must collect payload audit for archive input");
     let blob_target = payload
         .objects
         .iter()
@@ -764,9 +800,13 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-document-shape", false);
 
-    let document =
-        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-            .expect("must build payload-audit document");
+    let document = build_payload_audit_document_for_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must build payload-audit document");
 
     assert_eq!(
         document.schema_version, "1",
@@ -825,10 +865,11 @@ fn audit_json_summary_mode_includes_required_ledger_subset() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-document-summary-ledger", false);
 
-    let document = build_payload_audit_document_for_bundle_input_with_ledger_mode(
+    let document = build_payload_audit_document_for_bundle_input_with_options(
         &bundle_result.archive_path,
         &repo_dir,
         PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
     )
     .expect("must build payload-audit summary-ledger document");
 
@@ -863,10 +904,11 @@ fn audit_json_full_mode_includes_all_entry_rows() {
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-document-full-ledger", false);
 
-    let document = build_payload_audit_document_for_bundle_input_with_ledger_mode(
+    let document = build_payload_audit_document_for_bundle_input_with_options(
         &bundle_result.archive_path,
         &repo_dir,
         PayloadAuditLedgerMode::Full,
+        PayloadResolveMode::PackOnly,
     )
     .expect("must build payload-audit full-ledger document");
 
@@ -900,12 +942,20 @@ fn build_payload_audit_document_for_bundle_input_is_deterministic_for_payload_se
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-document-deterministic", false);
 
-    let first =
-        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-            .expect("first payload-audit document build must succeed");
-    let second =
-        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-            .expect("second payload-audit document build must succeed");
+    let first = build_payload_audit_document_for_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("first payload-audit document build must succeed");
+    let second = build_payload_audit_document_for_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("second payload-audit document build must succeed");
 
     assert_eq!(
         first.transport_entries, second.transport_entries,
@@ -933,9 +983,13 @@ fn build_payload_audit_document_for_bundle_input_sorts_transport_entries_by_name
     let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
         create_linear_bundle_fixture("payload-audit-document-transport-order", false);
 
-    let document =
-        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-            .expect("payload-audit document build must succeed");
+    let document = build_payload_audit_document_for_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("payload-audit document build must succeed");
     let names = document
         .transport_entries
         .iter()
@@ -978,7 +1032,11 @@ fn collect_payload_audit_for_bundle_input_rejects_pack_count_mismatch() {
     let tampered_path = repo_dir.join("tampered-count.bundle");
     std::fs::write(&tampered_path, tampered).expect("must write tampered bundle");
 
-    let result = collect_payload_audit_for_bundle_input(&tampered_path, &repo_dir);
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &tampered_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
     assert!(
         result.is_err(),
         "payload audit must reject bundles where declared PACK object count mismatches processed entries"
@@ -1014,7 +1072,11 @@ fn collect_payload_audit_for_bundle_input_rejects_unresolved_ref_delta_base() {
     let bundle_path = repo_dir.join("unresolved-ref-delta.bundle");
     std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic bundle");
 
-    let result = collect_payload_audit_for_bundle_input(&bundle_path, &repo_dir);
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
     assert!(
         result.is_err(),
         "payload audit must reject unresolved ref-delta bases to enforce fail-closed behavior"
@@ -1177,10 +1239,12 @@ fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_contex
     let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
         .expect("create_bundle should succeed for same-tree range");
 
-    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect(
-            "payload audit should not fail when prerequisite tree context is missing from pack",
-        );
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("payload audit should not fail when prerequisite tree context is missing from pack");
     assert!(
         !payload.objects.is_empty(),
         "payload audit should still provide materialized object rows"
