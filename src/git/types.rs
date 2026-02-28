@@ -255,6 +255,127 @@ pub struct PayloadPackProof {
     pub trailer_pack_checksum: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Authoritative PACK-entry ledger captured while parsing raw pack bytes.
+pub struct PackEntryLedger {
+    /// PACK format version parsed from header.
+    pub pack_version: u32,
+    /// Number of entries declared by PACK header.
+    pub declared_entry_count: usize,
+    /// Parsed entry rows in deterministic stream order.
+    pub entries: Vec<PackEntryRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// One parsed PACK entry row with parse/materialization status.
+pub struct PackEntryRecord {
+    /// Zero-based stream order index.
+    pub idx: usize,
+    /// Byte offset (within PACK payload) where this entry header starts.
+    pub offset: usize,
+    /// Parsed PACK entry kind.
+    pub kind: PackEntryKind,
+    /// Declared output size from PACK entry header.
+    pub out_size: usize,
+    /// Optional base reference metadata for delta entries.
+    pub base_ref: Option<PackEntryBaseRef>,
+    /// Canonical object id once materialized.
+    pub result_oid: Option<git2::Oid>,
+    /// Whether entry materialization succeeded.
+    pub resolved: bool,
+    /// Materialization source, when resolved.
+    pub resolved_via: Option<ResolutionSource>,
+    /// Optional note string for unresolved/error context.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// PACK entry kind code from stream headers.
+pub enum PackEntryKind {
+    /// Full commit object.
+    Commit,
+    /// Full tree object.
+    Tree,
+    /// Full blob object.
+    Blob,
+    /// Full tag object.
+    Tag,
+    /// Offset delta entry.
+    OfsDelta,
+    /// Reference delta entry.
+    RefDelta,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Base reference metadata for delta entries.
+pub enum PackEntryBaseRef {
+    /// Backward distance (and resolved absolute offset) for OFS-delta entries.
+    BaseOffset {
+        /// Encoded backward distance.
+        distance: usize,
+        /// Resolved absolute base-entry offset, when computable.
+        base_offset: Option<usize>,
+    },
+    /// Base object id for REF-delta entries.
+    BaseOid(git2::Oid),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Source used to resolve/materialize a PACK entry.
+#[allow(dead_code)]
+pub enum ResolutionSource {
+    /// Fully resolved from in-pack data.
+    InPack,
+    /// Resolved with baseline/external object database assistance.
+    Baseline,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Structured result of PACK-proof verification with entry-level ledger truth.
+pub struct PayloadPackVerification {
+    /// Summary proof counters/checksums.
+    pub proof: PayloadPackProof,
+    /// Authoritative parsed PACK entry ledger.
+    pub ledger: PackEntryLedger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Structured fail-closed error for payload PACK verification.
+pub struct PayloadAuditError {
+    /// Human-readable reason string.
+    pub reason: String,
+    /// Optional zero-based index of the blocked entry.
+    pub blocked_entry_idx: Option<usize>,
+    /// Optional partial ledger captured before failure.
+    pub ledger_partial: Option<PackEntryLedger>,
+}
+
+impl std::fmt::Display for PayloadAuditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.blocked_entry_idx, &self.ledger_partial) {
+            (Some(idx), Some(ledger)) => write!(
+                f,
+                "{} (blocked_entry_idx={}, entries_parsed={}, entries_declared={})",
+                self.reason,
+                idx,
+                ledger.entries.len(),
+                ledger.declared_entry_count
+            ),
+            (Some(idx), None) => write!(f, "{} (blocked_entry_idx={})", self.reason, idx),
+            (None, Some(ledger)) => write!(
+                f,
+                "{} (entries_parsed={}, entries_declared={})",
+                self.reason,
+                ledger.entries.len(),
+                ledger.declared_entry_count
+            ),
+            (None, None) => f.write_str(&self.reason),
+        }
+    }
+}
+
+impl std::error::Error for PayloadAuditError {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Serialized per-object row in payload-audit document.
 pub struct PayloadAuditDocumentPackObject {

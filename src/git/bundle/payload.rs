@@ -3,10 +3,11 @@
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
-    BundleInspection, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
-    PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
-    PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
-    PayloadObjectEntry, PayloadObjectKind, PayloadPackProof, PayloadTransportEntry,
+    BundleInspection, PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord,
+    PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
+    PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
+    PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
+    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
@@ -96,7 +97,8 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let bundle_bytes = fs::read(&extracted.bundle_path)?;
         let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-        let pack_proof = verify_pack_payload(pack_data)?;
+        let verification = verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
+        let pack_proof = verification.proof;
         let bundle_path = extracted
             .bundle_path
             .file_name()
@@ -130,7 +132,8 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
     let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
     let bundle_bytes = fs::read(bundle_input_path)?;
     let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-    let pack_proof = verify_pack_payload(pack_data)?;
+    let verification = verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
+    let pack_proof = verification.proof;
     let bundle_path = bundle_input_path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -383,6 +386,43 @@ fn bundle_pack_bytes(bundle_bytes: &[u8]) -> Result<&[u8]> {
     Ok(&bundle_bytes[pack_offset..])
 }
 
+/// Verifies pack proof + ledger directly from a bundle or packaged zip input.
+#[cfg(test)]
+pub fn verify_pack_payload_for_bundle_input(
+    bundle_input_path: &Path,
+) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path).map_err(|err| PayloadAuditError {
+            reason: err.to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
+        let bundle_bytes = fs::read(&extracted.bundle_path).map_err(|err| PayloadAuditError {
+            reason: err.to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
+        let pack_data = bundle_pack_bytes(&bundle_bytes).map_err(|err| PayloadAuditError {
+            reason: err.to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
+        return verify_pack_payload_with_ledger(pack_data);
+    }
+
+    let bundle_bytes = fs::read(bundle_input_path).map_err(|err| PayloadAuditError {
+        reason: err.to_string(),
+        blocked_entry_idx: None,
+        ledger_partial: None,
+    })?;
+    let pack_data = bundle_pack_bytes(&bundle_bytes).map_err(|err| PayloadAuditError {
+        reason: err.to_string(),
+        blocked_entry_idx: None,
+        ledger_partial: None,
+    })?;
+    verify_pack_payload_with_ledger(pack_data)
+}
+
 /// Imports raw pack bytes into a bare repository object database.
 fn import_pack_data_to_repo(
     repo: &git2::Repository,
@@ -422,38 +462,79 @@ fn ensure_imported_odb_matches_pack_proof(
     Ok(())
 }
 
-/// Verifies PACK completeness and integrity by processing exactly declared entries.
-///
-/// This parser fails closed on unresolved delta bases (external dependencies)
-/// and checksum/count inconsistencies.
-fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
+/// Verifies payload PACK bytes and returns proof + entry ledger truth.
+pub fn verify_pack_payload_with_ledger(
+    pack_data: &[u8],
+) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
+    verify_pack_payload_impl(pack_data)
+}
+
+fn verify_pack_payload_impl(
+    pack_data: &[u8],
+) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
     if pack_data.len() < 32 {
-        bail!("pack payload is too small");
+        return Err(PayloadAuditError {
+            reason: "pack payload is too small".to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        });
     }
     if &pack_data[..4] != b"PACK" {
-        bail!("pack payload does not start with PACK header");
+        return Err(PayloadAuditError {
+            reason: "pack payload does not start with PACK header".to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        });
     }
 
-    let pack_version = read_be_u32(pack_data, 4)?;
+    let pack_version = read_be_u32(pack_data, 4).map_err(|err| PayloadAuditError {
+        reason: err.to_string(),
+        blocked_entry_idx: None,
+        ledger_partial: None,
+    })?;
     if pack_version != 2 && pack_version != 3 {
-        bail!("unsupported pack version: {pack_version}");
+        return Err(PayloadAuditError {
+            reason: format!("unsupported pack version: {pack_version}"),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        });
     }
-    let declared_object_count = read_be_u32(pack_data, 8)? as usize;
+    let declared_object_count = read_be_u32(pack_data, 8).map_err(|err| PayloadAuditError {
+        reason: err.to_string(),
+        blocked_entry_idx: None,
+        ledger_partial: None,
+    })? as usize;
 
     let trailer_offset = pack_data
         .len()
         .checked_sub(20)
-        .ok_or_else(|| anyhow!("pack payload missing trailer checksum"))?;
-    let computed_checksum = sha1_hex(&pack_data[..trailer_offset])?;
+        .ok_or_else(|| PayloadAuditError {
+            reason: "pack payload missing trailer checksum".to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
+    let computed_checksum = sha1_hex(&pack_data[..trailer_offset]).map_err(|err| PayloadAuditError {
+        reason: err.to_string(),
+        blocked_entry_idx: None,
+        ledger_partial: None,
+    })?;
     let trailer_checksum = hex_encode(&pack_data[trailer_offset..]);
     if computed_checksum != trailer_checksum {
-        bail!(
-            "pack trailer checksum mismatch: computed={}, trailer={}",
-            computed_checksum,
-            trailer_checksum
-        );
+        return Err(PayloadAuditError {
+            reason: format!(
+                "pack trailer checksum mismatch: computed={}, trailer={}",
+                computed_checksum, trailer_checksum
+            ),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        });
     }
 
+    let mut ledger = PackEntryLedger {
+        pack_version,
+        declared_entry_count: declared_object_count,
+        entries: Vec::with_capacity(declared_object_count),
+    };
     let mut offset = 12usize;
     let mut processed_object_count = 0usize;
     let mut objects_by_offset = HashMap::<usize, ParsedPackObject>::new();
@@ -461,15 +542,34 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
 
     while processed_object_count < declared_object_count {
         if offset >= trailer_offset {
-            bail!(
-                "pack ended before declared object count was processed: declared={}, processed={}",
-                declared_object_count,
-                processed_object_count
-            );
+            return Err(PayloadAuditError {
+                reason: format!(
+                    "pack ended before declared object count was processed: declared={}, processed={}",
+                    declared_object_count, processed_object_count
+                ),
+                blocked_entry_idx: Some(processed_object_count),
+                ledger_partial: Some(ledger),
+            });
         }
 
         let entry_offset = offset;
-        let (entry_kind, expected_size, header_end) = parse_pack_entry_header(pack_data, offset)?;
+        let (entry_kind, expected_size, header_end) = parse_pack_entry_header(pack_data, offset)
+            .map_err(|err| PayloadAuditError {
+                reason: err.to_string(),
+                blocked_entry_idx: Some(processed_object_count),
+                ledger_partial: Some(ledger.clone()),
+            })?;
+        let mut entry_record = PackEntryRecord {
+            idx: processed_object_count,
+            offset: entry_offset,
+            kind: entry_kind,
+            out_size: expected_size,
+            base_ref: None,
+            result_oid: None,
+            resolved: false,
+            resolved_via: None,
+            note: None,
+        };
         offset = header_end;
 
         let parsed = match entry_kind {
@@ -477,26 +577,38 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
             | PackEntryKind::Tree
             | PackEntryKind::Blob
             | PackEntryKind::Tag => {
-                let (consumed, content) = decompress_zlib_stream(&pack_data[offset..trailer_offset]).map_err(
-                    |err| {
+                let (consumed, content) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                    .map_err(|err| {
                         anyhow!(
                             "failed to decompress pack object #{} ({:?}) at offset {}: {err}",
                             processed_object_count + 1,
                             entry_kind,
                             offset
                         )
-                    },
-                )?;
+                    })
+                    .map_err(|err| PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 offset = offset
                     .checked_add(consumed)
-                    .ok_or_else(|| anyhow!("pack entry offset overflow"))?;
+                    .ok_or_else(|| PayloadAuditError {
+                        reason: "pack entry offset overflow".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 if content.len() != expected_size {
-                    bail!(
-                        "pack object size mismatch at object {}: header={}, actual={}",
-                        processed_object_count + 1,
-                        expected_size,
-                        content.len()
-                    );
+                    return Err(PayloadAuditError {
+                        reason: format!(
+                            "pack object size mismatch at object {}: header={}, actual={}",
+                            processed_object_count + 1,
+                            expected_size,
+                            content.len()
+                        ),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
                 }
                 ParsedPackObject {
                     kind: pack_entry_kind_to_payload_kind(entry_kind),
@@ -505,32 +617,67 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
             }
             PackEntryKind::OfsDelta => {
                 let (base_offset_distance, consumed) =
-                    parse_ofs_delta_base_distance(pack_data, offset)?;
+                    parse_ofs_delta_base_distance(pack_data, offset).map_err(|err| PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 offset = offset
                     .checked_add(consumed)
-                    .ok_or_else(|| anyhow!("ofs-delta offset overflow"))?;
+                    .ok_or_else(|| PayloadAuditError {
+                        reason: "ofs-delta offset overflow".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 let base_entry_offset = entry_offset
                     .checked_sub(base_offset_distance)
-                    .ok_or_else(|| anyhow!("ofs-delta base offset underflow"))?;
-                let base = objects_by_offset.get(&base_entry_offset).ok_or_else(|| {
-                    anyhow!(
+                    .ok_or_else(|| PayloadAuditError {
+                        reason: "ofs-delta base offset underflow".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
+                entry_record.base_ref = Some(PackEntryBaseRef::BaseOffset {
+                    distance: base_offset_distance,
+                    base_offset: Some(base_entry_offset),
+                });
+                let Some(base) = objects_by_offset.get(&base_entry_offset) else {
+                    let reason = format!(
                         "ofs-delta references unresolved base at distance {} (external dependency/thin pack)",
                         base_offset_distance
-                    )
-                })?;
-                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset]).map_err(
-                    |err| {
+                    );
+                    entry_record.note = Some(reason.clone());
+                    ledger.entries.push(entry_record);
+                    return Err(PayloadAuditError {
+                        reason,
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
+                };
+                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                    .map_err(|err| {
                         anyhow!(
                             "failed to decompress ofs-delta object #{} at offset {}: {err}",
                             processed_object_count + 1,
                             offset
                         )
-                    },
-                )?;
+                    })
+                    .map_err(|err| PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 offset = offset
                     .checked_add(delta_consumed)
-                    .ok_or_else(|| anyhow!("ofs-delta data offset overflow"))?;
-                let content = apply_git_delta(&base.content, &delta_bytes)?;
+                    .ok_or_else(|| PayloadAuditError {
+                        reason: "ofs-delta data offset overflow".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
+                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| PayloadAuditError {
+                    reason: err.to_string(),
+                    blocked_entry_idx: Some(processed_object_count),
+                    ledger_partial: Some(ledger.clone()),
+                })?;
                 ParsedPackObject {
                     kind: base.kind,
                     content,
@@ -538,30 +685,62 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
             }
             PackEntryKind::RefDelta => {
                 if trailer_offset.saturating_sub(offset) < 20 {
-                    bail!("ref-delta entry is missing base object id bytes");
+                    entry_record.note = Some("ref-delta entry is missing base object id bytes".to_string());
+                    ledger.entries.push(entry_record);
+                    return Err(PayloadAuditError {
+                        reason: "ref-delta entry is missing base object id bytes".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
                 }
-                let base_oid = git2::Oid::from_bytes(&pack_data[offset..offset + 20])?;
+                let base_oid = git2::Oid::from_bytes(&pack_data[offset..offset + 20]).map_err(
+                    |err| PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    },
+                )?;
+                entry_record.base_ref = Some(PackEntryBaseRef::BaseOid(base_oid));
                 offset += 20;
 
-                let base = objects_by_oid.get(&base_oid).ok_or_else(|| {
-                    anyhow!(
+                let Some(base) = objects_by_oid.get(&base_oid) else {
+                    let reason = format!(
                         "ref-delta references unresolved base object {} (external dependency/thin pack)",
                         base_oid
-                    )
-                })?;
-                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset]).map_err(
-                    |err| {
+                    );
+                    entry_record.note = Some(reason.clone());
+                    ledger.entries.push(entry_record);
+                    return Err(PayloadAuditError {
+                        reason,
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
+                };
+                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                    .map_err(|err| {
                         anyhow!(
                             "failed to decompress ref-delta object #{} at offset {}: {err}",
                             processed_object_count + 1,
                             offset
                         )
-                    },
-                )?;
+                    })
+                    .map_err(|err| PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
                 offset = offset
                     .checked_add(delta_consumed)
-                    .ok_or_else(|| anyhow!("ref-delta data offset overflow"))?;
-                let content = apply_git_delta(&base.content, &delta_bytes)?;
+                    .ok_or_else(|| PayloadAuditError {
+                        reason: "ref-delta data offset overflow".to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    })?;
+                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| PayloadAuditError {
+                    reason: err.to_string(),
+                    blocked_entry_idx: Some(processed_object_count),
+                    ledger_partial: Some(ledger.clone()),
+                })?;
                 ParsedPackObject {
                     kind: base.kind,
                     content,
@@ -569,28 +748,44 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
             }
         };
 
-        let object_oid = object_oid_for_content(parsed.kind, &parsed.content)?;
+        let object_oid = object_oid_for_content(parsed.kind, &parsed.content).map_err(|err| {
+            PayloadAuditError {
+                reason: err.to_string(),
+                blocked_entry_idx: Some(processed_object_count),
+                ledger_partial: Some(ledger.clone()),
+            }
+        })?;
+        entry_record.result_oid = Some(object_oid);
+        entry_record.resolved = true;
+        entry_record.resolved_via = Some(ResolutionSource::InPack);
+        ledger.entries.push(entry_record);
         objects_by_offset.insert(entry_offset, parsed.clone());
         objects_by_oid.insert(object_oid, parsed);
         processed_object_count += 1;
     }
 
     if offset != trailer_offset {
-        bail!(
-            "pack contains trailing or unconsumed bytes before trailer: consumed={}, trailer={}",
-            offset,
-            trailer_offset
-        );
+        return Err(PayloadAuditError {
+            reason: format!(
+                "pack contains trailing or unconsumed bytes before trailer: consumed={}, trailer={}",
+                offset, trailer_offset
+            ),
+            blocked_entry_idx: Some(processed_object_count),
+            ledger_partial: Some(ledger),
+        });
     }
     if processed_object_count != declared_object_count {
-        bail!(
-            "pack object count mismatch: declared={}, processed={}",
-            declared_object_count,
-            processed_object_count
-        );
+        return Err(PayloadAuditError {
+            reason: format!(
+                "pack object count mismatch: declared={}, processed={}",
+                declared_object_count, processed_object_count
+            ),
+            blocked_entry_idx: Some(processed_object_count),
+            ledger_partial: Some(ledger),
+        });
     }
 
-    Ok(PayloadPackProof {
+    let proof = PayloadPackProof {
         verification_status: "ok".to_string(),
         pack_version,
         declared_object_count,
@@ -598,17 +793,8 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
         hash_algorithm: "sha1".to_string(),
         computed_pack_checksum: computed_checksum,
         trailer_pack_checksum: trailer_checksum,
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PackEntryKind {
-    Commit,
-    Tree,
-    Blob,
-    Tag,
-    OfsDelta,
-    RefDelta,
+    };
+    Ok(PayloadPackVerification { proof, ledger })
 }
 
 /// Parses a PACK object header at `offset`.

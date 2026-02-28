@@ -18,6 +18,7 @@ pub use bundle::{
     create_bundle, create_bundle_with_options, inspect_bundle, open_payload_session,
     payload_audit_document_from_session, payload_audit_from_session, receive_bundle_input,
     receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
+    verify_pack_payload_with_ledger,
 };
 #[allow(unused_imports)]
 pub use context::open_context;
@@ -32,8 +33,9 @@ pub use types::{
     OpenContext, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
     PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
     PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
-    PayloadObjectEntry, PayloadObjectKind, PayloadPackProof, PayloadTransportEntry,
-    ReceiveBundleOptions, ReceiveBundleResult,
+    PayloadObjectEntry, PayloadObjectKind, PayloadPackProof, PayloadPackVerification,
+    PayloadTransportEntry, ReceiveBundleOptions, ReceiveBundleResult, PackEntryBaseRef,
+    PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAuditError, ResolutionSource,
 };
 
 #[cfg(test)]
@@ -48,6 +50,9 @@ pub(crate) use archive::{
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use bundle::is_head_already_applied;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use bundle::verify_pack_payload_for_bundle_input;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use diff::collect_diff_entries;

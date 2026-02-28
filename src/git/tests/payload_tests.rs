@@ -2,6 +2,8 @@
 
 use super::support::*;
 use super::*;
+use flate2::{Compression, write::ZlibEncoder};
+use std::io::Write as _;
 
 // Verifies that PACK proof parsing succeeds for a normal generated bundle and reports a non-zero declared count.
 #[test]
@@ -93,6 +95,185 @@ fn verify_pack_payload_validates_trailer_checksum() {
     assert!(
         error_text.contains("pack trailer checksum mismatch"),
         "error should explicitly report pack trailer checksum mismatch"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that pack-entry ledger length matches declared entry count and uses deterministic index ordering.
+#[test]
+fn pack_ledger_contains_exactly_declared_entry_count() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("pack-ledger-count", false);
+
+    let verification = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("pack verification with ledger should succeed for generated bundle");
+    assert_eq!(
+        verification.ledger.declared_entry_count, verification.proof.declared_object_count,
+        "ledger declared count should match proof declared count"
+    );
+    assert_eq!(
+        verification.ledger.entries.len(),
+        verification.ledger.declared_entry_count,
+        "ledger entries length should match declared entry count"
+    );
+    for (index, entry) in verification.ledger.entries.iter().enumerate() {
+        assert_eq!(
+            entry.idx, index,
+            "ledger index should be deterministic and match stream order"
+        );
+    }
+    for pair in verification.ledger.entries.windows(2) {
+        assert!(
+            pair[0].offset < pair[1].offset,
+            "ledger offsets should be strictly increasing by stream order"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that ref-delta ledger rows record base object id metadata when unresolved external base is encountered.
+#[test]
+fn pack_ledger_records_ref_delta_base_oid() {
+    let repo_dir = temp_repo_dir("pack-ledger-ref-base-oid");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_ref_delta_bundle(&repo_dir, "ref-delta.bundle");
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("verification should fail for unresolved ref-delta base");
+    let ledger = error
+        .ledger_partial
+        .expect("failure should include partial ledger context");
+    assert_eq!(
+        ledger.entries.len(),
+        1,
+        "unresolved first entry should still be captured in partial ledger"
+    );
+    let record = &ledger.entries[0];
+    assert_eq!(
+        record.kind,
+        PackEntryKind::RefDelta,
+        "partial ledger row kind should classify ref-delta entry"
+    );
+    match &record.base_ref {
+        Some(PackEntryBaseRef::BaseOid(oid)) => {
+            assert_eq!(
+                *oid,
+                git2::Oid::from_bytes(&[0x11; 20]).expect("must construct expected base oid"),
+                "ledger should preserve ref-delta base object id metadata"
+            );
+        }
+        other => panic!("expected BaseOid metadata for ref-delta entry, got: {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that ofs-delta ledger rows record backward distance and resolved absolute base offset metadata.
+#[test]
+fn pack_ledger_records_ofs_delta_base_offset() {
+    let repo_dir = temp_repo_dir("pack-ledger-ofs-base-offset");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_ofs_delta_bundle(&repo_dir, "ofs-delta.bundle")
+        .expect("must write synthetic ofs-delta bundle");
+    let verification = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect("ofs-delta bundle with in-pack base should verify successfully");
+    assert_eq!(
+        verification.ledger.entries.len(),
+        2,
+        "ofs-delta fixture should produce two ledger rows"
+    );
+    let first_offset = verification.ledger.entries[0].offset;
+    let ofs_record = &verification.ledger.entries[1];
+    assert_eq!(
+        ofs_record.kind,
+        PackEntryKind::OfsDelta,
+        "second fixture row should classify as ofs-delta"
+    );
+    match &ofs_record.base_ref {
+        Some(PackEntryBaseRef::BaseOffset {
+            distance,
+            base_offset,
+        }) => {
+            assert!(
+                *distance > 0,
+                "ofs-delta base distance should be a positive backward distance"
+            );
+            assert_eq!(
+                *base_offset,
+                Some(first_offset),
+                "ofs-delta base offset should resolve to first entry offset"
+            );
+        }
+        other => panic!("expected BaseOffset metadata for ofs-delta entry, got: {other:?}"),
+    }
+}
+
+// Verifies that unresolved external-base failures mark blocked row as unresolved with explanatory note before fail-closed return.
+#[test]
+fn pack_ledger_marks_unresolved_external_base_before_fail() {
+    let repo_dir = temp_repo_dir("pack-ledger-unresolved-mark");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_ref_delta_bundle(&repo_dir, "unresolved.bundle");
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("verification should fail for unresolved external ref-delta base");
+    assert_eq!(
+        error.blocked_entry_idx,
+        Some(0),
+        "blocked entry index should point to unresolved first entry"
+    );
+    let ledger = error
+        .ledger_partial
+        .expect("failure should include partial ledger data");
+    let record = ledger
+        .entries
+        .first()
+        .expect("partial ledger should include unresolved row");
+    assert!(
+        !record.resolved,
+        "unresolved external base row must be marked as unresolved"
+    );
+    let note = record
+        .note
+        .as_ref()
+        .expect("unresolved row should include explanatory note");
+    assert!(
+        note.contains("unresolved base") || note.contains("thin pack"),
+        "unresolved row note should mention external/unresolved base dependency"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that parse failures after at least one successful entry return partial-ledger context and blocked entry index.
+#[test]
+fn pack_parse_failure_returns_partial_ledger_context() {
+    let repo_dir = temp_repo_dir("pack-ledger-partial-context");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_truncated_second_entry_bundle(&repo_dir, "truncated.bundle")
+        .expect("must write synthetic truncated bundle");
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("truncated second entry should fail verification");
+    assert_eq!(
+        error.blocked_entry_idx,
+        Some(1),
+        "blocked entry should point to second entry parse failure"
+    );
+    let ledger = error
+        .ledger_partial
+        .expect("parse failure should include partial ledger context");
+    assert_eq!(
+        ledger.entries.len(),
+        1,
+        "partial ledger should preserve first successfully parsed entry"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
@@ -526,4 +707,175 @@ fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
     let final_ok = unsafe { openssl_sys::SHA1_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
     assert!(final_ok, "sha1 final should succeed in test helper");
     digest
+}
+
+fn write_synthetic_ref_delta_bundle(repo_dir: &std::path::Path, file_name: &str) -> std::path::PathBuf {
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&1u32.to_be_bytes());
+    pack_prefix.push(0x70);
+    pack_prefix.extend_from_slice(&[0x11; 20]);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic ref-delta bundle");
+    bundle_path
+}
+
+fn write_synthetic_ofs_delta_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let base_blob = b"base\n";
+    let target_blob = b"x\n";
+
+    let mut pack_body = Vec::new();
+    let mut first_entry = encode_pack_entry_header(PackEntryKind::Blob, base_blob.len());
+    first_entry.extend_from_slice(&zlib_compress(base_blob)?);
+    pack_body.extend_from_slice(&first_entry);
+
+    let second_entry_offset = 12 + pack_body.len();
+    let base_entry_offset = 12usize;
+    let distance = second_entry_offset
+        .checked_sub(base_entry_offset)
+        .ok_or_else(|| anyhow::anyhow!("ofs-delta distance underflow"))?;
+    let mut second_entry = encode_pack_entry_header(PackEntryKind::OfsDelta, target_blob.len());
+    second_entry.extend_from_slice(&encode_ofs_delta_distance(distance));
+    let delta_bytes = encode_literal_delta(base_blob.len(), target_blob)?;
+    second_entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
+    pack_body.extend_from_slice(&second_entry);
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&pack_body);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
+}
+
+fn write_synthetic_truncated_second_entry_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let first_blob = b"ok\n";
+    let mut pack_body = Vec::new();
+    let mut first_entry = encode_pack_entry_header(PackEntryKind::Blob, first_blob.len());
+    first_entry.extend_from_slice(&zlib_compress(first_blob)?);
+    pack_body.extend_from_slice(&first_entry);
+    // Second entry header (blob size=1), but intentionally omit zlib stream bytes.
+    pack_body.extend_from_slice(&encode_pack_entry_header(PackEntryKind::Blob, 1));
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&pack_body);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
+}
+
+fn encode_pack_entry_header(kind: PackEntryKind, size: usize) -> Vec<u8> {
+    let kind_code = match kind {
+        PackEntryKind::Commit => 1u8,
+        PackEntryKind::Tree => 2u8,
+        PackEntryKind::Blob => 3u8,
+        PackEntryKind::Tag => 4u8,
+        PackEntryKind::OfsDelta => 6u8,
+        PackEntryKind::RefDelta => 7u8,
+    };
+    let mut out = Vec::new();
+    let mut remaining = size >> 4;
+    let mut first = (kind_code << 4) | ((size & 0x0f) as u8);
+    if remaining != 0 {
+        first |= 0x80;
+    }
+    out.push(first);
+    while remaining != 0 {
+        let mut byte = (remaining & 0x7f) as u8;
+        remaining >>= 7;
+        if remaining != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+    }
+    out
+}
+
+fn encode_ofs_delta_distance(distance: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut n = distance;
+    bytes.push((n & 0x7f) as u8);
+    n >>= 7;
+    while n != 0 {
+        n = n.saturating_sub(1);
+        bytes.push(((n & 0x7f) as u8) | 0x80);
+        n >>= 7;
+    }
+    bytes.reverse();
+    bytes
+}
+
+fn encode_literal_delta(base_size: usize, target_bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+    if target_bytes.is_empty() {
+        anyhow::bail!("target bytes must be non-empty for literal delta encoding");
+    }
+    if target_bytes.len() > 0x7f {
+        anyhow::bail!("target bytes must fit one delta literal opcode byte");
+    }
+
+    let mut out = Vec::new();
+    encode_delta_varint(base_size, &mut out);
+    encode_delta_varint(target_bytes.len(), &mut out);
+    out.push(target_bytes.len() as u8);
+    out.extend_from_slice(target_bytes);
+    Ok(out)
+}
+
+fn encode_delta_varint(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn zlib_compress(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes)?;
+    let out = encoder.finish()?;
+    Ok(out)
 }
