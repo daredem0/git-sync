@@ -39,10 +39,6 @@ pub enum Command {
         repo: Option<PathBuf>,
         #[arg(long)]
         bundle: Option<PathBuf>,
-        #[arg(long)]
-        from: Option<String>,
-        #[arg(long)]
-        to: Option<String>,
         #[arg(long, default_value_t = false)]
         verify_metadata: bool,
         #[arg(long, value_enum)]
@@ -99,24 +95,19 @@ pub struct PayloadAuditTarget {
 pub fn resolve_payload_audit_target(
     repo: Option<PathBuf>,
     bundle: Option<PathBuf>,
-    from: Option<String>,
-    to: Option<String>,
 ) -> Result<PayloadAuditTarget> {
-    match (repo, bundle, from, to) {
-        (Some(repo_path), Some(bundle_path), None, None) => Ok(PayloadAuditTarget {
+    match (repo, bundle) {
+        (Some(repo_path), Some(bundle_path)) => Ok(PayloadAuditTarget {
             repo_path,
             bundle_path,
         }),
-        (Some(_), Some(_), _, _) => {
-            bail!("payload audit does not accept --from or --to")
-        }
-        (Some(_), None, _, _) => {
+        (Some(_), None) => {
             bail!("payload audit requires --bundle")
         }
-        (None, Some(_), _, _) => {
+        (None, Some(_)) => {
             bail!("payload audit requires --repo")
         }
-        (None, None, _, _) => {
+        (None, None) => {
             bail!("payload audit requires both --repo and --bundle")
         }
     }
@@ -131,13 +122,9 @@ mod tests {
     fn resolve_payload_audit_target_accepts_bundle_with_repo() {
         let repo_path = PathBuf::from(".");
         let bundle_path = PathBuf::from("sync.bundle");
-        let result = resolve_payload_audit_target(
-            Some(repo_path.clone()),
-            Some(bundle_path.clone()),
-            None,
-            None,
-        )
-        .expect("payload audit input should be accepted");
+        let result =
+            resolve_payload_audit_target(Some(repo_path.clone()), Some(bundle_path.clone()))
+                .expect("payload audit input should be accepted");
         assert_eq!(
             result,
             PayloadAuditTarget {
@@ -147,33 +134,16 @@ mod tests {
         );
     }
 
-    // Verifies that resolve_payload_audit_target rejects deprecated --from/--to usage.
-    #[test]
-    fn resolve_payload_audit_target_rejects_from_to_flags() {
-        let result = resolve_payload_audit_target(
-            Some(PathBuf::from(".")),
-            Some(PathBuf::from("sync.bundle")),
-            Some("HEAD~1".to_string()),
-            Some("HEAD".to_string()),
-        );
-        assert!(
-            result.is_err(),
-            "payload audit target resolution must reject --from/--to flags"
-        );
-    }
-
     // Verifies that resolve_payload_audit_target requires both --repo and --bundle.
     #[test]
     fn resolve_payload_audit_target_requires_repo_and_bundle() {
-        let missing_bundle =
-            resolve_payload_audit_target(Some(PathBuf::from(".")), None, None, None);
+        let missing_bundle = resolve_payload_audit_target(Some(PathBuf::from(".")), None);
         assert!(
             missing_bundle.is_err(),
             "payload audit target resolution must reject missing --bundle"
         );
 
-        let missing_repo =
-            resolve_payload_audit_target(None, Some(PathBuf::from("sync.bundle")), None, None);
+        let missing_repo = resolve_payload_audit_target(None, Some(PathBuf::from("sync.bundle")));
         assert!(
             missing_repo.is_err(),
             "payload audit target resolution must reject missing --repo"

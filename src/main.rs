@@ -71,8 +71,6 @@ fn main() -> Result<()> {
         Some(Command::Audit {
             repo,
             bundle,
-            from,
-            to,
             verify_metadata,
             format,
         }) => {
@@ -81,9 +79,6 @@ fn main() -> Result<()> {
                     repo.ok_or_else(|| anyhow::anyhow!("metadata verification requires --repo"))?;
                 let bundle_path = bundle
                     .ok_or_else(|| anyhow::anyhow!("metadata verification requires --bundle"))?;
-                if from.is_some() || to.is_some() {
-                    anyhow::bail!("metadata verification does not accept --from or --to");
-                }
 
                 verify_bundle_metadata_against_repo_input(&bundle_path, &repo_path)?;
                 println!("metadata verification passed");
@@ -92,11 +87,6 @@ fn main() -> Result<()> {
 
             // `audit` without `--format` enters interactive TUI mode.
             if format.is_none() {
-                if from.is_some() || to.is_some() {
-                    anyhow::bail!(
-                        "interactive audit does not accept --from/--to; use --format for non-interactive payload audit"
-                    );
-                }
                 let repo_path =
                     repo.ok_or_else(|| anyhow::anyhow!("interactive audit requires --repo"))?;
                 let bundle_path =
@@ -113,7 +103,7 @@ fn main() -> Result<()> {
 
             let format = format.expect("format should be present in non-interactive audit mode");
 
-            let target = resolve_payload_audit_target(repo, bundle, from, to)?;
+            let target = resolve_payload_audit_target(repo, bundle)?;
             match format {
                 OutputFormat::Table => {
                     let payload = collect_payload_audit_for_bundle_input(

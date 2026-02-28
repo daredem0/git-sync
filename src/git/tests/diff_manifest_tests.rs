@@ -3,30 +3,30 @@
 use super::support::*;
 use super::*;
 
-// Focus: tree-diff change detection and stable manifest rendering (TSV/JSON).
-// Verifies that collect_changed_files returns an empty list when base and tip are the same commit.
+// Focus: tree-diff entry detection and deterministic diff-entry ordering.
+
+// Verifies that collect_diff_entries returns an empty list when base and tip are the same commit.
 #[test]
-fn collect_changed_files_returns_empty_when_base_equals_tip() {
-    let repo_dir = temp_repo_dir("changes-empty");
+fn collect_diff_entries_returns_empty_when_base_equals_tip() {
+    let repo_dir = temp_repo_dir("diff-entries-empty");
     std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
     let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
 
     let commit_id = commit_from_files(&repo, "single commit", &[("file.txt", "content")], &[]);
-
-    let changes = collect_changed_files(&repo_dir, commit_id, commit_id)
-        .expect("collect_changed_files should succeed for identical commits");
+    let entries = collect_diff_entries(&repo, commit_id, commit_id)
+        .expect("collect_diff_entries should succeed for identical commits");
     assert!(
-        changes.is_empty(),
-        "no changed files should be reported when base and tip are identical"
+        entries.is_empty(),
+        "no diff entries should be reported when base and tip are identical"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that collect_changed_files reports added, modified, and deleted file statuses.
+// Verifies that collect_diff_entries reports added, modified, and deleted file statuses.
 #[test]
-fn collect_changed_files_detects_added_modified_deleted_files() {
-    let repo_dir = temp_repo_dir("changes-amd");
+fn collect_diff_entries_detect_added_modified_deleted_files() {
+    let repo_dir = temp_repo_dir("diff-entries-amd");
     std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
     let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
 
@@ -51,12 +51,11 @@ fn collect_changed_files_detects_added_modified_deleted_files() {
         &[base_commit_id],
     );
 
-    let changes = collect_changed_files(&repo_dir, base_commit_id, tip_commit_id)
-        .expect("collect_changed_files should produce a changed-file manifest");
-
+    let entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)
+        .expect("collect_diff_entries should produce diff entries");
     let mut by_path = std::collections::HashMap::new();
-    for change in changes {
-        by_path.insert(change.path.clone(), change.status);
+    for entry in entries {
+        by_path.insert(entry.path.clone(), entry.status);
     }
 
     assert_eq!(
@@ -78,10 +77,10 @@ fn collect_changed_files_detects_added_modified_deleted_files() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that collect_changed_files returns results sorted by path for deterministic audit output.
+// Verifies that collect_diff_entries returns path-sorted output for deterministic audits.
 #[test]
-fn collect_changed_files_returns_stable_sorted_output() {
-    let repo_dir = temp_repo_dir("changes-sorted");
+fn collect_diff_entries_returns_stable_sorted_output() {
+    let repo_dir = temp_repo_dir("diff-entries-sorted");
     std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
     let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
 
@@ -94,9 +93,9 @@ fn collect_changed_files_returns_stable_sorted_output() {
         &[base_commit_id],
     );
 
-    let changes = collect_changed_files(&repo_dir, base_commit_id, tip_commit_id)
-        .expect("collect_changed_files should produce deterministic output");
-    let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
+    let entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)
+        .expect("collect_diff_entries should produce deterministic output");
+    let paths: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
 
     assert_eq!(
         paths,
@@ -105,16 +104,16 @@ fn collect_changed_files_returns_stable_sorted_output() {
             "m.txt".to_string(),
             "z.txt".to_string()
         ],
-        "changed file list must be sorted by path"
+        "diff entry list must be sorted by path"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that collect_changed_files reports renames with both old and new paths.
+// Verifies that collect_diff_entries reports renames with both old and new paths.
 #[test]
-fn collect_changed_files_detects_renames() {
-    let repo_dir = temp_repo_dir("changes-rename");
+fn collect_diff_entries_detect_renames() {
+    let repo_dir = temp_repo_dir("diff-entries-rename");
     std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
     let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
 
@@ -131,15 +130,15 @@ fn collect_changed_files_detects_renames() {
         &[base_commit_id],
     );
 
-    let changes = collect_changed_files(&repo_dir, base_commit_id, tip_commit_id)
-        .expect("collect_changed_files should detect rename changes");
+    let entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)
+        .expect("collect_diff_entries should detect rename changes");
     assert_eq!(
-        changes.len(),
+        entries.len(),
         1,
-        "exactly one rename change should be reported"
+        "exactly one rename entry should be reported"
     );
 
-    let rename = &changes[0];
+    let rename = &entries[0];
     assert_eq!(
         rename.status,
         ChangeStatus::Renamed,
@@ -156,253 +155,4 @@ fn collect_changed_files_detects_renames() {
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
-}
-
-// Verifies that render_manifest returns a stable header and no entries for an empty change list.
-#[test]
-fn render_manifest_returns_only_header_for_empty_list() {
-    let output = render_manifest(&[]);
-    assert_eq!(
-        output, "STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n",
-        "empty manifest should contain only the header line"
-    );
-}
-
-// Verifies that render_manifest formats A/M/D/R entries in a deterministic tab-separated format.
-#[test]
-fn render_manifest_formats_added_modified_deleted_and_renamed_entries() {
-    let added_oid =
-        git2::Oid::from_str("1111111111111111111111111111111111111111").expect("must parse oid");
-    let modified_old_oid =
-        git2::Oid::from_str("2222222222222222222222222222222222222222").expect("must parse oid");
-    let modified_new_oid =
-        git2::Oid::from_str("3333333333333333333333333333333333333333").expect("must parse oid");
-    let deleted_oid =
-        git2::Oid::from_str("4444444444444444444444444444444444444444").expect("must parse oid");
-    let renamed_old_oid =
-        git2::Oid::from_str("5555555555555555555555555555555555555555").expect("must parse oid");
-    let renamed_new_oid =
-        git2::Oid::from_str("6666666666666666666666666666666666666666").expect("must parse oid");
-
-    let changes = vec![
-        ChangedFile {
-            status: ChangeStatus::Added,
-            path: "a.txt".to_string(),
-            old_path: None,
-            old_oid: None,
-            new_oid: Some(added_oid),
-        },
-        ChangedFile {
-            status: ChangeStatus::Modified,
-            path: "m.txt".to_string(),
-            old_path: None,
-            old_oid: Some(modified_old_oid),
-            new_oid: Some(modified_new_oid),
-        },
-        ChangedFile {
-            status: ChangeStatus::Deleted,
-            path: "d.txt".to_string(),
-            old_path: None,
-            old_oid: Some(deleted_oid),
-            new_oid: None,
-        },
-        ChangedFile {
-            status: ChangeStatus::Renamed,
-            path: "new_name.txt".to_string(),
-            old_path: Some("old_name.txt".to_string()),
-            old_oid: Some(renamed_old_oid),
-            new_oid: Some(renamed_new_oid),
-        },
-    ];
-
-    let output = render_manifest(&changes);
-    let expected = concat!(
-        "STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n",
-        "A\ta.txt\t-\t-\t1111111111111111111111111111111111111111\n",
-        "M\tm.txt\t-\t2222222222222222222222222222222222222222\t3333333333333333333333333333333333333333\n",
-        "D\td.txt\t-\t4444444444444444444444444444444444444444\t-\n",
-        "R\tnew_name.txt\told_name.txt\t5555555555555555555555555555555555555555\t6666666666666666666666666666666666666666\n"
-    );
-    assert_eq!(
-        output, expected,
-        "manifest output must use deterministic tab-separated line rendering"
-    );
-}
-
-// Verifies that render_manifest_json returns an empty JSON array when no changes are provided.
-#[test]
-fn render_manifest_json_returns_empty_array_for_empty_list() {
-    let output = render_manifest_json(&[]).expect("json rendering should succeed");
-    let value: serde_json::Value =
-        serde_json::from_str(&output).expect("json output should be valid");
-    assert_eq!(
-        value,
-        serde_json::json!([]),
-        "empty change list must render as an empty JSON array"
-    );
-}
-
-// Verifies that render_manifest_json includes expected fields and preserves entry ordering.
-#[test]
-fn render_manifest_json_formats_entries_and_preserves_order() {
-    let first_new_oid =
-        git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("must parse oid");
-    let second_old_oid =
-        git2::Oid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").expect("must parse oid");
-    let second_new_oid =
-        git2::Oid::from_str("cccccccccccccccccccccccccccccccccccccccc").expect("must parse oid");
-
-    let changes = vec![
-        ChangedFile {
-            status: ChangeStatus::Added,
-            path: "a.txt".to_string(),
-            old_path: None,
-            old_oid: None,
-            new_oid: Some(first_new_oid),
-        },
-        ChangedFile {
-            status: ChangeStatus::Renamed,
-            path: "new.txt".to_string(),
-            old_path: Some("old.txt".to_string()),
-            old_oid: Some(second_old_oid),
-            new_oid: Some(second_new_oid),
-        },
-    ];
-
-    let output = render_manifest_json(&changes).expect("json rendering should succeed");
-    let value: serde_json::Value =
-        serde_json::from_str(&output).expect("json output should be valid");
-    let entries = value
-        .as_array()
-        .expect("top-level JSON output should be an array");
-
-    assert_eq!(entries.len(), 2, "expected two JSON manifest entries");
-    assert_eq!(
-        entries[0]["status"],
-        serde_json::json!("A"),
-        "first entry status code must match Added"
-    );
-    assert_eq!(
-        entries[0]["path"],
-        serde_json::json!("a.txt"),
-        "first entry path must be serialized"
-    );
-    assert_eq!(
-        entries[0]["old_path"],
-        serde_json::Value::Null,
-        "missing old path must serialize to null"
-    );
-    assert_eq!(
-        entries[0]["new_oid"],
-        serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        "first entry new oid must be serialized as hex string"
-    );
-
-    assert_eq!(
-        entries[1]["status"],
-        serde_json::json!("R"),
-        "second entry status code must match Renamed"
-    );
-    assert_eq!(
-        entries[1]["path"],
-        serde_json::json!("new.txt"),
-        "second entry path must preserve original ordering"
-    );
-    assert_eq!(
-        entries[1]["old_path"],
-        serde_json::json!("old.txt"),
-        "second entry old path must be serialized"
-    );
-    assert_eq!(
-        entries[1]["old_oid"],
-        serde_json::json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-        "second entry old oid must be serialized as hex string"
-    );
-}
-
-fn commit_with_entries(
-    repo: &git2::Repository,
-    message: &str,
-    entries: &[(&str, &str, i32)],
-    parent_oids: &[git2::Oid],
-) -> git2::Oid {
-    let mut builder = repo.treebuilder(None).expect("must create treebuilder");
-    for (path, content, mode) in entries {
-        let blob_id = repo
-            .blob(content.as_bytes())
-            .expect("must create blob for tree entry");
-        builder
-            .insert(*path, blob_id, *mode)
-            .expect("must insert tree entry");
-    }
-    let tree_id = builder.write().expect("must write tree");
-    let tree = repo.find_tree(tree_id).expect("must find written tree");
-
-    let parent_commits: Vec<git2::Commit<'_>> = parent_oids
-        .iter()
-        .map(|oid| repo.find_commit(*oid).expect("must find parent commit"))
-        .collect();
-    let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
-    let sig = git2::Signature::now("Test User", "test@example.com").expect("must create signature");
-
-    repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
-        .expect("must create commit")
-}
-
-// Verifies that collect_changed_files reports a file-mode transition (file -> symlink) either as TypeChanged or as split add/delete entries.
-#[test]
-fn collect_changed_files_detects_file_mode_transition() {
-    let repo_dir = temp_repo_dir("changes-typechange");
-    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
-    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
-
-    let base_commit_id = commit_with_entries(
-        &repo,
-        "base commit",
-        &[("kind.txt", "regular-file\n", 0o100644)],
-        &[],
-    );
-    let tip_commit_id = commit_with_entries(
-        &repo,
-        "tip commit",
-        &[("kind.txt", "target-link\n", 0o120000)],
-        &[base_commit_id],
-    );
-
-    let changes = collect_changed_files(&repo_dir, base_commit_id, tip_commit_id)
-        .expect("collect_changed_files should succeed for typechange fixture");
-    let has_typechange = changes
-        .iter()
-        .any(|change| change.path == "kind.txt" && change.status == ChangeStatus::TypeChanged);
-    let has_split_add_delete = changes.iter().any(|change| {
-        change.path == "kind.txt"
-            && (change.status == ChangeStatus::Added || change.status == ChangeStatus::Deleted)
-    });
-    assert!(
-        has_typechange || has_split_add_delete,
-        "file mode transitions should be represented either as TypeChanged or as add/delete split"
-    );
-
-    let _ = std::fs::remove_dir_all(repo_dir);
-}
-
-// Verifies that collect_changed_files returns an error when the repository path does not exist.
-#[test]
-fn collect_changed_files_rejects_missing_repository_path() {
-    let missing_path = std::env::temp_dir().join(format!(
-        "git-sync-missing-repo-path-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be valid")
-            .as_nanos()
-    ));
-    let oid = git2::Oid::from_str("1111111111111111111111111111111111111111")
-        .expect("must parse test oid");
-
-    let result = collect_changed_files(&missing_path, oid, oid);
-    assert!(
-        result.is_err(),
-        "collect_changed_files must fail for non-existent repository paths"
-    );
 }

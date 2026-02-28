@@ -6,11 +6,11 @@ mod support;
 
 // Focus: open_context validation and context resolution behavior.
 mod context_tests;
-// Focus: changed-file diff detection and manifest rendering output.
+// Focus: changed-file diff-entry detection and deterministic ordering behavior.
 mod diff_manifest_tests;
 // Focus: bundle creation behavior and create-time audit sidecars.
 mod bundle_create_tests;
-// Focus: bundle header parsing and repo range resolution.
+// Focus: bundle header parsing and malformed-input handling.
 mod inspect_range_tests;
 // Focus: receive-path behavior, idempotency, and head-application checks.
 mod receive_tests;

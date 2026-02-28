@@ -4,9 +4,7 @@ mod archive;
 mod bundle;
 mod context;
 mod diff;
-mod manifest;
 mod metadata;
-mod range;
 mod types;
 mod util;
 
@@ -24,25 +22,18 @@ pub use bundle::{
 #[allow(unused_imports)]
 pub use context::open_context;
 #[allow(unused_imports)]
-pub use diff::collect_changed_files;
-#[allow(unused_imports)]
-pub use manifest::{render_manifest, render_manifest_json};
-#[allow(unused_imports)]
 pub use metadata::{
-    collect_changed_files_from_bundle_input, verify_bundle_metadata_against_repo,
-    verify_bundle_metadata_against_repo_input,
+    verify_bundle_metadata_against_repo, verify_bundle_metadata_against_repo_input,
 };
 #[allow(unused_imports)]
-pub use range::resolve_repo_audit_range;
-#[allow(unused_imports)]
 pub use types::{
-    BundleHead, BundleInspection, BundleVersion, ChangeStatus, ChangedFile, CommitAuditEntry,
+    BundleHead, BundleInspection, BundleVersion, ChangeStatus, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
     OpenContext, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
     PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
     PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
     PayloadObjectEntry, PayloadObjectKind, PayloadTransportEntry, ReceiveBundleOptions,
-    ReceiveBundleResult, RepoAuditRange,
+    ReceiveBundleResult,
 };
 
 #[cfg(test)]
@@ -64,8 +55,8 @@ pub(crate) use diff::collect_diff_entries;
 #[allow(unused_imports)]
 pub(crate) use metadata::{
     collect_changed_files_for_metadata, collect_commit_chain_for_metadata,
-    load_bundle_metadata_from_input, load_bundle_metadata_from_path, signature_to_audit_signature,
-    verify_bundle_metadata_integrity, verify_bundle_metadata_integrity_input, write_patch_sidecar,
+    load_bundle_metadata_from_path, signature_to_audit_signature, verify_bundle_metadata_integrity,
+    verify_bundle_metadata_integrity_input, write_patch_sidecar,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -78,8 +69,7 @@ pub(crate) use types::{
 #[allow(unused_imports)]
 pub(crate) use util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
-    oid_or_none, oid_to_str, parse_optional_oid, parse_status_code, path_to_string, sha256_hex,
-    status_code,
+    oid_or_none, path_to_string, sha256_hex, status_code,
 };
 
 #[cfg(test)]

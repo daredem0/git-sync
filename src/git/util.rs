@@ -105,11 +105,6 @@ pub(crate) fn oid_or_none(oid: git2::Oid) -> Option<git2::Oid> {
     if oid.is_zero() { None } else { Some(oid) }
 }
 
-/// Formats an optional OID, using `-` for missing values.
-pub(crate) fn oid_to_str(oid: Option<git2::Oid>) -> String {
-    oid.map_or_else(|| "-".to_string(), |oid| oid.to_string())
-}
-
 /// Encodes a change status as the manifest short code.
 pub(crate) fn status_code(status: ChangeStatus) -> &'static str {
     match status {
@@ -120,35 +115,6 @@ pub(crate) fn status_code(status: ChangeStatus) -> &'static str {
         ChangeStatus::Copied => "C",
         ChangeStatus::TypeChanged => "T",
     }
-}
-
-/// Parses manifest/metadata status codes (`A`, `M`, `D`, `R`, `C`, `T`).
-///
-/// # Errors
-///
-/// Returns an error for unsupported status codes.
-pub(crate) fn parse_status_code(status: &str) -> Result<ChangeStatus> {
-    match status {
-        "A" => Ok(ChangeStatus::Added),
-        "M" => Ok(ChangeStatus::Modified),
-        "D" => Ok(ChangeStatus::Deleted),
-        "R" => Ok(ChangeStatus::Renamed),
-        "C" => Ok(ChangeStatus::Copied),
-        "T" => Ok(ChangeStatus::TypeChanged),
-        _ => bail!("unsupported change status code in metadata: '{status}'"),
-    }
-}
-
-/// Parses an optional hex object ID string into `git2::Oid`.
-///
-/// # Errors
-///
-/// Returns an error when the provided OID string is malformed.
-pub(crate) fn parse_optional_oid(value: Option<&str>) -> Result<Option<git2::Oid>> {
-    value
-        .map(git2::Oid::from_str)
-        .transpose()
-        .map_err(Into::into)
 }
 
 /// Encodes a bundle header version for metadata fields.

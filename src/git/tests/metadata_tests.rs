@@ -34,48 +34,6 @@ fn verify_bundle_metadata_against_repo_accepts_matching_metadata() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that collect_changed_files_from_bundle_input reads changed-file metadata from a zip-only bundle package.
-#[test]
-fn collect_changed_files_from_bundle_input_accepts_zip_archive_without_loose_bundle_files() {
-    let repo_dir = temp_repo_dir("collect-changes-input-zip");
-    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
-    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
-
-    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base content")], &[]);
-    let tip_commit_id = commit_from_files(
-        &repo,
-        "tip commit",
-        &[("f.txt", "tip content"), ("new.txt", "added")],
-        &[base_commit_id],
-    );
-    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
-        .expect("must create base ref");
-    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
-        .expect("must create tip ref");
-
-    let bundle_path = repo_dir.join("range.bundle");
-    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
-        .expect("create_bundle should succeed");
-    remove_unarchived_bundle_artifacts(&result).expect("must remove loose bundle artifacts");
-
-    let changes = collect_changed_files_from_bundle_input(&result.archive_path)
-        .expect("collect_changed_files_from_bundle_input should read metadata from zip package");
-    assert!(
-        !changes.is_empty(),
-        "zip-contained metadata should provide changed file entries"
-    );
-    assert!(
-        changes.iter().any(|entry| entry.path == "f.txt"),
-        "changed file list from zip metadata should include modified file paths"
-    );
-    assert!(
-        changes.iter().any(|entry| entry.path == "new.txt"),
-        "changed file list from zip metadata should include added file paths"
-    );
-
-    let _ = std::fs::remove_dir_all(repo_dir);
-}
-
 // Verifies that metadata verification accepts zip-only bundle packages when no loose bundle files remain.
 #[test]
 fn verify_bundle_metadata_against_repo_input_accepts_zip_archive_without_loose_bundle_files() {
@@ -306,40 +264,6 @@ fn verify_bundle_metadata_integrity_rejects_patch_sidecar_sha_mismatch() {
     assert!(
         result.is_err(),
         "metadata integrity must reject patch sidecar sha mismatches"
-    );
-
-    let _ = std::fs::remove_dir_all(repo_dir);
-}
-
-// Verifies that collect_changed_files_from_bundle_input rejects unknown status codes in metadata.
-#[test]
-fn collect_changed_files_from_bundle_input_rejects_unknown_status_code() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("parse-status", false);
-    let mut metadata = read_json_value(&bundle_result.audit_path);
-    metadata["changed_files"][0]["status"] = serde_json::json!("Z");
-    write_json_value(&bundle_result.audit_path, &metadata);
-
-    let result = collect_changed_files_from_bundle_input(&bundle_result.bundle_path);
-    assert!(
-        result.is_err(),
-        "changed-file parsing must reject unknown status codes"
-    );
-
-    let _ = std::fs::remove_dir_all(repo_dir);
-}
-
-// Verifies that collect_changed_files_from_bundle_input rejects invalid object IDs in metadata.
-#[test]
-fn collect_changed_files_from_bundle_input_rejects_invalid_oid() {
-    let (repo_dir, bundle_result, _, _) = create_linear_bundle_fixture("parse-oid", false);
-    let mut metadata = read_json_value(&bundle_result.audit_path);
-    metadata["changed_files"][0]["new_oid"] = serde_json::json!("not-an-oid");
-    write_json_value(&bundle_result.audit_path, &metadata);
-
-    let result = collect_changed_files_from_bundle_input(&bundle_result.bundle_path);
-    assert!(
-        result.is_err(),
-        "changed-file parsing must reject invalid oid values"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

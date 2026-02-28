@@ -2,50 +2,7 @@
 
 use super::*;
 
-// Focus: utility-level parsing/formatting helpers used across bundle, metadata, and manifest paths.
-
-// Verifies that parse_optional_oid handles None, valid OID strings, and invalid OID input.
-#[test]
-fn parse_optional_oid_handles_none_valid_and_invalid_inputs() {
-    let none_result = parse_optional_oid(None).expect("None should parse to None");
-    assert_eq!(none_result, None, "None input must map to None output");
-
-    let oid_text = "1111111111111111111111111111111111111111";
-    let valid_result = parse_optional_oid(Some(oid_text)).expect("valid OID should parse");
-    assert_eq!(
-        valid_result,
-        Some(git2::Oid::from_str(oid_text).expect("must parse fixed test oid")),
-        "valid OID text must parse to matching OID"
-    );
-
-    let invalid_result = parse_optional_oid(Some("invalid-oid"));
-    assert!(
-        invalid_result.is_err(),
-        "invalid OID text should return an error"
-    );
-}
-
-// Verifies that status-code parsing supports C and T codes used for copy/type-change deltas.
-#[test]
-fn parse_status_code_supports_copy_and_typechange() {
-    assert_eq!(
-        parse_status_code("C").expect("C should parse"),
-        ChangeStatus::Copied,
-        "status code C must map to Copied"
-    );
-    assert_eq!(
-        parse_status_code("T").expect("T should parse"),
-        ChangeStatus::TypeChanged,
-        "status code T must map to TypeChanged"
-    );
-}
-
-// Verifies that parse_status_code rejects unsupported status letters.
-#[test]
-fn parse_status_code_rejects_unknown_code() {
-    let result = parse_status_code("X");
-    assert!(result.is_err(), "unsupported status codes must error");
-}
+// Focus: utility-level helpers used across bundle creation, payload audit, and metadata verification.
 
 // Verifies that oid_or_none returns None for zero OIDs and Some for non-zero OIDs.
 #[test]
@@ -63,24 +20,6 @@ fn oid_or_none_handles_zero_and_nonzero_oids() {
         oid_or_none(nonzero),
         Some(nonzero),
         "non-zero oid should remain present"
-    );
-}
-
-// Verifies that oid_to_str emits '-' for None and canonical hex for Some(oid).
-#[test]
-fn oid_to_str_formats_none_and_some_values() {
-    assert_eq!(
-        oid_to_str(None),
-        "-".to_string(),
-        "None oid should render as '-' placeholder"
-    );
-
-    let oid = git2::Oid::from_str("3333333333333333333333333333333333333333")
-        .expect("must parse fixed oid");
-    assert_eq!(
-        oid_to_str(Some(oid)),
-        oid.to_string(),
-        "present oid should render as lowercase hex"
     );
 }
 

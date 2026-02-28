@@ -262,3 +262,61 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
+
+// Verifies that payload-audit document sections used for auditing are deterministic across repeated builds.
+#[test]
+fn build_payload_audit_document_for_bundle_input_is_deterministic_for_payload_sections() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-deterministic", false);
+
+    let first =
+        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+            .expect("first payload-audit document build must succeed");
+    let second =
+        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+            .expect("second payload-audit document build must succeed");
+
+    assert_eq!(
+        first.transport_entries, second.transport_entries,
+        "transport entry rows must be deterministic across repeated builds"
+    );
+    assert_eq!(
+        first.pack_summary, second.pack_summary,
+        "pack summary counters must be deterministic across repeated builds"
+    );
+    assert_eq!(
+        first.pack_objects, second.pack_objects,
+        "pack object rows must be deterministic across repeated builds"
+    );
+    assert_eq!(
+        first.object_details, second.object_details,
+        "object detail rows must be deterministic across repeated builds"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload-audit document transport entries are emitted in deterministic sorted name order.
+#[test]
+fn build_payload_audit_document_for_bundle_input_sorts_transport_entries_by_name() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-transport-order", false);
+
+    let document =
+        build_payload_audit_document_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+            .expect("payload-audit document build must succeed");
+    let names = document
+        .transport_entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
+    let mut sorted_names = names.clone();
+    sorted_names.sort();
+
+    assert_eq!(
+        names, sorted_names,
+        "transport entry names must be sorted for deterministic output"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}

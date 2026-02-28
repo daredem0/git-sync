@@ -3,7 +3,7 @@
 use super::support::*;
 use super::*;
 
-// Focus: bundle-header inspection parsing and repo audit range resolution semantics.
+// Focus: bundle-header inspection parsing and robustness for malformed inputs.
 // Verifies that inspect_bundle parses version, prerequisite, and head entries from a created bundle.
 #[test]
 fn inspect_bundle_parses_created_bundle_metadata() {
@@ -75,66 +75,6 @@ fn inspect_bundle_rejects_invalid_header_signature() {
     );
 
     let _ = std::fs::remove_file(bundle_path);
-}
-
-// Verifies that resolve_repo_audit_range resolves commit ids from revspecs when the range is linear.
-#[test]
-fn resolve_repo_audit_range_accepts_linear_range() {
-    let repo_dir = temp_repo_dir("repo-range-linear");
-    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
-    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
-
-    let base_commit_id = commit_from_files(&repo, "base commit", &[("f.txt", "base")], &[]);
-    let tip_commit_id =
-        commit_from_files(&repo, "tip commit", &[("f.txt", "tip")], &[base_commit_id]);
-    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
-        .expect("must create base ref");
-    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
-        .expect("must create tip ref");
-
-    let range = resolve_repo_audit_range(&repo_dir, "refs/heads/base", "refs/heads/tip")
-        .expect("linear repo range should resolve");
-    assert_eq!(
-        range.base_commit_id, base_commit_id,
-        "base oid should resolve"
-    );
-    assert_eq!(range.tip_commit_id, tip_commit_id, "tip oid should resolve");
-
-    let _ = std::fs::remove_dir_all(repo_dir);
-}
-
-// Verifies that resolve_repo_audit_range rejects ranges where tip is not a descendant of base.
-#[test]
-fn resolve_repo_audit_range_rejects_non_descendant_tip() {
-    let repo_dir = temp_repo_dir("repo-range-non-descendant");
-    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
-    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
-
-    let root_commit_id = commit_from_files(&repo, "root commit", &[("f.txt", "root")], &[]);
-    let base_commit_id = commit_from_files(
-        &repo,
-        "base branch commit",
-        &[("f.txt", "base branch")],
-        &[root_commit_id],
-    );
-    let tip_commit_id = commit_from_files(
-        &repo,
-        "diverged tip commit",
-        &[("f.txt", "tip branch")],
-        &[root_commit_id],
-    );
-    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
-        .expect("must create base ref");
-    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
-        .expect("must create tip ref");
-
-    let result = resolve_repo_audit_range(&repo_dir, "refs/heads/base", "refs/heads/tip");
-    assert!(
-        result.is_err(),
-        "repo audit range must reject non-descendant tip commits"
-    );
-
-    let _ = std::fs::remove_dir_all(repo_dir);
 }
 
 // Verifies that inspect_bundle rejects non-existent bundle paths.

@@ -1,35 +1,9 @@
 //! Git-layer diff functionality.
 
+use crate::git::ChangeStatus;
 use crate::git::types::DiffEntry;
 use crate::git::util::{oid_or_none, path_to_string};
-use crate::git::{ChangeStatus, ChangedFile};
 use anyhow::{Result, bail};
-use std::path::Path;
-
-/// Collects normalized changed-file rows for a commit range.
-///
-/// # Errors
-///
-/// Returns an error when the repository or either commit cannot be resolved,
-/// or when libgit2 reports an unsupported delta.
-pub fn collect_changed_files(
-    repo_path: &Path,
-    base_commit_id: git2::Oid,
-    tip_commit_id: git2::Oid,
-) -> Result<Vec<ChangedFile>> {
-    let repo = git2::Repository::open(repo_path)?;
-    let diff_entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)?;
-    Ok(diff_entries
-        .into_iter()
-        .map(|entry| ChangedFile {
-            status: entry.status,
-            path: entry.path,
-            old_path: entry.old_path,
-            old_oid: entry.old_oid,
-            new_oid: entry.new_oid,
-        })
-        .collect())
-}
 
 /// Collects rich diff entries including mode/binary metadata.
 ///

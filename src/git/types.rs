@@ -61,21 +61,6 @@ pub enum ChangeStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// One changed file entry in manifest and metadata views.
-pub struct ChangedFile {
-    /// Normalized change status.
-    pub status: ChangeStatus,
-    /// Effective path on the new side (or old side for deletions).
-    pub path: String,
-    /// Previous path for rename/copy style changes.
-    pub old_path: Option<String>,
-    /// Previous blob OID when available.
-    pub old_oid: Option<git2::Oid>,
-    /// New blob OID when available.
-    pub new_oid: Option<git2::Oid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 /// Output paths and commit metadata produced by bundle creation.
 pub struct CreateBundleResult {
     /// Range start commit encoded as bundle prerequisite.
@@ -92,15 +77,6 @@ pub struct CreateBundleResult {
     pub patch_audit_path: Option<PathBuf>,
     /// Final packaged archive path that contains produced artifacts.
     pub archive_path: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Resolved linear commit range for repository audit mode.
-pub struct RepoAuditRange {
-    /// Base commit (exclusive lower bound).
-    pub base_commit_id: git2::Oid,
-    /// Tip commit (inclusive upper bound).
-    pub tip_commit_id: git2::Oid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

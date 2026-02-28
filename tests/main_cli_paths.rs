@@ -262,18 +262,6 @@ fn audit_verify_metadata_requires_repo_and_bundle_inputs() {
     );
 }
 
-// Verifies that interactive audit rejects --from/--to range arguments when no --format is provided.
-#[test]
-fn audit_interactive_rejects_from_to_flags() {
-    let output = run_bin(&["audit", "--from", "HEAD~1", "--to", "HEAD"], None);
-    assert_failure(&output, "interactive audit with from/to");
-    let text = output_text(&output);
-    assert!(
-        text.contains("interactive audit does not accept --from/--to"),
-        "interactive audit should reject from/to args in TUI mode"
-    );
-}
-
 // Verifies that interactive audit requires --repo when entering TUI mode.
 #[test]
 fn audit_interactive_requires_repo_argument() {
@@ -341,37 +329,11 @@ fn audit_non_interactive_rejects_legacy_tsv_output() {
     assert_failure(&output, "audit non-interactive tsv output");
 }
 
-// Verifies that non-interactive audit no longer supports direct repo-range mode in payload-only contract.
-#[test]
-fn audit_non_interactive_rejects_repo_range_mode() {
-    let fixture = create_fixture();
-    let output = run_bin(
-        &[
-            "audit",
-            "--repo",
-            fixture.source_repo.to_string_lossy().as_ref(),
-            "--from",
-            "sync/base",
-            "--to",
-            "sync/tip",
-            "--format",
-            "json",
-        ],
-        None,
-    );
-    assert_failure(&output, "audit non-interactive repo-range mode");
-    let text = output_text(&output);
-    assert!(
-        text.contains("payload") || text.contains("--bundle"),
-        "repo-range mode should fail with payload contract guidance"
-    );
-}
-
-// Verifies that non-interactive audit supports payload table output for a bundle+repo input pair.
+// Verifies that non-interactive payload table output is stable and uses fixed aligned columns.
 #[test]
 fn audit_non_interactive_payload_table_output_succeeds() {
     let fixture = create_fixture();
-    let output = run_bin(
+    let output_first = run_bin(
         &[
             "audit",
             "--bundle",
@@ -383,12 +345,109 @@ fn audit_non_interactive_payload_table_output_succeeds() {
         ],
         None,
     );
-    assert_success(&output, "audit non-interactive payload table");
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    assert_success(
+        &output_first,
+        "audit non-interactive payload table first run",
+    );
+    let stdout_first = String::from_utf8(output_first.stdout).expect("stdout should be utf-8");
+
+    let output_second = run_bin(
+        &[
+            "audit",
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--repo",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "--format",
+            "table",
+        ],
+        None,
+    );
+    assert_success(
+        &output_second,
+        "audit non-interactive payload table second run",
+    );
+    let stdout_second = String::from_utf8(output_second.stdout).expect("stdout should be utf-8");
+
+    assert_eq!(
+        stdout_first, stdout_second,
+        "payload table output should be stable across repeated runs"
+    );
+
+    let lines = stdout_first.lines().collect::<Vec<_>>();
     assert!(
-        stdout.contains("OID") && stdout.contains("TYPE"),
+        lines.len() >= 2,
+        "payload table output should include title and header rows"
+    );
+    assert!(
+        lines[0].starts_with("PACK OBJECTS (bundle "),
+        "first row should be the payload table title"
+    );
+    assert!(
+        lines[1].contains("OID")
+            && lines[1].contains("TYPE")
+            && lines[1].contains("SIZE")
+            && lines[1].contains("REACHABLE"),
         "payload table output should include object table headers"
     );
+
+    let header = lines[1];
+    let oid_column = header
+        .find("OID")
+        .expect("header should include OID column");
+    let type_column = header
+        .find("TYPE")
+        .expect("header should include TYPE column");
+    let size_column = header
+        .find("SIZE")
+        .expect("header should include SIZE column");
+    let reachable_column = header
+        .find("REACHABLE")
+        .expect("header should include REACHABLE column");
+    assert!(
+        oid_column < type_column && type_column < size_column && size_column < reachable_column,
+        "payload table header columns should be rendered left-to-right in fixed order"
+    );
+
+    for row in lines.iter().skip(2) {
+        if row.trim().is_empty() || *row == "(no pack objects)" {
+            continue;
+        }
+        let oid_value = row
+            .get(oid_column..type_column)
+            .expect("row should contain OID slice")
+            .trim();
+        let type_value = row
+            .get(type_column..size_column)
+            .expect("row should contain TYPE slice")
+            .trim();
+        let size_value = row
+            .get(size_column..reachable_column)
+            .expect("row should contain SIZE slice")
+            .trim();
+        let reachable_value = row
+            .get(reachable_column..)
+            .expect("row should contain REACHABLE slice")
+            .trim();
+
+        assert_eq!(
+            oid_value.len(),
+            40,
+            "OID column should contain hex object IDs"
+        );
+        assert!(
+            ["commit", "tree", "blob", "tag", "unknown"].contains(&type_value),
+            "TYPE column should use known payload object kind labels"
+        );
+        assert!(
+            size_value.chars().all(|ch| ch.is_ascii_digit()),
+            "SIZE column should contain numeric byte size values"
+        );
+        assert!(
+            reachable_value == "yes" || reachable_value == "no",
+            "REACHABLE column should contain yes/no markers"
+        );
+    }
 }
 
 // Verifies that non-interactive audit JSON includes the phase-2 payload document contract fields.
@@ -470,6 +529,27 @@ fn audit_non_interactive_payload_json_output_succeeds() {
     assert!(
         value.get("object_details").is_some(),
         "payload json output should include object_details section"
+    );
+    let pack_objects = value["pack_objects"]
+        .as_array()
+        .expect("pack_objects should be a JSON array");
+    let object_details = value["object_details"]
+        .as_array()
+        .expect("object_details should be a JSON array");
+    assert!(
+        !pack_objects.is_empty(),
+        "payload json output should include at least one pack object row"
+    );
+    assert_eq!(
+        pack_objects.len(),
+        object_details.len(),
+        "payload json output should include one object_details row per pack object"
+    );
+    assert!(
+        object_details
+            .iter()
+            .all(|detail| detail.get("lines").is_some() && detail["lines"].is_array()),
+        "payload json object_details rows should include textual lines arrays"
     );
     assert_eq!(
         value["schema_version"],
