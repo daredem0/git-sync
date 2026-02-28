@@ -850,6 +850,114 @@ fn receive_bundle_input_rejects_when_head_oid_is_missing_after_import() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that receive accepts valid bundles even when the header text contains "PACK" in a ref name.
+#[test]
+fn receive_bundle_input_accepts_bundle_when_header_contains_pack_text() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-header-pack-text", false);
+    let bundle_path = bundle_result.bundle_path.clone();
+    let bundle_bytes = std::fs::read(&bundle_path).expect("must read generated bundle bytes");
+    let pack_offset = bundle_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .expect("bundle must contain pack payload");
+    let header_text = String::from_utf8(bundle_bytes[..pack_offset].to_vec())
+        .expect("bundle header bytes should be utf-8");
+    let rewritten_header_text = header_text.replace(" refs/heads/tip\n", " refs/heads/PACK-tip\n");
+    assert_ne!(
+        rewritten_header_text, header_text,
+        "fixture header rewrite should modify the tip reference line"
+    );
+    let mut rewritten_bytes = rewritten_header_text.into_bytes();
+    rewritten_bytes.extend_from_slice(&bundle_bytes[pack_offset..]);
+    std::fs::write(&bundle_path, rewritten_bytes).expect("must write rewritten header bundle");
+
+    let receiver_dir = temp_repo_dir("receive-header-pack-text-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let receive_result = receive_bundle_input(&bundle_path, &receiver_dir)
+        .expect("receive should succeed for valid bundle with PACK text in header");
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture range should import exactly one head"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].reference, "refs/heads/PACK-tip",
+        "imported reference should preserve rewritten header reference name"
+    );
+    assert_eq!(
+        receive_result.imported_heads[0].oid, tip_commit_id,
+        "imported reference target should remain the original tip commit"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let base_ref = receiver_repo
+        .find_reference("refs/heads/base")
+        .expect("base prerequisite ref should exist");
+    assert_eq!(
+        base_ref.target(),
+        Some(base_commit_id),
+        "base ref should remain the fetched prerequisite commit"
+    );
+    let pack_tip_ref = receiver_repo
+        .find_reference("refs/heads/PACK-tip")
+        .expect("rewritten PACK-tip ref should exist after receive");
+    assert_eq!(
+        pack_tip_ref.target(),
+        Some(tip_commit_id),
+        "rewritten PACK-tip ref target should match imported tip commit"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that receive rejects bundles where bytes appear between the header terminator and the PACK payload.
+#[test]
+fn receive_bundle_input_rejects_bundle_with_gap_before_pack_payload() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("receive-gap-before-pack", false);
+    let bundle_path = bundle_result.bundle_path.clone();
+    let bundle_bytes = std::fs::read(&bundle_path).expect("must read generated bundle bytes");
+    let pack_offset = bundle_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .expect("bundle must contain pack payload");
+    let mut tampered_bytes = bundle_bytes[..pack_offset].to_vec();
+    tampered_bytes.extend_from_slice(b"GARBAGE-BETWEEN-HEADER-AND-PAYLOAD\n");
+    tampered_bytes.extend_from_slice(&bundle_bytes[pack_offset..]);
+    std::fs::write(&bundle_path, tampered_bytes).expect("must write tampered bundle bytes");
+
+    let receiver_dir = temp_repo_dir("receive-gap-before-pack-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let receive_result = receive_bundle_input(&bundle_path, &receiver_dir);
+    assert!(
+        receive_result.is_err(),
+        "receive must reject bundles where PACK does not start immediately after header terminator"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that is_head_already_applied returns false when the current ref target OID differs from requested head OID.
 #[test]
 fn is_head_already_applied_returns_false_when_ref_target_differs() {

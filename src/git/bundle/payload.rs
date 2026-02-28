@@ -8,11 +8,12 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::parse;
+
 mod context;
 mod detail;
 mod document;
 mod input;
-mod parse;
 mod session;
 mod verify;
 

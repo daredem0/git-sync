@@ -1,6 +1,7 @@
 //! Git-layer receive functionality.
 
 use super::inspect::inspect_bundle;
+use super::parse::parse_bundle_payload;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
@@ -160,12 +161,8 @@ fn apply_bundle_to_repo(
     heads: &[BundleHead],
 ) -> Result<()> {
     let bundle_bytes = fs::read(bundle_path)?;
-    // Git bundle payload starts at the embedded PACK stream.
-    let pack_offset = bundle_bytes
-        .windows(4)
-        .position(|window| window == b"PACK")
-        .ok_or_else(|| anyhow!("bundle does not contain PACK payload"))?;
-    let pack_data = &bundle_bytes[pack_offset..];
+    let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
+    let pack_data = parsed_bundle.pack_data;
 
     let odb = repo.odb()?;
     let pack_dir = repo.path().join("objects").join("pack");

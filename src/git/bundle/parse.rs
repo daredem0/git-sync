@@ -1,16 +1,16 @@
-//! Bundle-header parsing helpers for payload audit.
+//! Shared bundle-header parsing helpers.
 
 use crate::git::types::{BundleHead, BundleInspection, BundleVersion};
 use anyhow::{Result, anyhow, bail};
 
 #[derive(Debug)]
-pub(super) struct BundlePayload<'a> {
-    pub(super) inspection: BundleInspection,
-    pub(super) pack_data: &'a [u8],
+pub(crate) struct BundlePayload<'a> {
+    pub(crate) inspection: BundleInspection,
+    pub(crate) pack_data: &'a [u8],
 }
 
-/// Parses bundle header and returns structured inspection metadata plus exact PACK payload slice.
-pub(super) fn parse_bundle_payload(bundle_bytes: &[u8]) -> Result<BundlePayload<'_>> {
+/// Parses bundle header and returns inspection metadata plus exact PACK payload slice.
+pub(crate) fn parse_bundle_payload(bundle_bytes: &[u8]) -> Result<BundlePayload<'_>> {
     let mut cursor = 0usize;
     let version_line = read_bundle_header_line(bundle_bytes, &mut cursor)?
         .ok_or_else(|| anyhow!("bundle payload is missing version line"))?;
@@ -67,7 +67,6 @@ pub(super) fn parse_bundle_payload(bundle_bytes: &[u8]) -> Result<BundlePayload<
     })
 }
 
-/// Reads one bundle-header line as UTF-8 and advances cursor.
 fn read_bundle_header_line(bundle_bytes: &[u8], cursor: &mut usize) -> Result<Option<String>> {
     if *cursor >= bundle_bytes.len() {
         return Ok(None);
