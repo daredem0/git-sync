@@ -60,9 +60,16 @@ pub fn collect_payload_object_detail_for_bundle_input(
             let (size_bytes, kind) = odb.read_header(object_id)?;
             let kind = payload_kind_from_git(kind);
             let object = repo.find_object(object_id, None)?;
-            let (lines, is_text_blob) = object_detail_lines(&object)?;
-            let syntax_path_hint = if is_text_blob {
-                find_blob_path_hint(repo, &inspection.heads, object_id)?
+            let detail_lines = object_detail_lines(&object)?;
+            let blob_paths = if kind == PayloadObjectKind::Blob {
+                collect_blob_paths_with_limit(repo, &inspection.heads, object_id, 32)?
+            } else {
+                Vec::new()
+            };
+            let syntax_path_hint = if detail_lines.is_text_blob {
+                blob_paths
+                    .first()
+                    .cloned()
                     .or_else(|| Some("blob.txt".to_string()))
             } else {
                 None
@@ -73,7 +80,9 @@ pub fn collect_payload_object_detail_for_bundle_input(
                 kind,
                 size_bytes,
                 syntax_path_hint,
-                lines,
+                blob_paths,
+                text_line_count: detail_lines.text_line_count,
+                lines: detail_lines.lines,
             })
         },
     )
@@ -315,11 +324,8 @@ fn payload_kind_from_git(kind: git2::ObjectType) -> PayloadObjectKind {
     }
 }
 
-/// Renders object-specific detail lines for payload drill-down view.
-///
-/// Returns `(lines, is_text_blob)` where `is_text_blob` is `true` only for
-/// UTF-8 blob content that can be syntax highlighted.
-fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)> {
+/// Renders object-specific detail lines for payload drill-down/preview view.
+fn object_detail_lines(object: &git2::Object<'_>) -> Result<ObjectDetailLines> {
     match object.kind() {
         Some(git2::ObjectType::Commit) => {
             let commit = object.peel_to_commit()?;
@@ -353,7 +359,11 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)>
                     .lines()
                     .map(str::to_string),
             );
-            Ok((lines, false))
+            Ok(ObjectDetailLines {
+                lines,
+                is_text_blob: false,
+                text_line_count: None,
+            })
         }
         Some(git2::ObjectType::Tree) => {
             let tree = object.peel_to_tree()?;
@@ -376,19 +386,29 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)>
                     entry.name().unwrap_or("<invalid-utf8>")
                 ));
             }
-            Ok((lines, false))
+            Ok(ObjectDetailLines {
+                lines,
+                is_text_blob: false,
+                text_line_count: None,
+            })
         }
         Some(git2::ObjectType::Blob) => {
             let blob = object.peel_to_blob()?;
             let bytes = blob.content();
             if let Ok(text) = std::str::from_utf8(bytes) {
+                let text_line_count = text.lines().count();
                 let mut lines = vec![
                     format!("text blob {}", object.id()),
                     format!("size: {} bytes", bytes.len()),
+                    format!("text lines: {text_line_count}"),
                     String::new(),
                 ];
                 lines.extend(text.lines().map(str::to_string));
-                return Ok((lines, true));
+                return Ok(ObjectDetailLines {
+                    lines,
+                    is_text_blob: true,
+                    text_line_count: Some(text_line_count),
+                });
             }
 
             let preview_len = bytes.len().min(256);
@@ -407,7 +427,11 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)>
                         .join(" "),
                 );
             }
-            Ok((lines, false))
+            Ok(ObjectDetailLines {
+                lines,
+                is_text_blob: false,
+                text_line_count: None,
+            })
         }
         Some(git2::ObjectType::Tag) => {
             let tag = object.peel_to_tag()?;
@@ -422,52 +446,93 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)>
                     .lines()
                     .map(str::to_string),
             );
-            Ok((lines, false))
+            Ok(ObjectDetailLines {
+                lines,
+                is_text_blob: false,
+                text_line_count: None,
+            })
         }
-        _ => Ok((
-            vec![
+        _ => Ok(ObjectDetailLines {
+            lines: vec![
                 format!("object {}", object.id()),
                 "unsupported object type for detail rendering".to_string(),
             ],
-            false,
-        )),
+            is_text_blob: false,
+            text_line_count: None,
+        }),
     }
 }
 
-/// Finds one reachable tree path for a blob object id to use as syntax hint.
-fn find_blob_path_hint(
+/// Collects reachable tree paths for a blob object id, capped at `max_paths`.
+fn collect_blob_paths_with_limit(
     repo: &git2::Repository,
     heads: &[crate::git::BundleHead],
     blob_oid: git2::Oid,
-) -> Result<Option<String>> {
+    max_paths: usize,
+) -> Result<Vec<String>> {
+    if max_paths == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut seen_trees = HashSet::new();
-    for head in heads {
-        let Ok(commit) = repo.find_commit(head.oid) else {
+    let mut seen_commits = HashSet::new();
+    let mut commit_stack = heads.iter().map(|head| head.oid).collect::<Vec<_>>();
+    let mut paths = Vec::new();
+
+    while let Some(commit_id) = commit_stack.pop() {
+        if paths.len() >= max_paths {
+            break;
+        }
+        if !seen_commits.insert(commit_id) {
+            continue;
+        }
+        let Ok(commit) = repo.find_commit(commit_id) else {
             continue;
         };
-        if let Some(path) =
-            find_blob_in_tree(repo, commit.tree_id(), "", blob_oid, &mut seen_trees)?
-        {
-            return Ok(Some(path));
+
+        collect_blob_paths_in_tree(
+            repo,
+            commit.tree_id(),
+            "",
+            blob_oid,
+            &mut seen_trees,
+            &mut paths,
+            max_paths,
+        )?;
+
+        for parent_id in commit.parent_ids() {
+            if !seen_commits.contains(&parent_id) {
+                commit_stack.push(parent_id);
+            }
         }
     }
-    Ok(None)
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
-/// Recursively searches a tree for a blob object id and returns first matching path.
-fn find_blob_in_tree(
+/// Recursively searches a tree for all paths that reference a blob object id.
+fn collect_blob_paths_in_tree(
     repo: &git2::Repository,
     tree_id: git2::Oid,
     prefix: &str,
     blob_oid: git2::Oid,
     seen_trees: &mut HashSet<git2::Oid>,
-) -> Result<Option<String>> {
+    paths: &mut Vec<String>,
+    max_paths: usize,
+) -> Result<()> {
+    if paths.len() >= max_paths {
+        return Ok(());
+    }
     if !seen_trees.insert(tree_id) {
-        return Ok(None);
+        return Ok(());
     }
     let tree = repo.find_tree(tree_id)?;
 
     for entry in &tree {
+        if paths.len() >= max_paths {
+            break;
+        }
         let name = entry.name().unwrap_or("<invalid-utf8>");
         let path = if prefix.is_empty() {
             name.to_string()
@@ -475,19 +540,29 @@ fn find_blob_in_tree(
             format!("{prefix}/{name}")
         };
         match entry.kind() {
-            Some(git2::ObjectType::Blob) if entry.id() == blob_oid => return Ok(Some(path)),
+            Some(git2::ObjectType::Blob) if entry.id() == blob_oid => paths.push(path),
             Some(git2::ObjectType::Tree) => {
-                if let Some(found) =
-                    find_blob_in_tree(repo, entry.id(), &path, blob_oid, seen_trees)?
-                {
-                    return Ok(Some(found));
-                }
+                collect_blob_paths_in_tree(
+                    repo,
+                    entry.id(),
+                    &path,
+                    blob_oid,
+                    seen_trees,
+                    paths,
+                    max_paths,
+                )?;
             }
             _ => {}
         }
     }
 
-    Ok(None)
+    Ok(())
+}
+
+struct ObjectDetailLines {
+    lines: Vec<String>,
+    is_text_blob: bool,
+    text_line_count: Option<usize>,
 }
 
 struct TempBareRepo {

@@ -20,6 +20,7 @@ impl AppState {
             payload_selected_index: 0,
             show_help: false,
             action_message: None,
+            payload_preview: None,
             payload_object_view: None,
             diff_view: None,
         }
@@ -205,6 +206,7 @@ impl AppState {
         }
         self.main_view = view;
         self.page_index = 0;
+        self.payload_preview = None;
         self.payload_object_view = None;
         self.action_message = None;
     }

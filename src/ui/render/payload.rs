@@ -6,6 +6,7 @@ use crate::ui::types::{AppState, AuditModel, PayloadModel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
 /// Renders payload page tables or selected payload-object detail view.
@@ -26,7 +27,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
 
     let title = Paragraph::new(
         "Payload View\n\
-         Transport entries and full bundle object listing (including unreachable objects)\n\
+         Transport package entries, selected-object preview, and full pack object listing\n\
          Use j/k to select object rows and Enter to open object detail",
     )
     .block(Block::default().borders(Borders::ALL).title("git-sync"));
@@ -46,10 +47,15 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
         PayloadModel::Ok(payload) => {
             let body_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
                 .split(chunks[1]);
-            render_transport_entries_table(frame, payload, body_chunks[0]);
-            render_objects_table(frame, payload, state, body_chunks[1]);
+            let left_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(9), Constraint::Min(8)])
+                .split(body_chunks[0]);
+            render_transport_entries_table(frame, payload, left_chunks[0]);
+            render_objects_table(frame, payload, state, left_chunks[1]);
+            render_pack_preview(frame, state, body_chunks[1]);
         }
     }
 
@@ -105,6 +111,52 @@ fn render_transport_entries_table(
     frame.render_widget(table, area);
 }
 
+/// Renders selected pack object preview (commit/tree/blob/tag) on payload page.
+fn render_pack_preview(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
+    let lines: Vec<Line<'_>> = match &state.payload_preview {
+        Some(preview) => {
+            let mut lines = vec![Line::from(format!(
+                "selected: {} ({})",
+                preview.oid,
+                payload_kind_label(preview.kind)
+            ))];
+            lines.push(Line::from(String::new()));
+            lines.extend(preview.lines.iter().cloned());
+            lines
+        }
+        None => vec![
+            Line::from("No preview loaded."),
+            Line::from("Use j/k to select a pack object row."),
+            Line::from("Enter opens full object detail."),
+        ],
+    };
+    let lines = clip_preview_lines_to_area(lines, area);
+
+    let preview = Paragraph::new(ratatui::text::Text::from(lines))
+        .block(Block::default().borders(Borders::ALL).title("Pack Preview"));
+    frame.render_widget(preview, area);
+}
+
+/// Clips preview lines to panel height and keeps truncation marker at the last visible row.
+fn clip_preview_lines_to_area(lines: Vec<Line<'static>>, area: Rect) -> Vec<Line<'static>> {
+    let max_rows = usize::from(area.height.saturating_sub(2));
+    if max_rows == 0 || lines.len() <= max_rows {
+        return lines;
+    }
+    if max_rows == 1 {
+        return vec![Line::from(format!("... ({} more lines)", lines.len() - 1))];
+    }
+
+    let shown = max_rows - 1;
+    let hidden = lines.len().saturating_sub(shown);
+    let mut clipped = lines
+        .into_iter()
+        .take(shown)
+        .collect::<Vec<Line<'static>>>();
+    clipped.push(Line::from(format!("... ({} more lines)", hidden)));
+    clipped
+}
+
 /// Renders payload object table with selected-row highlight.
 fn render_objects_table(
     frame: &mut Frame<'_>,
@@ -125,7 +177,7 @@ fn render_objects_table(
             .iter()
             .map(|entry| {
                 Row::new(vec![
-                    Cell::from(entry.oid.to_string()),
+                    Cell::from(short_oid(entry.oid)),
                     Cell::from(payload_kind_label(entry.kind)),
                     Cell::from(entry.size_bytes.to_string()),
                     Cell::from(if entry.reachable_from_heads {
@@ -146,7 +198,7 @@ fn render_objects_table(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(40),
+            Constraint::Length(12),
             Constraint::Length(8),
             Constraint::Length(10),
             Constraint::Length(11),
@@ -233,4 +285,10 @@ fn short_sha256(digest: &str) -> String {
     } else {
         digest[..12].to_string()
     }
+}
+
+/// Returns shortened object id prefix for compact table output.
+fn short_oid(oid: git2::Oid) -> String {
+    let full = oid.to_string();
+    full[..12].to_string()
 }

@@ -3,7 +3,8 @@
 use crate::git;
 use crate::ui::format::single_line_error;
 use crate::ui::types::{
-    AppState, AuditModel, PayloadModel, PayloadObjectViewState, SyntaxHighlighter,
+    AppState, AuditModel, PayloadModel, PayloadObjectViewState, PayloadPreviewState,
+    SyntaxHighlighter,
 };
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -22,6 +23,50 @@ impl AppState {
         self.action_message = None;
     }
 
+    /// Refreshes cached payload preview content for the selected object row.
+    pub(crate) fn refresh_payload_preview(&mut self, model: &AuditModel) {
+        let PayloadModel::Ok(payload) = &model.payload else {
+            self.payload_preview = None;
+            return;
+        };
+        if payload.objects.is_empty() {
+            self.payload_preview = None;
+            return;
+        }
+
+        let index = std::cmp::min(self.payload_selected_index, payload.objects.len() - 1);
+        self.payload_selected_index = index;
+        let selected = &payload.objects[index];
+        match git::collect_payload_object_detail_for_bundle_input(
+            &model.bundle_path,
+            &model.repo_path,
+            selected.oid,
+        ) {
+            Ok(detail) => {
+                let lines = build_payload_preview_lines(
+                    &detail,
+                    selected.reachable_from_heads,
+                    &model.syntax_highlighter,
+                );
+                self.payload_preview = Some(PayloadPreviewState {
+                    oid: detail.oid,
+                    kind: detail.kind,
+                    lines,
+                });
+            }
+            Err(err) => {
+                self.payload_preview = Some(PayloadPreviewState {
+                    oid: selected.oid,
+                    kind: selected.kind,
+                    lines: vec![
+                        Line::from(format!("preview unavailable for object {}", selected.oid)),
+                        Line::from(format!("error: {}", single_line_error(&err))),
+                    ],
+                });
+            }
+        }
+    }
+
     /// Moves payload object selection down by one row.
     pub(crate) fn move_payload_selection_down(&mut self, model: &AuditModel) {
         let PayloadModel::Ok(payload) = &model.payload else {
@@ -32,11 +77,13 @@ impl AppState {
         }
         self.payload_selected_index =
             std::cmp::min(self.payload_selected_index + 1, payload.objects.len() - 1);
+        self.refresh_payload_preview(model);
     }
 
     /// Moves payload object selection up by one row.
-    pub(crate) fn move_payload_selection_up(&mut self, _model: &AuditModel) {
+    pub(crate) fn move_payload_selection_up(&mut self, model: &AuditModel) {
         self.payload_selected_index = self.payload_selected_index.saturating_sub(1);
+        self.refresh_payload_preview(model);
     }
 
     /// Opens detail view for the currently selected payload object row.
@@ -133,6 +180,93 @@ impl AppState {
             view.scroll_y = 0;
         }
     }
+}
+
+/// Builds a compact preview for the selected payload object on the payload main page.
+fn build_payload_preview_lines(
+    detail: &git::PayloadObjectDetail,
+    reachable_from_heads: bool,
+    highlighter: &SyntaxHighlighter,
+) -> Vec<Line<'static>> {
+    if detail.kind != git::PayloadObjectKind::Blob {
+        return detail
+            .lines
+            .iter()
+            .map(|line| Line::from(line.to_string()))
+            .collect();
+    }
+
+    let mut lines = vec![
+        Line::from(format!("blob {}", detail.oid)),
+        Line::from(format!("size: {} bytes", detail.size_bytes)),
+        Line::from(format!(
+            "content: {}",
+            if detail.text_line_count.is_some() {
+                "text"
+            } else {
+                "binary"
+            }
+        )),
+        Line::from(format!(
+            "text lines: {}",
+            detail
+                .text_line_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        )),
+    ];
+
+    if detail.blob_paths.is_empty() {
+        if reachable_from_heads {
+            lines.push(Line::from(
+                "blob paths: (none found in advertised-head trees)",
+            ));
+        } else {
+            lines.push(Line::from(
+                "blob paths: (none; object is unreachable from advertised heads)",
+            ));
+        }
+    } else {
+        lines.push(Line::from(format!(
+            "blob paths: {}",
+            detail.blob_paths.len()
+        )));
+        for path in detail.blob_paths.iter().take(8) {
+            lines.push(Line::from(format!("  - {path}")));
+        }
+        if detail.blob_paths.len() > 8 {
+            lines.push(Line::from(format!(
+                "  ... and {} more",
+                detail.blob_paths.len() - 8
+            )));
+        }
+    }
+
+    let content_start = detail
+        .lines
+        .iter()
+        .position(|line| line.is_empty())
+        .map_or(0, |index| index + 1);
+    let preview_body = &detail.lines[content_start..];
+    if !preview_body.is_empty() {
+        lines.push(Line::from(String::new()));
+        lines.push(Line::from("content preview:"));
+        if let Some(path_hint) = detail.syntax_path_hint.as_deref() {
+            let (highlighted, syntax_name) =
+                render_payload_text_with_syntax(preview_body, path_hint, highlighter);
+            lines.push(Line::from(format!("syntax: {syntax_name}")));
+            lines.extend(highlighted);
+        } else {
+            lines.extend(
+                preview_body
+                    .iter()
+                    .map(|line| Line::from(line.to_string()))
+                    .collect::<Vec<Line<'static>>>(),
+            );
+        }
+    }
+
+    lines
 }
 
 /// Renders plain text lines with syntax highlighting based on a path hint.

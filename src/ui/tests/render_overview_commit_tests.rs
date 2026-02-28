@@ -118,8 +118,70 @@ fn render_page_in_payload_view_shows_payload_screen() {
         "payload page should render transport entry table section"
     );
     assert!(
+        output.contains("Pack Preview"),
+        "payload page should render preview section for selected pack object"
+    );
+    assert!(
         output.contains("Pack Objects"),
         "payload page should render object listing section"
+    );
+}
+
+// Verifies that payload blob selection renders blob-specific preview metadata.
+#[test]
+fn render_page_in_payload_view_shows_blob_preview_metadata() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+    let super::super::types::PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit");
+    };
+    state.payload_selected_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, crate::git::PayloadObjectKind::Blob))
+        .expect("fixture payload should include blob object");
+    state.refresh_payload_preview(&model);
+
+    let output = render_and_capture_text(160, 44, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("text lines:"),
+        "blob preview should report textual line count"
+    );
+    assert!(
+        output.contains("blob paths:"),
+        "blob preview should list reachable paths for the selected blob object"
+    );
+}
+
+// Verifies that truncated payload preview appends a dynamic overflow marker at the bottom.
+#[test]
+fn render_page_in_payload_view_shows_dynamic_preview_overflow_marker() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+    let super::super::types::PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit");
+    };
+    state.payload_selected_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, crate::git::PayloadObjectKind::Blob))
+        .expect("fixture payload should include blob object");
+    state.refresh_payload_preview(&model);
+
+    let output = render_and_capture_text(140, 16, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("... ("),
+        "small preview area should show overflow marker with hidden line count"
     );
 }
 

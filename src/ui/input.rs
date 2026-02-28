@@ -48,6 +48,9 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
     match code {
         KeyCode::Tab | KeyCode::Char('v') if on_main_page => {
             state.toggle_main_view();
+            if state.main_view == MainView::Payload {
+                state.refresh_payload_preview(model);
+            }
             return;
         }
         KeyCode::Char('1') if on_main_page => {
@@ -56,6 +59,7 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
         }
         KeyCode::Char('2') if on_main_page => {
             state.show_payload_view();
+            state.refresh_payload_preview(model);
             return;
         }
         _ => {}

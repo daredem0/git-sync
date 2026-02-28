@@ -7,6 +7,7 @@ use super::super::types::{DiffViewState, MainView, PayloadModel};
 use super::support::*;
 use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
+use ratatui::style::Style;
 use ratatui::text::Line;
 
 // Verifies that Esc closes diff view without requesting app exit, and Esc exits when no diff is open.
@@ -272,6 +273,39 @@ fn open_selected_payload_object_for_text_blob_sets_syntax_name() {
     assert!(
         !detail.syntax_name.is_empty(),
         "payload text blob detail should record selected syntax name"
+    );
+}
+
+// Verifies that payload preview applies syntax-highlighted spans for textual blob content.
+#[test]
+fn refresh_payload_preview_for_text_blob_applies_syntax_highlighting() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    let PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    let blob_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("fixture payload should include at least one blob object");
+    state.payload_selected_index = blob_index;
+
+    state.refresh_payload_preview(&model);
+    let preview = state
+        .payload_preview
+        .as_ref()
+        .expect("payload preview should exist for selected blob object");
+    let has_styled_span = preview
+        .lines
+        .iter()
+        .any(|line| line.spans.iter().any(|span| span.style != Style::default()));
+    assert!(
+        has_styled_span,
+        "payload text blob preview should include syntax-highlighted spans"
     );
 }
 

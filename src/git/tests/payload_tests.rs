@@ -70,3 +70,34 @@ fn collect_payload_object_detail_for_bundle_input_returns_detail_lines() {
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
+
+// Verifies that blob detail includes blob-path metadata and text line counts for preview rendering.
+#[test]
+fn collect_payload_object_detail_for_text_blob_includes_paths_and_line_count() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-blob-metadata", false);
+    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+        .expect("must collect payload audit for archive input");
+    let blob_target = payload
+        .objects
+        .iter()
+        .find(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("fixture payload should contain at least one blob object");
+
+    let detail = collect_payload_object_detail_for_bundle_input(
+        &bundle_result.archive_path,
+        &repo_dir,
+        blob_target.oid,
+    )
+    .expect("must collect payload object detail for selected blob");
+    assert!(
+        !detail.blob_paths.is_empty(),
+        "blob object detail should include at least one reachable blob path"
+    );
+    assert!(
+        detail.text_line_count.is_some(),
+        "textual blob detail should include a text line count"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}

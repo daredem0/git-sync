@@ -166,6 +166,10 @@ pub struct PayloadObjectDetail {
     pub size_bytes: usize,
     /// Optional path-like hint used for syntax selection of textual blob content.
     pub syntax_path_hint: Option<String>,
+    /// Reachable repository paths that reference this blob object.
+    pub blob_paths: Vec<String>,
+    /// Number of UTF-8 text lines when this object is a textual blob.
+    pub text_line_count: Option<usize>,
     /// Pre-rendered textual lines for the object detail view.
     pub lines: Vec<String>,
 }

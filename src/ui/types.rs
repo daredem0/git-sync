@@ -60,6 +60,7 @@ pub(crate) struct AppState {
     pub(crate) payload_selected_index: usize,
     pub(crate) show_help: bool,
     pub(crate) action_message: Option<String>,
+    pub(crate) payload_preview: Option<PayloadPreviewState>,
     pub(crate) payload_object_view: Option<PayloadObjectViewState>,
     pub(crate) diff_view: Option<DiffViewState>,
 }
@@ -94,6 +95,13 @@ pub(crate) struct PayloadObjectViewState {
     pub(crate) max_line_width: usize,
     pub(crate) scroll_y: usize,
     pub(crate) scroll_x: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PayloadPreviewState {
+    pub(crate) oid: git2::Oid,
+    pub(crate) kind: git::PayloadObjectKind,
+    pub(crate) lines: Vec<Line<'static>>,
 }
 
 #[derive(Debug)]
