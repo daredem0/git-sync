@@ -577,6 +577,11 @@ fn audit_non_interactive_payload_json_output_succeeds() {
         "pack proof should report equal declared and processed object counts"
     );
     assert_eq!(
+        value["pack_proof"]["verification_status"],
+        serde_json::json!("ok"),
+        "payload json should include explicit pack verification status"
+    );
+    assert_eq!(
         value["schema_version"],
         serde_json::json!("1"),
         "payload json schema_version must be set to 1"

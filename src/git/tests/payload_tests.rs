@@ -209,6 +209,16 @@ fn payload_audit_schema_declares_phase2_required_fields() {
             "schema required field list must include '{field}'"
         );
     }
+
+    let pack_proof_required = schema_json["properties"]["pack_proof"]["required"]
+        .as_array()
+        .expect("pack_proof schema must define required field list");
+    assert!(
+        pack_proof_required
+            .iter()
+            .any(|value| value.as_str() == Some("verification_status")),
+        "pack_proof required field list must include verification_status"
+    );
 }
 
 // Verifies that payload-audit JSON document builder emits required metadata and consistent summary counters.
@@ -258,6 +268,10 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
     assert_eq!(
         document.pack_proof.declared_object_count, document.pack_proof.processed_object_count,
         "pack proof declared and processed object counts must match"
+    );
+    assert_eq!(
+        document.pack_proof.verification_status, "ok",
+        "pack proof should emit explicit verification status"
     );
     assert_eq!(
         document.object_details.len(),

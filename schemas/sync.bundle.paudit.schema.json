@@ -118,6 +118,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "verification_status",
         "pack_version",
         "declared_object_count",
         "processed_object_count",
@@ -126,6 +127,13 @@
         "trailer_pack_checksum"
       ],
       "properties": {
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed"
+          ]
+        },
         "pack_version": {
           "type": "integer",
           "minimum": 2

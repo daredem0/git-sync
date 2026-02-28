@@ -591,6 +591,7 @@ fn verify_pack_payload(pack_data: &[u8]) -> Result<PayloadPackProof> {
     }
 
     Ok(PayloadPackProof {
+        verification_status: "ok".to_string(),
         pack_version,
         declared_object_count,
         processed_object_count,

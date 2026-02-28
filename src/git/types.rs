@@ -239,6 +239,8 @@ pub struct PayloadAuditPackSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Pack-level proof metrics emitted for pre-transfer completeness auditing.
 pub struct PayloadPackProof {
+    /// Explicit verification result for PACK completeness/integrity checks.
+    pub verification_status: String,
     /// PACK format version parsed from pack header.
     pub pack_version: u32,
     /// Number of objects declared by PACK header.

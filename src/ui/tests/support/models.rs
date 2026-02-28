@@ -34,6 +34,7 @@ fn sample_payload_audit() -> git::PayloadAudit {
             },
         ],
         pack_proof: git::PayloadPackProof {
+            verification_status: "ok".to_string(),
             pack_version: 2,
             declared_object_count: 2,
             processed_object_count: 2,
