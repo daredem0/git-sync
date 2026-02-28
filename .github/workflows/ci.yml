@@ -308,6 +308,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download debug binary artifact
         uses: actions/download-artifact@v4
         with:
@@ -354,11 +357,34 @@ jobs:
           cp dist/docs-html/*.tar.gz dist/release-assets/
           cp dist/coverage-lcov/* dist/release-assets/
 
+      - name: Extract release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          TAG_RE="$(printf '%s' "${TAG}" | sed -E 's/[][(){}.^$*+?|\\/]/\\&/g')"
+          VERSION_RE="$(printf '%s' "${VERSION}" | sed -E 's/[][(){}.^$*+?|\\/]/\\&/g')"
+          awk -v tag_re="${TAG_RE}" -v version_re="${VERSION_RE}" '
+            BEGIN {
+              capture = 0;
+              match_header = "^## \\[(" tag_re "|" version_re ")\\]";
+            }
+            $0 ~ "^## \\[" && capture && $0 !~ match_header { exit }
+            $0 ~ match_header { capture = 1 }
+            capture { print }
+          ' CHANGELOG.md > dist/release-notes.md
+
+          if ! grep -q '[^[:space:]]' dist/release-notes.md; then
+            echo "No CHANGELOG section found for tag ${TAG} (or ${VERSION})." >&2
+            exit 1
+          fi
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: dist/release-notes.md
           overwrite_files: true
           fail_on_unmatched_files: true
           files: |
