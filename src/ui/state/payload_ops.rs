@@ -127,7 +127,10 @@ impl AppState {
                             "none".to_string(),
                         )
                     };
-                let max_line_width = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+                let line_no_width = line_number_width(lines.len());
+                let line_no_gutter_width = line_no_width + 3;
+                let max_line_width =
+                    lines.iter().map(|line| line.width()).max().unwrap_or(0) + line_no_gutter_width;
                 self.payload_object_view = Some(PayloadObjectViewState {
                     oid: detail.oid,
                     kind: detail.kind,
@@ -208,6 +211,17 @@ impl AppState {
             view.scroll_y = 0;
         }
     }
+}
+
+/// Computes the number of digits needed for line-number gutters.
+fn line_number_width(total_lines: usize) -> usize {
+    let mut n = total_lines.max(1);
+    let mut digits = 1usize;
+    while n >= 10 {
+        n /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 /// Builds a compact preview payload for the selected object on the payload main page.

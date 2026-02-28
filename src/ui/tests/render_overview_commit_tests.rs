@@ -104,6 +104,7 @@ fn render_page_in_payload_view_shows_payload_screen() {
     let model = sample_model(1, 1);
     let mut state = super::super::types::AppState::new(&model);
     state.main_view = super::super::types::MainView::Payload;
+    state.refresh_payload_preview(&model);
 
     let output = render_and_capture_text(140, 40, |frame| {
         render_page(frame, &model, &state);
@@ -155,6 +156,14 @@ fn render_page_in_payload_view_shows_blob_preview_metadata() {
     assert!(
         output.contains("blob paths:"),
         "blob preview should list reachable paths for the selected blob object"
+    );
+    assert!(
+        !output.contains("1 │ selected:"),
+        "preview metadata/header lines should not receive line-number gutters"
+    );
+    assert!(
+        output.contains("1 │ fn value()"),
+        "preview should line-number actual text content lines"
     );
 }
 
@@ -209,6 +218,10 @@ fn render_page_in_payload_object_detail_mode_shows_object_content() {
     assert!(
         output.contains("Object Content"),
         "payload object detail render should include object content section"
+    );
+    assert!(
+        output.contains("1 │"),
+        "payload object detail should render line-number gutters"
     );
 }
 

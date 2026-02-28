@@ -5,8 +5,8 @@ use crate::git::PayloadObjectKind;
 use crate::ui::types::{AppState, AuditModel, PayloadModel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::FontStyle;
@@ -195,6 +195,7 @@ fn render_visible_plain_lines(
             .map(|line| Line::from(line.to_string()))
             .collect::<Vec<_>>();
     };
+    let line_no_width = line_number_width(lines.len().saturating_sub(start_index));
 
     let (syntax, _syntax_name) = highlighter.resolve_syntax_for_path(path_hint);
     let mut syntax_state = HighlightLines::new(syntax, &highlighter.theme);
@@ -205,6 +206,7 @@ fn render_visible_plain_lines(
             rendered.push(Line::from(raw_line.to_string()));
             continue;
         }
+        let line_no = index - start_index + 1;
 
         let mut highlight_input = String::with_capacity(raw_line.len() + 1);
         highlight_input.push_str(raw_line);
@@ -235,7 +237,7 @@ fn render_visible_plain_lines(
             }
             _ => vec![ratatui::text::Span::raw(raw_line.to_string())],
         };
-        rendered.push(Line::from(spans));
+        rendered.push(numbered_styled_line(line_no, line_no_width, spans));
     }
 
     rendered
@@ -354,7 +356,7 @@ fn render_payload_object_detail(frame: &mut Frame<'_>, state: &AppState) {
     .block(Block::default().borders(Borders::ALL).title("git-sync"));
     frame.render_widget(header, chunks[0]);
 
-    let detail_text = ratatui::text::Text::from(view.lines.clone());
+    let detail_text = ratatui::text::Text::from(numbered_lines(&view.lines));
     let detail = Paragraph::new(detail_text)
         .block(
             Block::default()
@@ -370,6 +372,50 @@ fn render_payload_object_detail(frame: &mut Frame<'_>, state: &AppState) {
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[2]);
+}
+
+/// Prefixes a styled line with a line-number gutter.
+fn numbered_styled_line(
+    line_no: usize,
+    width: usize,
+    content: Vec<Span<'static>>,
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(content.len() + 1);
+    spans.push(Span::styled(
+        format!("{line_no:>width$} │ "),
+        Style::default().fg(Color::DarkGray),
+    ));
+    spans.extend(content);
+    Line::from(spans)
+}
+
+/// Adds line-number gutters to rendered payload object detail lines.
+fn numbered_lines(lines: &[Line<'static>]) -> Vec<Line<'static>> {
+    let width = line_number_width(lines.len());
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(Span::styled(
+                format!("{:>width$} │ ", index + 1),
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.extend(line.spans.clone());
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Computes the number of digits needed for line-number gutters.
+fn line_number_width(total_lines: usize) -> usize {
+    let mut n = total_lines.max(1);
+    let mut digits = 1usize;
+    while n >= 10 {
+        n /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 /// Returns compact display label for payload object kind.
