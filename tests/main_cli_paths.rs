@@ -376,22 +376,39 @@ fn audit_non_interactive_payload_table_output_succeeds() {
 
     let lines = stdout_first.lines().collect::<Vec<_>>();
     assert!(
-        lines.len() >= 2,
-        "payload table output should include title and header rows"
+        lines.len() >= 6,
+        "payload table output should include proof, transport, and object sections"
     );
     assert!(
-        lines[0].starts_with("PACK OBJECTS (bundle "),
-        "first row should be the payload table title"
+        lines[0].starts_with("PACK PROOF status="),
+        "first row should be the pack-proof summary"
     );
     assert!(
-        lines[1].contains("OID")
-            && lines[1].contains("TYPE")
-            && lines[1].contains("SIZE")
-            && lines[1].contains("REACHABLE"),
-        "payload table output should include object table headers"
+        lines[1].starts_with("PACK CHECKSUM computed="),
+        "second row should be the pack-checksum summary"
+    );
+    assert!(
+        lines.iter().any(|line| *line == "TRANSPORT ENTRIES"),
+        "table output should include a transport entry section"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("PACK OBJECTS (bundle ")),
+        "table output should include a pack-object section title"
     );
 
-    let header = lines[1];
+    let pack_header_index = lines
+        .iter()
+        .position(|line| {
+            line.contains("OID")
+                && line.contains("TYPE")
+                && line.contains("SIZE")
+                && line.contains("REACHABLE")
+        })
+        .expect("payload table output should include object table headers");
+
+    let header = lines[pack_header_index];
     let oid_column = header
         .find("OID")
         .expect("header should include OID column");
@@ -409,7 +426,7 @@ fn audit_non_interactive_payload_table_output_succeeds() {
         "payload table header columns should be rendered left-to-right in fixed order"
     );
 
-    for row in lines.iter().skip(2) {
+    for row in lines.iter().skip(pack_header_index + 1) {
         if row.trim().is_empty() || *row == "(no pack objects)" {
             continue;
         }
@@ -519,6 +536,10 @@ fn audit_non_interactive_payload_json_output_succeeds() {
         "payload json output should include transport_entries section"
     );
     assert!(
+        value.get("pack_proof").is_some(),
+        "payload json output should include pack_proof section"
+    );
+    assert!(
         value.get("pack_summary").is_some(),
         "payload json output should include pack_summary section"
     );
@@ -550,6 +571,10 @@ fn audit_non_interactive_payload_json_output_succeeds() {
             .iter()
             .all(|detail| detail.get("lines").is_some() && detail["lines"].is_array()),
         "payload json object_details rows should include textual lines arrays"
+    );
+    assert_eq!(
+        value["pack_proof"]["declared_object_count"], value["pack_proof"]["processed_object_count"],
+        "pack proof should report equal declared and processed object counts"
     );
     assert_eq!(
         value["schema_version"],

@@ -199,6 +199,7 @@ fn payload_audit_schema_declares_phase2_required_fields() {
         "prerequisites",
         "heads",
         "transport_entries",
+        "pack_proof",
         "pack_summary",
         "pack_objects",
         "object_details",
@@ -253,6 +254,10 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
         document.pack_summary.total_objects,
         document.pack_objects.len(),
         "pack_summary.total_objects must match pack_objects length"
+    );
+    assert_eq!(
+        document.pack_proof.declared_object_count, document.pack_proof.processed_object_count,
+        "pack proof declared and processed object counts must match"
     );
     assert_eq!(
         document.object_details.len(),
@@ -319,4 +324,97 @@ fn build_payload_audit_document_for_bundle_input_sorts_transport_entries_by_name
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload audit fails closed when PACK declared object count does not match processable objects.
+#[test]
+fn collect_payload_audit_for_bundle_input_rejects_pack_count_mismatch() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-pack-count-mismatch", false);
+
+    let original_bytes =
+        std::fs::read(&bundle_result.bundle_path).expect("must read original bundle bytes");
+    let pack_offset = original_bytes
+        .windows(4)
+        .position(|window| window == b"PACK")
+        .expect("bundle must contain PACK payload");
+    let mut tampered = original_bytes.clone();
+    let declared_count = u32::from_be_bytes([
+        tampered[pack_offset + 8],
+        tampered[pack_offset + 9],
+        tampered[pack_offset + 10],
+        tampered[pack_offset + 11],
+    ]);
+    let tampered_count = declared_count
+        .checked_add(1)
+        .expect("declared count increment should not overflow");
+    tampered[pack_offset + 8..pack_offset + 12].copy_from_slice(&tampered_count.to_be_bytes());
+    let tampered_path = repo_dir.join("tampered-count.bundle");
+    std::fs::write(&tampered_path, tampered).expect("must write tampered bundle");
+
+    let result = collect_payload_audit_for_bundle_input(&tampered_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "payload audit must reject bundles where declared PACK object count mismatches processed entries"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload audit rejects ref-delta entries whose base object is not present in PACK payload.
+#[test]
+fn collect_payload_audit_for_bundle_input_rejects_unresolved_ref_delta_base() {
+    let repo_dir = temp_repo_dir("payload-unresolved-ref-delta");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&1u32.to_be_bytes());
+    // Entry header: type=REF_DELTA (7), size=0, no continuation.
+    pack_prefix.push(0x70);
+    // Missing base OID (not present in this pack).
+    pack_prefix.extend_from_slice(&[0x11; 20]);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join("unresolved-ref-delta.bundle");
+    std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic bundle");
+
+    let result = collect_payload_audit_for_bundle_input(&bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "payload audit must reject unresolved ref-delta bases to enforce fail-closed behavior"
+    );
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("result should be an error for unresolved ref-delta base")
+    );
+    assert!(
+        error_text.contains("unresolved base") || error_text.contains("thin pack"),
+        "error should explain unresolved external delta dependency"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
+    let mut ctx = std::mem::MaybeUninit::<openssl_sys::SHA_CTX>::uninit();
+    let init_ok = unsafe { openssl_sys::SHA1_Init(ctx.as_mut_ptr()) } == 1;
+    assert!(init_ok, "sha1 init should succeed in test helper");
+    let mut ctx = unsafe { ctx.assume_init() };
+    let update_ok =
+        unsafe { openssl_sys::SHA1_Update(&mut ctx, bytes.as_ptr().cast(), bytes.len()) } == 1;
+    assert!(update_ok, "sha1 update should succeed in test helper");
+    let mut digest = [0u8; 20];
+    let final_ok = unsafe { openssl_sys::SHA1_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
+    assert!(final_ok, "sha1 final should succeed in test helper");
+    digest
 }

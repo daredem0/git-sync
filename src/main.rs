@@ -269,8 +269,60 @@ fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
             .unwrap_or(0),
     );
     let reachable_width = std::cmp::max(reachable_header.len(), 9);
+    let transport_name_header = "NAME";
+    let transport_size_header = "SIZE";
+    let transport_sha_header = "SHA256";
+    let transport_name_width = std::cmp::max(
+        transport_name_header.len(),
+        payload
+            .transport_entries
+            .iter()
+            .map(|entry| entry.name.len())
+            .max()
+            .unwrap_or(0),
+    );
+    let transport_size_width = std::cmp::max(
+        transport_size_header.len(),
+        payload
+            .transport_entries
+            .iter()
+            .map(|entry| entry.size_bytes.to_string().len())
+            .max()
+            .unwrap_or(0),
+    );
 
     let mut out = String::new();
+    let proof_ok = payload.pack_proof.declared_object_count
+        == payload.pack_proof.processed_object_count
+        && payload.pack_proof.computed_pack_checksum == payload.pack_proof.trailer_pack_checksum;
+    out.push_str(&format!(
+        "PACK PROOF status={} version={} declared={} processed={} hash={}\n",
+        if proof_ok { "ok" } else { "failed" },
+        payload.pack_proof.pack_version,
+        payload.pack_proof.declared_object_count,
+        payload.pack_proof.processed_object_count,
+        payload.pack_proof.hash_algorithm
+    ));
+    out.push_str(&format!(
+        "PACK CHECKSUM computed={} trailer={}\n",
+        payload.pack_proof.computed_pack_checksum, payload.pack_proof.trailer_pack_checksum
+    ));
+    out.push('\n');
+    out.push_str("TRANSPORT ENTRIES\n");
+    out.push_str(&format!(
+        "{:<transport_name_width$}  {:>transport_size_width$}  {}\n",
+        transport_name_header, transport_size_header, transport_sha_header
+    ));
+    for entry in &payload.transport_entries {
+        out.push_str(&format!(
+            "{:<transport_name_width$}  {:>transport_size_width$}  {}\n",
+            entry.name, entry.size_bytes, entry.sha256
+        ));
+    }
+    if payload.transport_entries.is_empty() {
+        out.push_str("(no transport entries)\n");
+    }
+    out.push('\n');
     out.push_str(&format!(
         "PACK OBJECTS (bundle {}, heads={})\n",
         match payload.bundle_version {

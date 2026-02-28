@@ -88,6 +88,8 @@ pub struct PayloadAudit {
     pub heads: Vec<BundleHead>,
     /// Top-level transport archive entries with integrity metadata.
     pub transport_entries: Vec<PayloadTransportEntry>,
+    /// Verifiable PACK-level completeness and integrity metrics.
+    pub pack_proof: PayloadPackProof,
     /// All imported objects collected from the bundle pack payload.
     pub objects: Vec<PayloadObjectEntry>,
 }
@@ -183,6 +185,8 @@ pub struct PayloadAuditDocument {
     pub heads: Vec<PayloadAuditDocumentHead>,
     /// All transport package entries hashed for audit.
     pub transport_entries: Vec<PayloadAuditDocumentTransportEntry>,
+    /// PACK-level completeness and integrity proof metrics.
+    pub pack_proof: PayloadPackProof,
     /// Aggregate object-count summary by type/reachability.
     pub pack_summary: PayloadAuditPackSummary,
     /// Per-object listing from payload object enumeration.
@@ -230,6 +234,23 @@ pub struct PayloadAuditPackSummary {
     pub tag_objects: usize,
     /// Unknown object count.
     pub unknown_objects: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Pack-level proof metrics emitted for pre-transfer completeness auditing.
+pub struct PayloadPackProof {
+    /// PACK format version parsed from pack header.
+    pub pack_version: u32,
+    /// Number of objects declared by PACK header.
+    pub declared_object_count: usize,
+    /// Number of objects fully processed by parser/verifier.
+    pub processed_object_count: usize,
+    /// Hash algorithm used for pack trailer/object IDs.
+    pub hash_algorithm: String,
+    /// SHA-1 of all pack bytes except trailer (computed locally).
+    pub computed_pack_checksum: String,
+    /// SHA-1 trailer checksum embedded in PACK payload.
+    pub trailer_pack_checksum: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

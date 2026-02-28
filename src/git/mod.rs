@@ -32,8 +32,8 @@ pub use types::{
     OpenContext, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
     PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
     PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
-    PayloadObjectEntry, PayloadObjectKind, PayloadTransportEntry, ReceiveBundleOptions,
-    ReceiveBundleResult,
+    PayloadObjectEntry, PayloadObjectKind, PayloadPackProof, PayloadTransportEntry,
+    ReceiveBundleOptions, ReceiveBundleResult,
 };
 
 #[cfg(test)]

@@ -33,6 +33,14 @@ fn sample_payload_audit() -> git::PayloadAudit {
                     .to_string(),
             },
         ],
+        pack_proof: git::PayloadPackProof {
+            pack_version: 2,
+            declared_object_count: 2,
+            processed_object_count: 2,
+            hash_algorithm: "sha1".to_string(),
+            computed_pack_checksum: "cccccccccccccccccccccccccccccccccccccccc".to_string(),
+            trailer_pack_checksum: "cccccccccccccccccccccccccccccccccccccccc".to_string(),
+        },
         objects: vec![
             git::PayloadObjectEntry {
                 oid: oid_from_u64(1000),
