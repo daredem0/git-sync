@@ -112,6 +112,65 @@ fn verify_pack_payload_validates_trailer_checksum() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that PACK proof validation fails closed when a bundle encodes an unsupported pack version.
+#[test]
+fn verify_pack_payload_rejects_unsupported_pack_version() {
+    let repo_dir = temp_repo_dir("payload-proof-unsupported-pack-version");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_pack_bundle(
+        &repo_dir,
+        "unsupported-pack-version.bundle",
+        4,
+        0,
+        &[],
+    )
+    .expect("must write synthetic unsupported-pack-version bundle");
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("unsupported pack version should fail verification");
+    assert!(
+        error.reason.contains("unsupported pack version: 4"),
+        "error should explicitly report unsupported pack version value"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that PACK proof validation rejects unconsumed bytes before trailer checksum.
+#[test]
+fn verify_pack_payload_rejects_trailing_bytes_before_trailer() {
+    let repo_dir = temp_repo_dir("payload-proof-trailing-bytes-before-trailer");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let blob = b"abc\n";
+    let mut pack_body = encode_pack_entry_header(PackEntryKind::Blob, blob.len());
+    pack_body.extend_from_slice(
+        &zlib_compress(blob).expect("must compress blob payload for trailing-bytes fixture"),
+    );
+    pack_body.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    let bundle_path = write_synthetic_pack_bundle(
+        &repo_dir,
+        "trailing-bytes-before-trailer.bundle",
+        2,
+        1,
+        &pack_body,
+    )
+    .expect("must write synthetic trailing-bytes bundle");
+
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("trailing bytes before trailer must fail verification");
+    assert!(
+        error
+            .reason
+            .contains("pack contains trailing or unconsumed bytes before trailer"),
+        "error should explicitly report trailing/unconsumed bytes before trailer"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit accepts repositories with explicit sha1 object format configuration.
 #[test]
 fn payload_audit_accepts_explicit_sha1_repo_object_format() {
@@ -1509,6 +1568,32 @@ fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
     let final_ok = unsafe { openssl_sys::SHA1_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
     assert!(final_ok, "sha1 final should succeed in test helper");
     digest
+}
+
+fn write_synthetic_pack_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+    pack_version: u32,
+    declared_entries: u32,
+    pack_body: &[u8],
+) -> anyhow::Result<std::path::PathBuf> {
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&pack_version.to_be_bytes());
+    pack_prefix.extend_from_slice(&declared_entries.to_be_bytes());
+    pack_prefix.extend_from_slice(pack_body);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
 }
 
 fn write_synthetic_ref_delta_bundle(
