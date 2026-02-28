@@ -68,6 +68,12 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         payload_footer.contains("s cycle sort"),
         "payload mode footer should include sort-cycle key hint"
     );
+    for line in payload_footer.lines() {
+        assert!(
+            line.chars().count() <= 110,
+            "payload footer line exceeds 110 columns: {line}"
+        );
+    }
 
     state.payload_sub_view = PayloadSubView::Entries;
     let entries_footer = render_footer_text(&state);
@@ -79,6 +85,12 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         !entries_footer.contains("s cycle sort"),
         "payload entries footer should not include object-sort hint"
     );
+    for line in entries_footer.lines() {
+        assert!(
+            line.chars().count() <= 110,
+            "payload entries footer line exceeds 110 columns: {line}"
+        );
+    }
 }
 
 // Verifies that help text content changes between page mode and diff mode.

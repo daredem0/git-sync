@@ -43,10 +43,12 @@ All command examples below use `git-sync` directly.
 
 ## Typical Workflow
 
-Core workflow is steps 1, 2, 4, 5, and 6 below.  
-Step 3 and the non-interactive audit section are optional evidence/reporting paths.
+The primary workflow has three steps:
+1. create bundle package
+2. audit bundle package (before transfer)
+3. receive bundle package (optionally `--dry-run` first)
 
-### 1) Create package on source side
+### 1) Create bundle package (source side)
 
 ```bash
 git-sync create \
@@ -56,7 +58,191 @@ git-sync create \
   --output sync.bundle
 ```
 
-Include a patch sidecar:
+Output: `sync.bundle.zip`
+
+### 2) Audit bundle package before transfer (source side, interactive)
+
+```bash
+git-sync audit \
+  --repo /path/to/source-repo \
+  --bundle /path/to/sync.bundle.zip
+```
+
+This is the control gate for air-gap transfer.  
+Audit verifies metadata automatically and lets the reviewer inspect history and full payload.
+
+#### Audit UI pages (what to review)
+
+1. Main overview (`1`)
+- `General`: context (tool/repo/bundle refs)
+- `Bundle Integrity`: proof and safety status
+- `Heads To Import`: advertised refs
+- `Would Change`: per-file line impact for selected head
+
+2. Commit detail (`3` or `Enter` on selected head)
+- per-commit reviewer view (`commit id`, subject, author/committer identity/time)
+- changed files with line counts
+- `Enter` on file opens diff view
+
+3. Payload page (`2` or `v`)
+- transport entries (zip contents, size, SHA256)
+- `Objects` subview: materialized object inventory (review convenience)
+- `Entries` subview: authoritative PACK-entry ledger (proof source)
+- object/entry preview and object detail drilldown
+
+#### Audit page previews
+
+Main overview:
+
+```text
+┌git-sync──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Audit Overview (page 1/1)                                                                                 │
+│This page shows package validity, import heads, and would-change summary                                  │
+│Press 1 main | 2 payload | 3 commit                                                                       │
+│                                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌General────────────────────────────────────────┐┌Bundle Integrity─────────────────────────────────────────┐
+│tool version: 0.6.1-5-ga8365cc-dirty           ││metadata verification: OK                                │
+│repo: . (git-sync)                             ││dry-run applicability: bundle can be applied without     │
+│bundle:                                        ││conflicts                                                │
+│../git-sync-examples/sync_local.bundle.zip     ││pack proof: OK                                           │
+│base_ref: sync/last | tip_ref: -               ││pack entries parsed: 153/153                             │
+│bundle version: v2                             ││pack entries materialized: 153/153                       │
+│advertised heads: 1                            ││transfer gate: allowed                                   │
+│transport entries: 2                           ││pack checksum: match                                     │
+│payload objects: 153                           ││bundle fully reachable from heads: yes                   │
+│                                               ││thin pack detected: no                                   │
+└───────────────────────────────────────────────┘└─────────────────────────────────────────────────────────┘
+┌Heads To Import (bundle v2) [active]───────────┐┌Would Change (selected head: refs/heads/main)────────────┐
+│OID                        REF                 ││PATH                                   +LINES    -LINES  │
+│05b1f9a42fd3831e72f1487e7  refs/heads/main     ││Cargo.lock                             333       0       │
+│                                               ││Cargo.toml                             2         0       │
+│                                               ││LICENSE                                201       0       │
+│                                               ││README.md                              203       9       │
+│                                               ││schemas/sync.bundle.caudit.schema.jso  278       0       │
+│                                               ││scripts/generate-merge-graph-repo.sh   158       0       │
+│                                               ││src/cli.rs                             166       7       │
+│                                               ││src/git/archive.rs                     178       0       │
+│                                               ││src/git/bundle/create.rs               161       0       │
+│                                               ││src/git/bundle/inspect.rs              72        0       │
+│                                               ││src/git/bundle/mod.rs                  13        0       │
+└───────────────────────────────────────────────┘└─────────────────────────────────────────────────────────┘
+Tab switch heads/would-change focus | j/k or Up/Down move selection                                         
+v toggle history/payload | Enter open selected head | Esc overview/quit | ? help | q quit                   
+```
+
+Commit detail:
+
+```text
+┌Commit Detail─────────────────────────────────────────────────────────────────────────────────────────────┐
+│Head 1/1 | refs/heads/main                                                                                │
+│Commit 3/13 | 7146b57b194992e81e7c5b47ea7fcfd47a78fbaa                                                    │
+│Change: Generate zip file containing artifacts                                                            │
+│Press 1 main | 2 payload | 3 commit                                                                       │
+│committer date: 1772217612 (UTC+01:00)                                                                    │
+│committer: Florian Leuze <f.leuze@outlook.de>                                                             │
+│author date: 1772217612 (UTC+01:00)                                                                       │
+│author: Florian Leuze <f.leuze@outlook.de>                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Changed Files (this commit)───────────────────────────────────────────────────────────────────────────────┐
+│PATH                                                                                    +LINES    -LINES  │
+│Cargo.lock                                                                              332       0       │
+│Cargo.toml                                                                              1         0       │
+│README.md                                                                               16        1       │
+│schemas/sync.bundle.caudit.schema.json                                                  10        0       │
+│src/cli.rs                                                                              2         0       │
+│src/git/mod.rs                                                                          269       11      │
+│src/git/tests.rs                                                                        153       0       │
+│src/main.rs                                                                             62        30      │
+│                                                                                                          │
+│                                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+h/Left prev page | l/Right next page | j/k or Up/Down move selection                                        
+Enter open selected diff | Esc overview/quit | ? help | q quit                                              
+```
+
+Payload page:
+
+```text
+┌git-sync─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Payload View                                                                                             │
+│Press 1 main | 2 payload | 3 commit                                                                      │
+│status: ok | pack version: 2                                                                             │
+│entries: 153/153 | materialized: 153/153                                                                 │
+│unique objects: 153 | duplicates: 0                                                                      │
+│transfer: allowed | hash: sha1 | checksum: ok                                                            │
+│thin pack: no | baseline resolutions: 0                                                                  │
+│computed checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                              │
+│trailer checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                               │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Transport Entries──────────────────────────────┐┌Pack Preview────────────────────────────────────────────┐
+│ENTRY                  SIZE       SHA256       ││selected: 05b1f9a42fd3831e72f1487e760b635461956bae (comm│
+│sync_local.bundle      110458     6bd8c0359321 ││reachable from heads: yes                               │
+└───────────────────────────────────────────────┘│context head: #1                                        │
+┌Pack Objects (153 total, 1 heads, sort: canonic┐│context commit order: 1                                 │
+│OID          TYPE     SIZE       REACHABLE     ││context path: -                                         │
+│05b1f9a42fd3 commit   768        yes           ││                                                        │
+│1b91006ee9d4 commit   676        yes           ││commit 05b1f9a42fd3831e72f1487e760b635461956bae         │
+│2983f7913a8d commit   283        yes           ││tree 253304710bf320637a58b25b114389753233d5bd           │
+│30b9dd00d4ca commit   267        yes           ││parent 4f0388416d0ceeb327e65cdffa61e0e1b8476368         │
+│440ec8ae7645 commit   261        yes           ││... (11 more lines)                                     │
+└───────────────────────────────────────────────┘└────────────────────────────────────────────────────────┘
+j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries                 
+Enter open object detail | v toggle history/payload | ? help | q quit                                      
+```
+
+#### Audit values auditors should use as decision gates
+
+In **Bundle Integrity**, these values are critical:
+- `metadata verification: OK`
+  - sidecar metadata is consistent with repository truth.
+- `pack proof: OK`
+  - PACK parsing/invariant checks passed.
+- `pack entries parsed: N/N`
+  - every declared PACK entry was parsed.
+- `pack entries materialized: N/N`
+  - every declared entry was reconstructed/materialized under policy.
+- `pack checksum: match`
+  - audited bytes match trailer checksum.
+- `transfer gate: allowed`
+  - final fail-closed gate; transfer should proceed only when allowed.
+- `bundle fully reachable from heads: yes|no`
+  - if `no`, commit pages are not sufficient alone; reviewer must inspect payload view.
+
+#### How an auditor validates what they see is proof-backed
+
+Use this sequence:
+1. Confirm `pack proof: OK`, `parsed N/N`, `materialized N/N`, and `checksum match`.
+2. Inspect `Entries` subview in payload page for authoritative PACK-entry coverage.
+3. Use `Objects`/commit/diff views for human-readable content review.
+4. Require `transfer gate: allowed` before export across the air gap.
+
+### 3) Receive bundle package (target side)
+
+Apply:
+
+```bash
+git-sync receive \
+  --repo /path/to/receiver-repo \
+  --bundle /path/to/sync.bundle.zip \
+  --verify-metadata
+```
+
+Dry-run first (recommended):
+
+```bash
+git-sync receive \
+  --repo /path/to/receiver-repo \
+  --bundle /path/to/sync.bundle.zip \
+  --verify-metadata \
+  --dry-run
+```
+
+## Additional Commands
+
+### Create with patch sidecar
+
+Adds `<name>.bundle.caudit.patch` to the zip package:
 
 ```bash
 git-sync create \
@@ -67,53 +253,20 @@ git-sync create \
   --with-patches
 ```
 
-This produces `sync.bundle.zip`.
+### Metadata-only verification (non-interactive)
 
-### 2) Audit package on source side before transfer (TUI)
-
-```bash
-git-sync audit \
-  --repo /path/to/source-repo \
-  --bundle /path/to/sync.bundle.zip
-```
-
-This opens a terminal UI with:
-- history overview (verification status, heads to import, dry-run summary)
-- history commit pages with per-file line stats and file-level diff viewer
-- payload view (transport entries + full pack-object inventory + object preview/detail)
-
-Use this step to confirm exactly what would leave the source network.  
-Interactive `audit` verifies package metadata against the provided `--repo` automatically.
-
-### 3) Optional: verify metadata against source repository truth (auditor evidence)
-
-Interactive audit already performs this check.  
-Use this explicit non-interactive command when you need a dedicated pass/fail check (exit code + message):
+Useful for CI/policy gates that need pass/fail exit codes:
 
 ```bash
 git-sync audit \
-  --bundle sync.bundle.zip \
+  --bundle /path/to/sync.bundle.zip \
   --repo /path/to/source-repo \
   --verify-metadata
 ```
 
-### 4) Transfer package across the air gap
+### Non-interactive payload audit output
 
-Move `sync.bundle.zip` to the disconnected target side using your approved transfer method.
-
-### 5) Audit package on target side after transfer (TUI, recommended)
-
-```bash
-git-sync audit \
-  --repo /path/to/target-repo \
-  --bundle /path/to/sync.bundle.zip
-```
-
-On target side, `--repo` provides the receiver context used for applicability and dry-run checks.
-
-### Optional) Non-interactive payload audit output (not part of core workflow)
-
-Table output:
+Human-readable table:
 
 ```bash
 git-sync audit \
@@ -123,7 +276,7 @@ git-sync audit \
   --resolve pack-only
 ```
 
-JSON output:
+JSON evidence output:
 
 ```bash
 git-sync audit \
@@ -134,7 +287,7 @@ git-sync audit \
   --resolve pack-only
 ```
 
-Full ledger JSON output:
+Full ledger JSON:
 
 ```bash
 git-sync audit \
@@ -145,11 +298,7 @@ git-sync audit \
   --resolve baseline
 ```
 
-What this reports:
-- transport entries (`name`, `size_bytes`, `sha256`)
-- PACK proof metrics (`entries_declared`, `entries_parsed`, `entries_materialized`, `checksum_verified`, `thin_pack_detected`, `baseline_resolutions_count`, transfer gate status, checksum fields)
-- entry-ledger truth section (`entry_ledger`) in summary or full mode
-- materialized object inventory and per-object details
+`--format json` includes proof fields, counters, transport entries, and payload sections suitable for archival/reporting.
 
 ## Audit Completeness Guarantee (PACK-Level, Fail-Closed)
 
@@ -188,324 +337,42 @@ Result:
   - declared-count/checksum/parse invariants break and audit blocks transfer
 - unreachable objects are still covered, because proof is PACK-entry-based, not reachability-based
 
-### 6) Receive into target repository
-
-```bash
-git-sync receive \
-  --repo /path/to/receiver-repo \
-  --bundle /path/to/sync.bundle.zip \
-  --verify-metadata
-```
-
-Dry-run receive (no writes to receiver repo):
-
-```bash
-git-sync receive \
-  --repo /path/to/receiver-repo \
-  --bundle /path/to/sync.bundle.zip \
-  --verify-metadata \
-  --dry-run
-```
-
-## Interactive UI Preview
-
-Run the interactive audit UI:
-
-```bash
-git-sync audit --repo /path/to/repo --bundle /path/to/sync.bundle.zip
-```
-
-### Page 1: package overview
-
-Shows:
-- metadata verification result
-- heads to import
-- would-change per-file line summary for the currently selected head
-- total page position in the audit session
-
-Preview:
-```text
-┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
-│Audit Overview (page 1/14)                                                                             │
-│This page shows package validity, import heads, and would-change summary                               │
-│Use h/l or left/right to move pages                                                                    │
-│                                                                                                       │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌General─────────────────────────────────────────┐┌Bundle Integrity─────────────────────────────────────┐
-│tool version: 0.4.0-6-ge879301-dirty            ││metadata verification: OK                            │
-│repo: . (git-sync)                              ││dry-run applicability: bundle can be applied without │
-│bundle:                                         ││conflicts                                            │
-│../git-sync-examples/sync_local.bundle.zip      ││pack proof: OK                                       │
-│base_ref: sync/last | tip_ref: -                ││pack entries parsed: 153/153                         │
-│                                                ││pack checksum: match                                 │
-└────────────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
-┌Heads To Import (bundle v2)──────────────────┐┌Would Change (selected head: refs/heads/main)───────────┐
-│OID                      REF                 ││PATH                                  +LINES    -LINES  │
-│05b1f9a42fd3831e72f1487  refs/heads/main     ││Cargo.lock                            333       0       │
-│                                             ││Cargo.toml                            2         0       │
-│                                             ││LICENSE                               201       0       │
-│                                             ││README.md                             203       9       │
-│                                             ││schemas/sync.bundle.caudit.schema.js  278       0       │
-│                                             ││scripts/generate-merge-graph-repo.sh  158       0       │
-│                                             ││src/cli.rs                            166       7       │
-└─────────────────────────────────────────────┘└────────────────────────────────────────────────────────┘
-Tab/v toggle history/payload | h/Left prev page | l/Right next page | j/k or Up/Down move selection      
-Enter open selected head/diff | Esc overview/quit | ? help | q quit                                                                         
-```
-
-### Page 2..N: commit detail pages
-
-For each commit in the audited range, this page shows:
-- commit position (example: `3/9`)
-- commit id + subject
-- committer date + `name <email>`
-- author date + `name <email>`
-- changed files in that commit with `+LINES` / `-LINES`
-
-Preview:
-```text
-┌Commit Detail──────────────────────────────────────────────────────────────────────────────────────────┐
-│Head 1/1 | refs/heads/main                                                                             │
-│Commit 3/13 | 7146b57b194992e81e7c5b47ea7fcfd47a78fbaa                                                 │
-│Change: Generate zip file containing artifacts                                                         │
-│committer date: 1772217612 (UTC+01:00)                                                                 │
-│committer: Florian Leuze <f.leuze@outlook.de>                                                          │
-│author date: 1772217612 (UTC+01:00)                                                                    │
-│author: Florian Leuze <f.leuze@outlook.de>                                                             │
-│Changed files: 8                                                                                       │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌Changed Files (this commit)────────────────────────────────────────────────────────────────────────────┐
-│PATH                                                                                 +LINES    -LINES  │
-│Cargo.lock                                                                           332       0       │
-│Cargo.toml                                                                           1         0       │
-│README.md                                                                            16        1       │
-│schemas/sync.bundle.caudit.schema.json                                               10        0       │
-│src/cli.rs                                                                           2         0       │
-│src/git/mod.rs                                                                       269       11      │
-│src/git/tests.rs                                                                     153       0       │
-│src/main.rs                                                                          62        30      │
-│                                                                                                       │
-│                                                                                                       │
-│                                                                                                       │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-h/Left prev page | l/Right next page | j/k or Up/Down move selection                                     
-Enter open selected head/diff | Esc overview/quit | ? help | q quit                                                                      
-```
-
-### Diff view (opened from commit page with `Enter`)
-
-This view opens on top of the commit page for the currently selected file.
-
-It shows:
-- selected commit id and subject
-- selected file path
-- detected syntax name used for highlighting
-- first-parent patch with old/new line number columns
-- diff semantic coloring (`+` / `-` / hunk/header) plus syntax-aware line highlighting
-
-Preview:
-
-```text
-┌Diff View──────────────────────────────────────────────────────────────────────────────────────────────┐
-│Commit 3/13 | 7146b57b194992e81e7c5b47ea7fcfd47a78fbaa                                                 │
-│Change: Generate zip file containing artifacts                                                         │
-│file: src/main.rs                                                                                      │
-│syntax: Rust | selected file index: 8                                                                  │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌Patch (first-parent commit diff)───────────────────────────────────────────────────────────────────────┐
-│              │ diff --git a/src/main.rs b/src/main.rs                                                 │
-│              │ index f669ced..312eb3d 100644                                                          │
-│              │ --- a/src/main.rs                                                                      │
-│              │ +++ b/src/main.rs                                                                      │
-│              │ @@ -9,8 +9,9 @@ use clap::Parser;                                                      │
-│     9      9 │  use cli::{AuditTarget, Cli, Command, OutputFormat, resolve_audit_target};             │
-│    10     10 │  use git::{                                                                            │
-│    11     11 │      CreateBundleOptions, collect_changed_files, create_bundle, create_bundle_with_opti│
-│    12        │ -    render_bundle_inspection_json, render_bundle_inspection_tsv, render_manifest,     │
-│    13        │ -    render_manifest_json, resolve_repo_audit_range,                                   │
-│           12 │ +    remove_unarchived_bundle_artifacts, render_bundle_inspection_json,                │
-│           13 │ +    render_bundle_inspection_tsv, render_manifest, render_manifest_json, resolve_repo_│
-│           14 │ +    verify_bundle_metadata_against_repo,                                              │
-│    14     15 │  };                                                                                    │
-│    15     16 │                                                                                        │
-│    16     17 │  fn main() -> Result<()> {                                                             │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset                
-Esc back | ? help | q quit                                                                                                                     
-```
-
-### Payload view: transport entries + payload proof/data views
-
-This is the authoritative payload-oriented page. It shows:
-- all non-pack transport entries in the `.zip` (name, size, SHA256)
-- `Objects` subview: materialized objects (derived convenience view)
-- `Entries` subview: raw PACK entry ledger rows (authoritative proof view)
-- entry/materialization counters and transfer gate status
-- a right-side preview of the currently selected object
-- sorting modes (`canonical`, `context`) toggled with `s` in `Objects`
-- subview toggle with `e` (`Objects` <-> `Entries`)
-
-```text
-┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
-│Payload View                                                                                           │
-│status: ok | pack version: 2                                                                           │
-│entries: 153/153 | materialized: 153/153                                                               │
-│unique objects: 150 | duplicates: 3                                                                    │
-│transfer: allowed | hash: sha1                                                                         │
-│computed checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                            │
-│trailer checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                             │
-│subview: Objects (toggle: e)                                                                           │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌Transport Entries─────────────────────────────┐┌Pack Preview───────────────────────────────────────────┐
-│ENTRY                  SIZE       SHA256      ││selected: 05b1f9a42fd3831e72f1487e760b635461956bae (com│
-│sync_local.bundle      110458     6bd8c0359321││reachable from heads: yes                              │
-│sync_local.bundle.caud 18799      31f0fde4f62c││context head: #1                                       │
-│                                              ││context commit order: 1                                │
-│                                              ││context path: -                                        │
-│                                              ││                                                       │
-│                                              ││commit 05b1f9a42fd3831e72f1487e760b635461956bae        │
-└──────────────────────────────────────────────┘│tree 253304710bf320637a58b25b114389753233d5bd          │
-┌Pack Objects (153 total, 1 heads, sort: canoni┐│parent 4f0388416d0ceeb327e65cdffa61e0e1b8476368        │
-│OID          TYPE     SIZE       REACHABLE    ││author Florian Leuze <f.leuze@outlook.de> 1772226508 60│
-│05b1f9a42fd3 commit   768        yes          ││committer Florian Leuze <f.leuze@outlook.de> 1772226508│
-│1b91006ee9d4 commit   676        yes          ││                                                       │
-│2983f7913a8d commit   283        yes          ││Change: Add commit-level audit pages in TUI with author│
-│30b9dd00d4ca commit   267        yes          ││                                                       │
-│440ec8ae7645 commit   261        yes          ││- extend commit audit entries to include author/committ│
-│4f0388416d0c commit   776        yes          ││- populate commit metadata in bundle receive/audit coll│
-│7146b57b1949 commit   263        yes          ││- add paged TUI commit detail view and navigation keyma│
-│aa7406fc5178 commit   707        yes          ││- keep `Enter` mapped as planned placeholder for future│
-│b12de2c7d85f commit   681        yes          ││- add tests for commit audit identity propagation and U│
-│c48aebb7fe29 commit   238        yes          ││- restructure README and document interactive audit UI │
-└──────────────────────────────────────────────┘└───────────────────────────────────────────────────────┘
-j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail
-Tab/v toggle history/payload | ? help | q quit
-```
-
-### Payload view: text-blob preview
-
-For text blobs, preview includes syntax-highlighted content with line numbers.  
-Long previews are clipped to the panel height and end with a `... (N more lines)` marker.
-
-```text
-┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
-│Payload View                                                                                           │
-│status: ok | pack version: 2                                                                           │
-│entries: 153/153 | materialized: 153/153                                                               │
-│unique objects: 150 | duplicates: 3                                                                    │
-│transfer: allowed | hash: sha1                                                                         │
-│computed checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                            │
-│trailer checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                             │
-│subview: Objects (toggle: e)                                                                           │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌Transport Entries─────────────────────────────┐┌Pack Preview───────────────────────────────────────────┐
-│ENTRY                  SIZE       SHA256      ││selected: a5a80f9b34c559b03a136a3f49ed54afd04b6071 (blo│
-│sync_local.bundle      110458     6bd8c0359321││reachable from heads: yes                              │
-│sync_local.bundle.caud 18799      31f0fde4f62c││context head: #1                                       │
-│                                              ││context commit order: 13                               │
-│                                              ││context path: src/cli.rs                               │
-│                                              ││                                                       │
-│                                              ││blob a5a80f9b34c559b03a136a3f49ed54afd04b6071          │
-└──────────────────────────────────────────────┘│size: 1173 bytes                                       │
-┌Pack Objects (153 total, 1 heads, sort: canoni┐│content: text                                          │
-│OID          TYPE     SIZE       REACHABLE    ││text lines: 55                                         │
-│89b48508b439 blob     1926       yes          ││blob paths: 1                                          │
-│95cd4b32d619 blob     11521      yes          ││  - src/cli.rs                                         │
-│9a7da6e8d302 blob     79682      yes          ││                                                       │
-│9f57e466885a blob     1738       yes          ││content preview:                                       │
-│a0414395e723 blob     2384       yes          ││1 │ use clap::{Parser, Subcommand, ValueEnum};         │
-│a124a31f37f3 blob     8600       yes          ││2 │ use std::path::PathBuf;                            │
-│a3fbd0afc3a2 blob     5430       yes          ││3 │                                                    │
-│a490598550d5 blob     900        yes          ││4 │ #[derive(Debug, Parser)]                           │
-│a496df290932 blob     64520      yes          ││5 │ #[command(                                         │
-│a5a80f9b34c5 blob     1173       yes          ││... (50 more lines)                                    │
-└──────────────────────────────────────────────┘└───────────────────────────────────────────────────────┘
-j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail
-Tab/v toggle history/payload | ? help | q quit                                                           
-```
-
-### Payload object detail view (opened from payload page with `Enter`)
-
-This is the full object-detail view for the selected pack object.  
-It supports vertical/horizontal scrolling and reuses syntax highlighting for text blobs.
-
-```text
-┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
-│Payload Object Detail                                                                                  │
-│oid: cfa5194207a29d49b430e9fc397207b8740ea2db                                                          │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌Object Content─────────────────────────────────────────────────────────────────────────────────────────┐
-│   1 │ text blob cfa5194207a29d49b430e9fc397207b8740ea2db                                              │
-│   2 │ size: 73071 bytes                                                                               │
-│   3 │ text lines: 1942                                                                                │
-│   4 │                                                                                                 │
-│   5 │ use super::*;                                                                                   │
-│   6 │ use std::path::PathBuf;                                                                         │
-│   7 │                                                                                                 │
-│   8 │ // Verifies that open_context rejects a repository path that does not exist.                    │
-│   9 │ #[test]                                                                                         │
-│  10 │ fn open_context_fails_when_repo_path_does_not_exist() {                                         │
-│  11 │     let repo_path = std::env::temp_dir().join(format!(                                          │
-│  12 │         "git-sync-audit-missing-repo-{}-{}",                                                    │
-│  13 │         std::process::id(),                                                                     │
-│  14 │         std::time::SystemTime::now()                                                            │
-│  15 │             .duration_since(std::time::UNIX_EPOCH)                                              │
-│  16 │             .expect("system clock should be after unix epoch")                                  │
-│  17 │             .as_nanos()                                                                         │
-│  18 │     ));                                                                                         │
-│  19 │                                                                                                 │
-│  20 │     let cfg = AppConfig {                                                                       │
-│  21 │         repo_path,                                                                              │
-│  22 │         bundle_path: PathBuf::from("unused.bundle"),                                            │
-│  23 │         base_ref: "sync/last".to_string(),                                                      │
-│  24 │         tip_ref: None,                                                                          │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset                
-Esc back to payload list | ? help | q quit                                                       
-```
-
 ## Interactive UI Keys
 
-Overview page (page 1):
-- `Tab` / `v`: toggle History and Payload views
-- `1`: switch to History view
-- `2`: switch to Payload view
-- In History view: `j` / `k` selects head, `Enter` opens commit pages for selected head
-- In Payload `Objects` view: `j` / `k` selects object, `PgUp` / `PgDn` jumps by 10 objects, `s` cycles sort mode, `e` toggles subview, `Enter` opens object detail
-- In Payload `Entries` view: `j` / `k` selects entry, `PgUp` / `PgDn` jumps by 10 entries, `e` toggles subview
-
-History commit pages:
-- `h` / `Left`: previous commit page
-- `l` / `Right`: next commit page
-- `j` / `Down`: move changed-file selection down
-- `k` / `Up`: move changed-file selection up
-- `g`: first history page (overview)
-- `G`: last commit page (for selected head)
-- `Enter`: open diff for selected changed file
-- `Esc`: return to overview
-
-Diff view:
-- `j` / `Down`: scroll down
-- `k` / `Up`: scroll up
-- `h` / `Left`: scroll left
-- `l` / `Right`: scroll right
-- `PgUp` / `PgDn`: fast vertical scroll
-- `Home`: reset diff scroll
-- `Esc`: close diff view and return to commit page
-
-Payload object detail view:
-- `j` / `Down`: scroll down
-- `k` / `Up`: scroll up
-- `h` / `Left`: scroll left
-- `l` / `Right`: scroll right
-- `PgUp` / `PgDn`: fast vertical scroll
-- `Home`: reset detail scroll
-- `Esc`: close object detail and return to payload list
-
-Global:
+Main pages:
+- `1`: main overview
+- `2`: payload page
+- `3`: open first commit detail page for selected head
+- `v`: toggle overview <-> payload
 - `?`: toggle help overlay
 - `q`: quit
-- `Esc`: quit from overview/payload main page
+
+Overview:
+- `Tab`: switch focus between `Heads To Import` and `Would Change`
+- `j` / `k`: move selection in focused table
+- `Enter`: open selected head commit detail
+- `Esc`: quit
+
+Commit detail pages:
+- `h` / `Left`: previous commit page (not from first commit to overview)
+- `l` / `Right`: next commit page
+- `j` / `k`: move changed-file selection
+- `Enter`: open diff for selected file
+- `Esc`: return to overview
+
+Diff and payload object detail:
+- `j` / `k`: vertical scroll
+- `h` / `l`: horizontal scroll
+- `PgUp` / `PgDn`: fast scroll
+- `Home`: reset scroll
+- `Esc`: close detail view
+
+Payload page:
+- `e`: toggle `Objects` <-> `Entries`
+- `s`: cycle sort mode (Objects subview only)
+- `j` / `k`: move selected row
+- `PgUp` / `PgDn`: jump 10 rows
+- `Enter`: open selected object detail (Objects subview)
 
 ## Constraints and Behavior Notes
 
@@ -513,8 +380,6 @@ Global:
 - `audit` without `--format` is interactive TUI mode and requires `--repo` and `--bundle`.
 - Interactive `audit` currently supports only `--resolve pack-only`.
 - Interactive `audit` includes metadata verification against the provided `--repo`.
-- Interactive `audit` shows two top-level views: History (head/commit/file diffs) and Payload (transport + pack objects).
-- History pages are head-scoped for multi-head bundles: select a head on overview, then `Enter` to inspect that head's commit chain.
 - Payload view includes both:
   - `Entries` = authoritative PACK-entry proof ledger
   - `Objects` = derived materialized-object convenience view

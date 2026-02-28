@@ -48,7 +48,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     } else if state.main_view == MainView::Payload && state.is_payload_entries_view() {
         "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nv toggle history/payload | ? help | q quit"
     } else if state.main_view == MainView::Payload {
-        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail\nv toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | v toggle history/payload | ? help | q quit"
     } else if state.page_index == 0 {
         "Tab switch heads/would-change focus | j/k or Up/Down move selection\nv toggle history/payload | Enter open selected head | Esc overview/quit | ? help | q quit"
     } else {
