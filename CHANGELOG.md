@@ -7,6 +7,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+- Payload entry-ledger rows now include `reconstructed_size` (in-memory model, JSON export, and schema).
+- Payload `Entries` UI now shows both `HDR_SIZE` and `RECON_SIZE` for clearer audit review.
+
+### Changed
+- Clarified PACK delta size handling in code: delta header size is treated as delta-stream byte length (spec-aligned).
+- Kept reconstructed target size validation via delta-apply checks (fail-closed).
+- Updated payload object index derivation to use reconstructed size for materialized entries.
+
+### Tests
+- Updated payload tests for `reconstructed_size` schema/document requirements.
+- Updated payload tests for delta mismatch error wording (`stream size mismatch`).
+- Updated UI tests for `Entries` table header changes (`HDR_SIZE` and reconstructed-size column).
+
 ## [0.6.1] - 2026-02-28
 
 ### Added

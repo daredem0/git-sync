@@ -194,7 +194,14 @@ fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppSta
                     format!("entry #{}", entry.idx + 1),
                     format!("offset: {}", entry.offset),
                     format!("kind: {}", payload_entry_kind_label(entry.kind)),
-                    format!("out size: {}", entry.out_size),
+                    format!("header size: {}", entry.out_size),
+                    format!(
+                        "reconstructed size: {}",
+                        entry
+                            .reconstructed_size
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ),
                     format!(
                         "base: {}",
                         payload_entry_base_ref_label(entry.base_ref.as_ref())
@@ -313,6 +320,7 @@ fn render_entries_table(
             Cell::from("-"),
             Cell::from("-"),
             Cell::from("-"),
+            Cell::from("-"),
         ])]
     } else {
         entries
@@ -323,6 +331,12 @@ fn render_entries_table(
                     Cell::from(entry.offset.to_string()),
                     Cell::from(payload_entry_kind_label(entry.kind)),
                     Cell::from(entry.out_size.to_string()),
+                    Cell::from(
+                        entry
+                            .reconstructed_size
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    ),
                     Cell::from(payload_entry_base_ref_label(entry.base_ref.as_ref())),
                     Cell::from(
                         entry
@@ -351,6 +365,7 @@ fn render_entries_table(
             Constraint::Length(8),
             Constraint::Length(9),
             Constraint::Length(9),
+            Constraint::Length(11),
             Constraint::Length(16),
             Constraint::Length(12),
             Constraint::Length(8),
@@ -358,7 +373,14 @@ fn render_entries_table(
     )
     .header(
         Row::new(vec![
-            "#", "OFFSET", "KIND", "OUT_SIZE", "BASE", "OID", "RESOLVED",
+            "#",
+            "OFFSET",
+            "KIND",
+            "HDR_SIZE",
+            "RECON_SIZE",
+            "BASE",
+            "OID",
+            "RESOLVED",
         ])
         .style(Style::default().add_modifier(Modifier::BOLD)),
     )

@@ -250,6 +250,8 @@ pub struct PayloadAuditDocumentPackEntry {
     pub kind: String,
     /// Declared output size.
     pub out_size: usize,
+    /// Reconstructed canonical object size in bytes, when materialized.
+    pub reconstructed_size: Option<usize>,
     /// Optional base reference label for delta entries.
     pub base: Option<String>,
     /// Optional canonical object ID when resolved.
@@ -419,8 +421,11 @@ pub struct PackEntryRecord {
     pub offset: usize,
     /// Parsed PACK entry kind.
     pub kind: PackEntryKind,
-    /// Declared output size from PACK entry header.
+    /// Declared size from PACK entry header.
+    /// For non-delta entries this is object size; for delta entries this is delta-stream size.
     pub out_size: usize,
+    /// Reconstructed canonical object size in bytes, when materialized.
+    pub reconstructed_size: Option<usize>,
     /// Optional base reference metadata for delta entries.
     pub base_ref: Option<PackEntryBaseRef>,
     /// Canonical object id once materialized.

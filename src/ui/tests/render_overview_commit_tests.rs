@@ -276,8 +276,12 @@ fn entries_table_renders_expected_headers() {
         "entries subview should render KIND table header"
     );
     assert!(
-        output.contains("OUT_SIZE"),
-        "entries subview should render OUT_SIZE table header"
+        output.contains("HDR_SIZE"),
+        "entries subview should render HDR_SIZE table header"
+    );
+    assert!(
+        output.contains("RECON"),
+        "entries subview should render reconstructed-size table header"
     );
     assert!(
         output.contains("BASE"),

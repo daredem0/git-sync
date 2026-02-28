@@ -271,8 +271,8 @@ fn delta_entry_size_mismatch_blocks_with_entry_context() {
         "size mismatch should block on second entry (ofs-delta row)"
     );
     assert!(
-        error.reason.contains("ofs-delta payload size mismatch"),
-        "error should explicitly report ofs-delta payload size mismatch"
+        error.reason.contains("ofs-delta stream size mismatch"),
+        "error should explicitly report ofs-delta stream size mismatch"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
@@ -964,6 +964,16 @@ fn paudit_schema_requires_transfer_gate_and_entry_counters() {
             "entry_ledger required field list must include '{field}'"
         );
     }
+
+    let pack_entry_required = schema_json["$defs"]["pack_entry"]["required"]
+        .as_array()
+        .expect("pack_entry schema must define required field list");
+    assert!(
+        pack_entry_required
+            .iter()
+            .any(|value| value.as_str() == Some("reconstructed_size")),
+        "pack_entry required field list must include reconstructed_size"
+    );
 }
 
 // Verifies that payload-audit JSON document builder emits required metadata and consistent summary counters.
@@ -1013,6 +1023,14 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
         document.pack_summary.total_objects,
         document.pack_objects.len(),
         "pack_summary.total_objects must match pack_objects length"
+    );
+    assert!(
+        document
+            .entry_ledger
+            .first_entries
+            .iter()
+            .all(|entry| entry.reconstructed_size.is_some()),
+        "summary entry ledger rows should expose reconstructed size for materialized entries"
     );
     assert_eq!(
         document.pack_proof.declared_object_count, document.pack_proof.processed_object_count,

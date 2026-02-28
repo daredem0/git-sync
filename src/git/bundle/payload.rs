@@ -397,6 +397,7 @@ fn document_pack_entry_row(entry: &PackEntryRecord) -> PayloadAuditDocumentPackE
         offset: entry.offset,
         kind: payload_entry_kind_code(entry.kind).to_string(),
         out_size: entry.out_size,
+        reconstructed_size: entry.reconstructed_size,
         base: entry.base_ref.as_ref().map(payload_entry_base_ref_code),
         result_oid: entry.result_oid.map(|oid| oid.to_string()),
         result_kind: entry
@@ -775,7 +776,8 @@ fn verify_pack_payload_impl(
         }
 
         let entry_offset = offset;
-        let (entry_kind, expected_size, header_end) = parse_pack_entry_header(pack_data, offset)
+        let (entry_kind, expected_header_size, header_end) =
+            parse_pack_entry_header(pack_data, offset)
             .map_err(|err| PayloadAuditError {
                 reason: err.to_string(),
                 blocked_entry_idx: Some(processed_object_count),
@@ -785,7 +787,8 @@ fn verify_pack_payload_impl(
             idx: processed_object_count,
             offset: entry_offset,
             kind: entry_kind,
-            out_size: expected_size,
+            out_size: expected_header_size,
+            reconstructed_size: None,
             base_ref: None,
             result_oid: None,
             result_kind: None,
@@ -801,6 +804,7 @@ fn verify_pack_payload_impl(
             | PackEntryKind::Tree
             | PackEntryKind::Blob
             | PackEntryKind::Tag => {
+                let expected_object_size = expected_header_size;
                 let (consumed, content) =
                     decompress_zlib_stream(&pack_data[offset..trailer_offset])
                         .map_err(|err| {
@@ -823,18 +827,19 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                if content.len() != expected_size {
+                if content.len() != expected_object_size {
                     return Err(PayloadAuditError {
                         reason: format!(
                             "pack object size mismatch at object {}: header={}, actual={}",
                             processed_object_count + 1,
-                            expected_size,
+                            expected_object_size,
                             content.len()
                         ),
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger),
                     });
                 }
+                entry_record.reconstructed_size = Some(content.len());
                 ParsedPackObject {
                     kind: pack_entry_kind_to_payload_kind(entry_kind),
                     content,
@@ -902,12 +907,15 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                if delta_bytes.len() != expected_size {
+                let expected_delta_stream_len = expected_header_size;
+                // PACK delta headers encode delta-stream byte length for ofs/ref-delta entries.
+                // Spec: https://git-scm.com/docs/pack-format (Size encoding section).
+                if delta_bytes.len() != expected_delta_stream_len {
                     return Err(PayloadAuditError {
                         reason: format!(
-                            "ofs-delta payload size mismatch at object {}: header={}, actual={}",
+                            "ofs-delta stream size mismatch at object {}: header={}, actual={}",
                             processed_object_count + 1,
-                            expected_size,
+                            expected_delta_stream_len,
                             delta_bytes.len()
                         ),
                         blocked_entry_idx: Some(processed_object_count),
@@ -921,6 +929,7 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger.clone()),
                     }
                 })?;
+                entry_record.reconstructed_size = Some(content.len());
                 ParsedPackObject {
                     kind: base.kind,
                     content,
@@ -995,12 +1004,15 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                if delta_bytes.len() != expected_size {
+                let expected_delta_stream_len = expected_header_size;
+                // PACK delta headers encode delta-stream byte length for ofs/ref-delta entries.
+                // Spec: https://git-scm.com/docs/pack-format (Size encoding section).
+                if delta_bytes.len() != expected_delta_stream_len {
                     return Err(PayloadAuditError {
                         reason: format!(
-                            "ref-delta payload size mismatch at object {}: header={}, actual={}",
+                            "ref-delta stream size mismatch at object {}: header={}, actual={}",
                             processed_object_count + 1,
-                            expected_size,
+                            expected_delta_stream_len,
                             delta_bytes.len()
                         ),
                         blocked_entry_idx: Some(processed_object_count),
@@ -1014,6 +1026,7 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger.clone()),
                     }
                 })?;
+                entry_record.reconstructed_size = Some(content.len());
                 ParsedPackObject {
                     kind: base.kind,
                     content,
@@ -1401,10 +1414,11 @@ fn build_materialized_object_index_from_ledger(
             continue;
         };
         materialized_entry_count += 1;
+        let reconstructed_size = entry.reconstructed_size.unwrap_or(entry.out_size);
         by_oid.entry(oid).or_insert(MaterializedObjectRecord {
             oid,
             kind,
-            size_bytes: entry.out_size,
+            size_bytes: reconstructed_size,
             first_entry_idx: entry.idx,
         });
     }
@@ -1465,6 +1479,7 @@ fn is_materialized_entry(entry: &PackEntryRecord) -> bool {
     entry.resolved
         && entry.result_oid.is_some()
         && entry.result_kind.is_some()
+        && entry.reconstructed_size.is_some()
         && entry.resolved_via.is_some()
 }
 

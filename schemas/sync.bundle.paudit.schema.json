@@ -448,6 +448,7 @@
         "offset",
         "kind",
         "out_size",
+        "reconstructed_size",
         "base",
         "result_oid",
         "result_kind",
@@ -477,6 +478,13 @@
         },
         "out_size": {
           "type": "integer",
+          "minimum": 0
+        },
+        "reconstructed_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "base": {
