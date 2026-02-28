@@ -29,11 +29,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
              Use h/l or left/right to move pages",
         page_label
     ))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("git-sync-audit"),
-    )
+    .block(Block::default().borders(Borders::ALL).title("git-sync"))
     .wrap(Wrap { trim: false });
     frame.render_widget(title, chunks[0]);
 

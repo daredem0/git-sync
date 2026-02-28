@@ -7,14 +7,14 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs");
     println!("cargo:rerun-if-changed=.git/packed-refs");
-    println!("cargo:rerun-if-env-changed=GIT_SYNC_AUDIT_VERSION_OVERRIDE");
+    println!("cargo:rerun-if-env-changed=GIT_SYNC_VERSION_OVERRIDE");
 
     let version = resolve_version();
-    println!("cargo:rustc-env=GIT_SYNC_AUDIT_VERSION={version}");
+    println!("cargo:rustc-env=GIT_SYNC_VERSION={version}");
 }
 
 fn resolve_version() -> String {
-    if let Ok(override_version) = std::env::var("GIT_SYNC_AUDIT_VERSION_OVERRIDE") {
+    if let Ok(override_version) = std::env::var("GIT_SYNC_VERSION_OVERRIDE") {
         let trimmed = override_version.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();

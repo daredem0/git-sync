@@ -6,12 +6,12 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn binary_path() -> &'static str {
-    env!("CARGO_BIN_EXE_git-sync-audit")
+    env!("CARGO_BIN_EXE_git-sync")
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "git-sync-audit-main-cli-{}-{}-{}",
+        "git-sync-main-cli-{}-{}-{}",
         prefix,
         std::process::id(),
         SystemTime::now()
@@ -224,7 +224,7 @@ fn main_without_subcommand_prints_scaffold_message() {
     assert_success(&output, "running binary without subcommand");
     let text = output_text(&output);
     assert!(
-        text.contains("git-sync-audit scaffold is ready."),
+        text.contains("git-sync scaffold is ready."),
         "no-subcommand path should print scaffold status message"
     );
 }
@@ -237,7 +237,7 @@ fn version_flag_prints_version_line() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let line = stdout.trim();
     assert!(
-        line.starts_with("git-sync-audit "),
+        line.starts_with("git-sync "),
         "version output should start with binary name and a space"
     );
     let version_part = line

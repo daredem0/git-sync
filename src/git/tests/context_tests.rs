@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[test]
 fn open_context_fails_when_repo_path_does_not_exist() {
     let repo_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-missing-repo-{}-{}",
+        "git-sync-missing-repo-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -34,7 +34,7 @@ fn open_context_fails_when_repo_path_does_not_exist() {
 #[test]
 fn open_context_fails_when_path_exists_but_is_not_git_repo() {
     let dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-not-a-repo-{}-{}",
+        "git-sync-not-a-repo-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -64,7 +64,7 @@ fn open_context_fails_when_path_exists_but_is_not_git_repo() {
 #[test]
 fn open_context_fails_when_bundle_path_does_not_exist() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-{}-{}",
+        "git-sync-repo-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -93,7 +93,7 @@ fn open_context_fails_when_bundle_path_does_not_exist() {
 #[test]
 fn open_context_fails_when_base_ref_is_missing() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-missing-base-{}-{}",
+        "git-sync-repo-missing-base-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -126,7 +126,7 @@ fn open_context_fails_when_base_ref_is_missing() {
 #[test]
 fn open_context_succeeds_when_base_ref_exists() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-base-exists-{}-{}",
+        "git-sync-repo-base-exists-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -168,7 +168,7 @@ fn open_context_succeeds_when_base_ref_exists() {
 #[test]
 fn open_context_fails_when_tip_ref_is_missing() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-missing-tip-{}-{}",
+        "git-sync-repo-missing-tip-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -213,7 +213,7 @@ fn open_context_fails_when_tip_ref_is_missing() {
 #[test]
 fn open_context_fails_when_base_ref_is_not_a_commit() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-base-not-commit-{}-{}",
+        "git-sync-repo-base-not-commit-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -247,7 +247,7 @@ fn open_context_fails_when_base_ref_is_not_a_commit() {
 #[test]
 fn open_context_fails_when_bundle_file_is_not_a_git_bundle() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-invalid-bundle-{}-{}",
+        "git-sync-repo-invalid-bundle-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -292,7 +292,7 @@ fn open_context_fails_when_bundle_file_is_not_a_git_bundle() {
 #[test]
 fn open_context_fails_when_tip_ref_is_not_a_commit() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-tip-not-commit-{}-{}",
+        "git-sync-repo-tip-not-commit-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -338,7 +338,7 @@ fn open_context_fails_when_tip_ref_is_not_a_commit() {
 #[test]
 fn open_context_succeeds_when_tip_ref_exists() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-tip-exists-{}-{}",
+        "git-sync-repo-tip-exists-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -382,7 +382,7 @@ fn open_context_succeeds_when_tip_ref_exists() {
 #[test]
 fn open_context_returns_resolved_commit_ids() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-returns-context-{}-{}",
+        "git-sync-repo-returns-context-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -483,7 +483,7 @@ fn open_context_returns_resolved_commit_ids() {
 #[test]
 fn open_context_returns_none_tip_commit_id_when_tip_ref_is_not_provided() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-no-tip-{}-{}",
+        "git-sync-repo-no-tip-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -533,7 +533,7 @@ fn open_context_returns_none_tip_commit_id_when_tip_ref_is_not_provided() {
 #[test]
 fn open_context_succeeds_when_bundle_header_is_v3() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-v3-bundle-{}-{}",
+        "git-sync-repo-v3-bundle-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -579,7 +579,7 @@ fn open_context_succeeds_when_bundle_header_is_v3() {
 #[test]
 fn open_context_fails_when_bundle_path_is_directory() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-bundle-dir-{}-{}",
+        "git-sync-repo-bundle-dir-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -624,7 +624,7 @@ fn open_context_fails_when_bundle_path_is_directory() {
 #[test]
 fn open_context_fails_when_tip_ref_is_not_descendant_of_base_ref() {
     let repo_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-repo-tip-not-descendant-{}-{}",
+        "git-sync-repo-tip-not-descendant-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -59,7 +59,7 @@ fn inspect_bundle_parses_created_bundle_metadata() {
 #[test]
 fn inspect_bundle_rejects_invalid_header_signature() {
     let bundle_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-invalid-bundle-header-{}-{}.bundle",
+        "git-sync-invalid-bundle-header-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -141,7 +141,7 @@ fn resolve_repo_audit_range_rejects_non_descendant_tip() {
 #[test]
 fn inspect_bundle_rejects_missing_path() {
     let missing_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-missing-inspect-bundle-{}-{}.bundle",
+        "git-sync-missing-inspect-bundle-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -175,7 +175,7 @@ fn inspect_bundle_rejects_directory_path() {
 #[test]
 fn inspect_bundle_rejects_prerequisite_line_without_oid() {
     let bundle_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-invalid-prereq-line-{}-{}.bundle",
+        "git-sync-invalid-prereq-line-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -198,7 +198,7 @@ fn inspect_bundle_rejects_prerequisite_line_without_oid() {
 #[test]
 fn inspect_bundle_rejects_head_line_without_reference() {
     let bundle_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-invalid-head-line-{}-{}.bundle",
+        "git-sync-invalid-head-line-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -224,7 +224,7 @@ fn inspect_bundle_rejects_head_line_without_reference() {
 #[test]
 fn inspect_bundle_rejects_invalid_oid_tokens() {
     let bundle_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-invalid-head-oid-{}-{}.bundle",
+        "git-sync-invalid-head-oid-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -250,7 +250,7 @@ fn inspect_bundle_rejects_invalid_oid_tokens() {
 #[test]
 fn inspect_bundle_accepts_crlf_line_endings() {
     let bundle_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-crlf-header-{}-{}.bundle",
+        "git-sync-crlf-header-{}-{}.bundle",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

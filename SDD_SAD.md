@@ -1,7 +1,7 @@
 # Software Design and Architecture Description (SDD/SAD)
 
 ## 1. Purpose
-This document describes the current software design of `git-sync-audit` for developers working on the project.
+This document describes the current software design of `git-sync` for developers working on the project.
 
 Scope:
 - command and runtime architecture
@@ -11,7 +11,7 @@ Scope:
 - build/versioning and test strategy
 
 ## 2. System Context
-`git-sync-audit` is an offline-oriented Git transfer and audit tool for air-gap workflows.
+`git-sync` is an offline-oriented Git transfer and audit tool for air-gap workflows.
 
 Primary workflows:
 - create package: `create`
@@ -246,8 +246,8 @@ flowchart TD
 ```
 
 ## 8. Build and Versioning
-- `build.rs` resolves `GIT_SYNC_AUDIT_VERSION` using:
-  - `GIT_SYNC_AUDIT_VERSION_OVERRIDE` env var (if set)
+- `build.rs` resolves `GIT_SYNC_VERSION` using:
+  - `GIT_SYNC_VERSION_OVERRIDE` env var (if set)
   - else `git describe --tags --dirty --always`
   - fallback to `CARGO_PKG_VERSION`
 - CLI `--version` is provided by Clap using `crate::version::APP_VERSION`

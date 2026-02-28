@@ -76,7 +76,7 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
         script_path.display()
     );
 
-    let test_root = unique_temp_dir("git-sync-audit-integration");
+    let test_root = unique_temp_dir("git-sync-integration");
     fs::create_dir_all(&test_root).expect("must create test root dir");
     let fixture_repo = test_root.join("fixture-repo");
     let bundle_path = test_root.join("sync.bundle");

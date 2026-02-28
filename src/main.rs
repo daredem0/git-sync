@@ -1,4 +1,4 @@
-//! CLI entrypoint and command dispatch for git-sync-audit.
+//! CLI entrypoint and command dispatch for git-sync.
 #![doc = include_str!("../README.md")]
 #![doc = "\n\n---\n\n"]
 #![doc = include_str!("../SDD_SAD.md")]
@@ -267,7 +267,7 @@ fn main() -> Result<()> {
             }
         }
         None => {
-            println!("git-sync-audit scaffold is ready.");
+            println!("git-sync scaffold is ready.");
             println!("Use --help to inspect planned commands.");
         }
     }

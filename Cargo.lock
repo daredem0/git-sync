@@ -493,7 +493,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "git-sync-audit"
+name = "git-sync"
 version = "0.2.1"
 dependencies = [
  "anyhow",

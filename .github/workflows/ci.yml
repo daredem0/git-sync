@@ -33,7 +33,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: binary-debug
-          path: target/debug/git-sync-audit
+          path: target/debug/git-sync
           if-no-files-found: error
 
   build-release:
@@ -64,7 +64,7 @@ jobs:
           if TAG="$(git describe --tags --exact-match HEAD 2>/dev/null)"; then
             VERSION="${TAG#v}"
             echo "Building tagged release with version override: ${VERSION}"
-            GIT_SYNC_AUDIT_VERSION_OVERRIDE="${VERSION}" cargo build --locked --release
+            GIT_SYNC_VERSION_OVERRIDE="${VERSION}" cargo build --locked --release
           else
             cargo build --locked --release
           fi
@@ -73,7 +73,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: binary-release
-          path: target/release/git-sync-audit
+          path: target/release/git-sync
           if-no-files-found: error
 
       - name: Upload release package inputs
@@ -81,10 +81,10 @@ jobs:
         with:
           name: release-package-inputs
           path: |
-            target/release/git-sync-audit
-            target/man/git-sync-audit.1.gz
-            target/man/git-sync-audit-readme.7.gz
-            target/man/git-sync-audit-architecture.7.gz
+            target/release/git-sync
+            target/man/git-sync.1.gz
+            target/man/git-sync-readme.7.gz
+            target/man/git-sync-architecture.7.gz
           if-no-files-found: error
 
   test:
@@ -194,7 +194,7 @@ jobs:
         run: ./scripts/verify-tag-version.sh
 
       - name: Build Debian package from prebuilt inputs
-        run: GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-deb.sh
+        run: GIT_SYNC_USE_PREBUILT=1 ./scripts/build-deb.sh
 
       - name: Upload Debian package artifact
         uses: actions/upload-artifact@v4
@@ -234,7 +234,7 @@ jobs:
 
       - name: Build Arch package from prebuilt inputs
         run: |
-          su builder -c "cd '${GITHUB_WORKSPACE}' && GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-arch.sh"
+          su builder -c "cd '${GITHUB_WORKSPACE}' && GIT_SYNC_USE_PREBUILT=1 ./scripts/build-arch.sh"
 
       - name: Upload Arch package artifacts
         uses: actions/upload-artifact@v4

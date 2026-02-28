@@ -12,10 +12,10 @@ fi
 
 ensure_prebuilt_inputs() {
   local required=(
-    "target/release/git-sync-audit"
-    "target/man/git-sync-audit.1.gz"
-    "target/man/git-sync-audit-readme.7.gz"
-    "target/man/git-sync-audit-architecture.7.gz"
+    "target/release/git-sync"
+    "target/man/git-sync.1.gz"
+    "target/man/git-sync-readme.7.gz"
+    "target/man/git-sync-architecture.7.gz"
   )
   for path in "${required[@]}"; do
     if [[ ! -f "${path}" ]]; then
@@ -25,7 +25,7 @@ ensure_prebuilt_inputs() {
   done
 }
 
-if [[ "${GIT_SYNC_AUDIT_USE_PREBUILT:-0}" == "1" ]]; then
+if [[ "${GIT_SYNC_USE_PREBUILT:-0}" == "1" ]]; then
   echo "Using prebuilt release binary and manpages from target/."
   ensure_prebuilt_inputs
 else
@@ -38,10 +38,10 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
 cp packaging/arch/PKGBUILD "${WORK_DIR}/PKGBUILD"
-cp target/release/git-sync-audit "${WORK_DIR}/git-sync-audit"
-cp target/man/git-sync-audit.1.gz "${WORK_DIR}/git-sync-audit.1.gz"
-cp target/man/git-sync-audit-readme.7.gz "${WORK_DIR}/git-sync-audit-readme.7.gz"
-cp target/man/git-sync-audit-architecture.7.gz "${WORK_DIR}/git-sync-audit-architecture.7.gz"
+cp target/release/git-sync "${WORK_DIR}/git-sync"
+cp target/man/git-sync.1.gz "${WORK_DIR}/git-sync.1.gz"
+cp target/man/git-sync-readme.7.gz "${WORK_DIR}/git-sync-readme.7.gz"
+cp target/man/git-sync-architecture.7.gz "${WORK_DIR}/git-sync-architecture.7.gz"
 cp LICENSE "${WORK_DIR}/LICENSE"
 
 (

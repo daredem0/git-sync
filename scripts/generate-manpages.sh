@@ -13,32 +13,32 @@ fi
 mkdir -p target/man
 
 pandoc -s -f gfm -t man \
-  -V title=git-sync-audit \
+  -V title=git-sync \
   -V section=1 \
-  -V source=git-sync-audit \
-  docs/git-sync-audit.1.md \
-  -o target/man/git-sync-audit.1
+  -V source=git-sync \
+  docs/git-sync.1.md \
+  -o target/man/git-sync.1
 
 pandoc -s -f gfm -t man \
-  -V title=git-sync-audit-readme \
+  -V title=git-sync-readme \
   -V section=7 \
-  -V source=git-sync-audit \
+  -V source=git-sync \
   README.md \
-  -o target/man/git-sync-audit-readme.7
+  -o target/man/git-sync-readme.7
 
 pandoc -s -f gfm -t man \
-  -V title=git-sync-audit-architecture \
+  -V title=git-sync-architecture \
   -V section=7 \
-  -V source=git-sync-audit \
+  -V source=git-sync \
   SDD_SAD.md \
-  -o target/man/git-sync-audit-architecture.7
+  -o target/man/git-sync-architecture.7
 
 gzip -9 -f \
-  target/man/git-sync-audit.1 \
-  target/man/git-sync-audit-readme.7 \
-  target/man/git-sync-audit-architecture.7
+  target/man/git-sync.1 \
+  target/man/git-sync-readme.7 \
+  target/man/git-sync-architecture.7
 
 echo "Wrote:"
-echo "  target/man/git-sync-audit.1.gz"
-echo "  target/man/git-sync-audit-readme.7.gz"
-echo "  target/man/git-sync-audit-architecture.7.gz"
+echo "  target/man/git-sync.1.gz"
+echo "  target/man/git-sync-readme.7.gz"
+echo "  target/man/git-sync-architecture.7.gz"

@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn extract_bundle_archive_rejects_missing_path() {
     let missing_archive = std::env::temp_dir().join(format!(
-        "git-sync-audit-missing-archive-{}-{}.zip",
+        "git-sync-missing-archive-{}-{}.zip",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

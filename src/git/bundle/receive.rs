@@ -511,7 +511,7 @@ impl TempBareRepo {
     /// The mirror is populated via anonymous remote fetch and deleted on drop.
     fn from_existing(source_repo_path: &Path) -> Result<Self> {
         let temp_path = std::env::temp_dir().join(format!(
-            "git-sync-audit-receive-dry-run-{}-{}",
+            "git-sync-receive-dry-run-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

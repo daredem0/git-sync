@@ -390,7 +390,7 @@ fn collect_changed_files_detects_file_mode_transition() {
 #[test]
 fn collect_changed_files_rejects_missing_repository_path() {
     let missing_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-missing-repo-path-{}-{}",
+        "git-sync-missing-repo-path-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

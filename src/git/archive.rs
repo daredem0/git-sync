@@ -114,7 +114,7 @@ pub(crate) fn extract_bundle_archive(archive_path: &Path) -> Result<ExtractedBun
     let mut archive = ZipArchive::new(archive_file)?;
 
     let temp_dir = std::env::temp_dir().join(format!(
-        "git-sync-audit-extract-{}-{}",
+        "git-sync-extract-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

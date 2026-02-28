@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Creates a unique temporary directory for UI test fixtures.
 pub(crate) fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "git-sync-audit-ui-{}-{}-{}",
+        "git-sync-ui-{}-{}-{}",
         prefix,
         std::process::id(),
         SystemTime::now()

@@ -1110,7 +1110,7 @@ Used by:
 ### Apache-2.0 (Apache License 2.0)
 
 Used by:
-- `git-sync-audit v0.1.0`
+- `git-sync v0.1.0`
 
 <details>
 <summary>License Text</summary>

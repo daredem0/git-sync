@@ -80,7 +80,7 @@ pub(super) fn write_test_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) 
 /// Allocates a unique temporary directory path for git test fixtures.
 pub(super) fn temp_repo_dir(suffix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
-        "git-sync-audit-{}-{}-{}",
+        "git-sync-{}-{}-{}",
         suffix,
         std::process::id(),
         std::time::SystemTime::now()

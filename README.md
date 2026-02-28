@@ -1,6 +1,6 @@
-# git-sync-audit
+# git-sync
 
-`git-sync-audit` is a command-line tool for moving Git history across disconnected environments while keeping that transfer auditable.
+`git-sync` is a command-line tool for moving Git history across disconnected environments while keeping that transfer auditable.
 
 It helps you:
 - create a transport package from a commit range
@@ -137,7 +137,7 @@ Shows:
 
 Preview:
 ```text
-┌git-sync-audit────────────────────────────────────────────────────────────────────────────────────┐
+┌git-sync────────────────────────────────────────────────────────────────────────────────────┐
 │Audit Overview (page 1/10)                                                                        │
 │This page shows package validity, import heads, and would-change summary                          │
 │Use h/l or left/right to move pages                                                               │
@@ -353,9 +353,9 @@ Generate man pages from documentation (`README.md` and `SDD_SAD.md` -> section 7
 ```
 
 This writes:
-- `target/man/git-sync-audit.1.gz`
-- `target/man/git-sync-audit-readme.7.gz`
-- `target/man/git-sync-audit-architecture.7.gz`
+- `target/man/git-sync.1.gz`
+- `target/man/git-sync-readme.7.gz`
+- `target/man/git-sync-architecture.7.gz`
 
 Build a Debian package (`.deb`):
 
@@ -373,28 +373,28 @@ Build an Arch package (`.pkg.tar.zst`):
 Use prebuilt release inputs (binary + manpages in `target/`) without rebuilding:
 
 ```bash
-GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-deb.sh
-GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-arch.sh
+GIT_SYNC_USE_PREBUILT=1 ./scripts/build-deb.sh
+GIT_SYNC_USE_PREBUILT=1 ./scripts/build-arch.sh
 ```
 
 Install the generated Arch package:
 
 ```bash
-sudo pacman -U target/arch/git-sync-audit-bin-*.pkg.tar.zst
+sudo pacman -U target/arch/git-sync-bin-*.pkg.tar.zst
 ```
 
 Optional: install debug symbols package:
 
 ```bash
-sudo pacman -U target/arch/git-sync-audit-bin-debug-*.pkg.tar.zst
+sudo pacman -U target/arch/git-sync-bin-debug-*.pkg.tar.zst
 ```
 
 Verify installed man pages:
 
 ```bash
-man git-sync-audit
-man 7 git-sync-audit-readme
-man 7 git-sync-audit-architecture
+man git-sync
+man 7 git-sync-readme
+man 7 git-sync-architecture
 ```
 
 Notes:
@@ -409,9 +409,21 @@ Target flow:
 2. Push commit and tag.
 3. CI builds and packages with a consistent version everywhere.
 
+Default local release command (no crates.io publish):
+
+```bash
+cargo release <major.minor.patch> --no-publish --execute
+```
+
+Example:
+
+```bash
+cargo release 0.2.0 --no-publish --execute
+```
+
 CI release/version behavior:
 - `scripts/verify-tag-version.sh` enforces: `git tag` version == `Cargo.toml` version.
-- On tagged commits, release binary build sets `GIT_SYNC_AUDIT_VERSION_OVERRIDE` from the Git tag.
+- On tagged commits, release binary build sets `GIT_SYNC_VERSION_OVERRIDE` from the Git tag.
 - `build-release` builds release binary + manpages exactly once and uploads them as `release-package-inputs`.
 - `package-deb` and `package-arch` download `release-package-inputs` and package from those prebuilt files.
 - `package-crate` runs `cargo package --locked` and uploads the produced `.crate`.

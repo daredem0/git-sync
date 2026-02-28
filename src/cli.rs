@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "git-sync-audit",
+    name = "git-sync",
     version = crate::version::APP_VERSION,
     about = "Air-gap Git sync audit tool (scaffold)"
 )]
@@ -18,7 +18,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
-/// Supported `git-sync-audit` command groups.
+/// Supported `git-sync` command groups.
 pub enum Command {
     /// Creates a bundle package for a linear commit range.
     Create {

@@ -442,7 +442,7 @@ fn verify_bundle_metadata_integrity_input_accepts_plain_bundle_input() {
 #[test]
 fn load_bundle_metadata_from_path_rejects_missing_path() {
     let missing_path = std::env::temp_dir().join(format!(
-        "git-sync-audit-missing-caudit-{}-{}.json",
+        "git-sync-missing-caudit-{}-{}.json",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
