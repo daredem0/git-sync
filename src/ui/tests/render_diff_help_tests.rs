@@ -15,10 +15,21 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
     let model = sample_model(1, 1);
     let mut state = super::super::types::AppState::new(&model);
 
-    let page_footer = render_footer_text(&state);
+    let overview_footer = render_footer_text(&state);
     assert!(
-        page_footer.contains("Enter open selected head/diff"),
-        "page mode footer should include commit-page action hints"
+        overview_footer.contains("toggle history/payload"),
+        "overview footer should include top-level view switch hint"
+    );
+    assert!(
+        overview_footer.contains("Enter open selected head/diff"),
+        "overview footer should include commit-page action hints"
+    );
+
+    state.page_index = 1;
+    let commit_footer = render_footer_text(&state);
+    assert!(
+        !commit_footer.contains("toggle history/payload"),
+        "commit footer should not include main-page-only view switch hint"
     );
 
     state.diff_view = Some(DiffViewState {

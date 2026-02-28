@@ -126,7 +126,7 @@ fn handle_page_keys_enter_on_overview_enters_commit_pages() {
 fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
     let model = sample_model(2, 1);
     let mut state = super::super::types::AppState::new(&model);
-    state.page_index = 1;
+    state.page_index = 0;
 
     handle_page_keys(&mut state, &model, KeyCode::Char('2'));
     assert_eq!(
@@ -158,6 +158,29 @@ fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
         state.main_view,
         MainView::History,
         "Tab should toggle from payload back to history view"
+    );
+}
+
+// Verifies that view-switch shortcuts are ignored outside the main page context.
+#[test]
+fn handle_page_keys_ignores_view_switch_shortcuts_off_main_page() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 1;
+    state.main_view = MainView::History;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('2'));
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "view-switch shortcut should be ignored on commit pages"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('v'));
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "toggle shortcut should be ignored on commit pages"
     );
 }
 

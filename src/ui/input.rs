@@ -39,16 +39,17 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
 
 /// Handles navigation keys while the app is in page mode.
 pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
+    let on_main_page = state.page_index == 0;
     match code {
-        KeyCode::Tab | KeyCode::Char('v') => {
+        KeyCode::Tab | KeyCode::Char('v') if on_main_page => {
             state.toggle_main_view();
             return;
         }
-        KeyCode::Char('1') => {
+        KeyCode::Char('1') if on_main_page => {
             state.show_history_view();
             return;
         }
-        KeyCode::Char('2') => {
+        KeyCode::Char('2') if on_main_page => {
             state.show_payload_view();
             return;
         }
