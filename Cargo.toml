@@ -5,6 +5,9 @@ edition = "2024"
 build = "build.rs"
 license = "Apache-2.0"
 description = "Air-gap Git sync and audit tool"
+repository = "https://github.com/daredem0/git-sync"
+homepage = "https://github.com/daredem0/git-sync"
+documentation = "https://daredem0.github.io/git-sync/"
 
 [package.metadata.deb]
 depends = "$auto"
