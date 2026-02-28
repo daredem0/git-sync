@@ -52,7 +52,10 @@ pub(super) fn parse_pack_entry_header(
 }
 
 /// Parses OFS-delta encoded backward base distance.
-pub(super) fn parse_ofs_delta_base_distance(pack_data: &[u8], offset: usize) -> Result<(usize, usize)> {
+pub(super) fn parse_ofs_delta_base_distance(
+    pack_data: &[u8],
+    offset: usize,
+) -> Result<(usize, usize)> {
     if offset >= pack_data.len() {
         bail!("ofs-delta base encoding offset out of bounds");
     }

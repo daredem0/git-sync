@@ -119,14 +119,9 @@ fn verify_pack_payload_rejects_unsupported_pack_version() {
     std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
     let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
 
-    let bundle_path = write_synthetic_pack_bundle(
-        &repo_dir,
-        "unsupported-pack-version.bundle",
-        4,
-        0,
-        &[],
-    )
-    .expect("must write synthetic unsupported-pack-version bundle");
+    let bundle_path =
+        write_synthetic_pack_bundle(&repo_dir, "unsupported-pack-version.bundle", 4, 0, &[])
+            .expect("must write synthetic unsupported-pack-version bundle");
     let error = verify_pack_payload_for_bundle_input(&bundle_path)
         .expect_err("unsupported pack version should fail verification");
     assert!(
@@ -321,7 +316,10 @@ fn collect_payload_object_detail_for_missing_oid_returns_error() {
         result.is_err(),
         "missing payload object detail lookup should fail with explicit error"
     );
-    let error_text = format!("{:#}", result.expect_err("missing oid should return an error"));
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("missing oid should return an error")
+    );
     assert!(
         error_text.contains("is not available in materialized store"),
         "error should explain that requested payload object is absent in materialized store"

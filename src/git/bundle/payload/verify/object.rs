@@ -52,7 +52,10 @@ pub(super) fn object_oid_for_content(kind: PayloadObjectKind, content: &[u8]) ->
 }
 
 /// Loads one baseline object by OID for external ref-delta base resolution.
-pub(super) fn load_parsed_object_from_odb(odb: &git2::Odb<'_>, oid: git2::Oid) -> Result<ParsedPackObject> {
+pub(super) fn load_parsed_object_from_odb(
+    odb: &git2::Odb<'_>,
+    oid: git2::Oid,
+) -> Result<ParsedPackObject> {
     let object = odb.read(oid)?;
     let kind = payload_kind_from_git(object.kind());
     if matches!(kind, PayloadObjectKind::Unknown) {

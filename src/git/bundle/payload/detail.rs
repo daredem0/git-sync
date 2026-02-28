@@ -56,7 +56,9 @@ pub(super) fn collect_payload_object_detail_from_store(
 }
 
 /// Renders object-specific detail lines for payload drill-down/preview view from materialized bytes.
-fn object_detail_lines_from_materialized(object: &MaterializedObjectData) -> Result<ObjectDetailLines> {
+fn object_detail_lines_from_materialized(
+    object: &MaterializedObjectData,
+) -> Result<ObjectDetailLines> {
     match object.kind {
         PayloadObjectKind::Commit => {
             let text = String::from_utf8_lossy(&object.content_bytes);

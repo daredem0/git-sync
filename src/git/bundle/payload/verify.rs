@@ -11,15 +11,19 @@
 
 mod core;
 mod delta;
+mod entry;
 mod materialized;
 mod object;
 mod pack;
+mod preflight;
 mod proof;
 mod zlib;
 
 use crate::git::types::PayloadAuditError;
 
-pub(super) fn into_verification(value: proof::VerifiedPayload) -> crate::git::PayloadPackVerification {
+pub(super) fn into_verification(
+    value: proof::VerifiedPayload,
+) -> crate::git::PayloadPackVerification {
     value.into_verification()
 }
 

@@ -1,8 +1,6 @@
 //! Payload session bootstrap and repo-policy checks.
 
-use crate::git::types::{
-    PayloadAudit, PayloadResolveMode,
-};
+use crate::git::types::{PayloadAudit, PayloadResolveMode};
 use crate::git::util::sha256_hex;
 use anyhow::{Result, bail};
 use std::collections::HashMap;

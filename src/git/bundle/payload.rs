@@ -1,8 +1,8 @@
 //! Git-layer payload audit functionality.
 
 use crate::git::types::{
-    BundleInspection, MaterializedObjectData, PayloadAudit, PayloadAuditDocument, PayloadAuditError,
-    PayloadObjectDetail, PayloadPackVerification, PayloadResolveMode,
+    BundleInspection, MaterializedObjectData, PayloadAudit, PayloadAuditDocument,
+    PayloadAuditError, PayloadObjectDetail, PayloadPackVerification, PayloadResolveMode,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -154,18 +154,18 @@ pub fn verify_pack_payload_for_bundle_input_with_resolve_mode(
 ) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
     let baseline_repo = baseline_repo_path.and_then(|path| git2::Repository::open(path).ok());
     let baseline_odb = baseline_repo.as_ref().and_then(|repo| repo.odb().ok());
-    let bundle_bytes = input::load_bundle_bytes_for_input(bundle_input_path).map_err(|err| {
-        PayloadAuditError {
+    let bundle_bytes =
+        input::load_bundle_bytes_for_input(bundle_input_path).map_err(|err| PayloadAuditError {
             reason: err.to_string(),
             blocked_entry_idx: None,
             ledger_partial: None,
-        }
-    })?;
-    let parsed_bundle = parse::parse_bundle_payload(&bundle_bytes).map_err(|err| PayloadAuditError {
-        reason: err.to_string(),
-        blocked_entry_idx: None,
-        ledger_partial: None,
-    })?;
+        })?;
+    let parsed_bundle =
+        parse::parse_bundle_payload(&bundle_bytes).map_err(|err| PayloadAuditError {
+            reason: err.to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
     verify_pack_payload_with_ledger_and_baseline_odb(parsed_bundle.pack_data, baseline_odb.as_ref())
 }
 
