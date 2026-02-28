@@ -878,7 +878,7 @@ fn is_head_already_applied_returns_false_when_ref_target_differs() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that commit-audit entries expose author/committer identity fields needed by the commit-detail TUI page.
+// Verifies that head-scoped commit-audit entries expose author/committer identity fields needed by the commit-detail TUI page.
 #[test]
 fn collect_commit_audit_entries_includes_author_and_committer_identity() {
     let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
@@ -895,15 +895,15 @@ fn collect_commit_audit_entries_includes_author_and_committer_identity() {
         .fetch(&["refs/heads/base:refs/heads/base"], None, None)
         .expect("must fetch prerequisite base history");
 
-    let entries =
-        collect_commit_audit_entries_for_bundle_input(&bundle_result.archive_path, &receiver_dir)
-            .expect("must collect commit-audit entries from package");
+    let head_entries =
+        collect_head_audit_entries_for_bundle_input(&bundle_result.archive_path, &receiver_dir)
+            .expect("must collect head-scoped commit-audit entries from package");
     assert_eq!(
-        entries.len(),
+        head_entries.len(),
         1,
-        "fixture range should produce one commit entry (base..tip)"
+        "fixture range should produce one head entry"
     );
-    let entry = &entries[0];
+    let entry = &head_entries[0].commits[0];
     assert_eq!(
         entry.commit_id, tip_commit_id,
         "entry commit id should match the tip commit in this fixture range"
@@ -989,7 +989,7 @@ fn collect_head_audit_entries_for_bundle_input_returns_head_scoped_entries() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
-// Verifies that commit-audit page data can be collected from a plain bundle even when the metadata sidecar is absent.
+// Verifies that head-scoped commit-audit page data can be collected from a plain bundle even when the metadata sidecar is absent.
 #[test]
 fn collect_commit_audit_entries_for_plain_bundle_succeeds_without_metadata_sidecar() {
     let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
@@ -1011,16 +1011,20 @@ fn collect_commit_audit_entries_for_plain_bundle_succeeds_without_metadata_sidec
         .fetch(&["refs/heads/base:refs/heads/base"], None, None)
         .expect("must fetch prerequisite base history");
 
-    let entries =
-        collect_commit_audit_entries_for_bundle_input(&bundle_result.bundle_path, &receiver_dir)
-            .expect("must collect commit-audit entries from plain bundle without metadata sidecar");
-    assert_eq!(
-        entries.len(),
-        1,
-        "fixture range should produce one commit entry (base..tip)"
+    let head_entries = collect_head_audit_entries_for_bundle_input(
+        &bundle_result.bundle_path,
+        &receiver_dir,
+    )
+    .expect(
+        "must collect head-scoped commit-audit entries from plain bundle without metadata sidecar",
     );
     assert_eq!(
-        entries[0].commit_id, tip_commit_id,
+        head_entries.len(),
+        1,
+        "fixture range should produce one head entry"
+    );
+    assert_eq!(
+        head_entries[0].commits[0].commit_id, tip_commit_id,
         "entry commit id should match the tip commit in this fixture range"
     );
 

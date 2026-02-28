@@ -12,10 +12,9 @@ mod util;
 
 #[allow(unused_imports)]
 pub use bundle::{
-    collect_commit_audit_entries_for_bundle_input, collect_commit_file_patch_for_bundle_input,
-    collect_head_audit_entries_for_bundle_input, create_bundle, create_bundle_with_options,
-    inspect_bundle, receive_bundle_input, receive_bundle_input_with_options,
-    remove_unarchived_bundle_artifacts,
+    collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
+    create_bundle, create_bundle_with_options, inspect_bundle, receive_bundle_input,
+    receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
 };
 #[allow(unused_imports)]
 pub use context::open_context;

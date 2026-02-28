@@ -59,23 +59,6 @@ pub fn receive_bundle_input_with_options(
     }
 }
 
-/// Collects commit-level audit entries for a bundle input.
-///
-/// This imports into a temporary mirror and computes commit/file summaries
-/// without mutating the receiver repository.
-///
-/// # Errors
-///
-/// Returns an error when bundle inspection/import or commit traversal fails.
-pub fn collect_commit_audit_entries_for_bundle_input(
-    bundle_input_path: &Path,
-    receiver_repo_path: &Path,
-) -> Result<Vec<CommitAuditEntry>> {
-    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, inspection| {
-        collect_commit_audit_entries(repo, inspection)
-    })
-}
-
 /// Collects head-scoped commit and line-stat entries for a bundle input.
 ///
 /// This imports into a temporary mirror and computes per-head summaries
@@ -276,48 +259,6 @@ fn collect_line_stats_for_head(
         });
     }
     Ok(stats)
-}
-
-/// Builds commit-page entries from imported bundle objects.
-fn collect_commit_audit_entries(
-    repo: &git2::Repository,
-    inspection: &BundleInspection,
-) -> Result<Vec<CommitAuditEntry>> {
-    let commit_ids = collect_imported_commit_ids(repo, inspection)?;
-    commit_ids
-        .into_iter()
-        .map(|commit_id| build_commit_audit_entry(repo, commit_id))
-        .collect()
-}
-
-/// Enumerates commits carried by imported bundle heads, excluding prerequisites.
-///
-/// Returned OIDs are ordered oldest-first for stable page progression.
-fn collect_imported_commit_ids(
-    repo: &git2::Repository,
-    inspection: &BundleInspection,
-) -> Result<Vec<git2::Oid>> {
-    let mut revwalk = repo.revwalk()?;
-    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME | git2::Sort::REVERSE)?;
-
-    let mut heads = inspection.heads.clone();
-    heads.sort_by(|left, right| {
-        left.reference
-            .cmp(&right.reference)
-            .then_with(|| left.oid.cmp(&right.oid))
-    });
-    for head in heads {
-        revwalk.push(head.oid)?;
-    }
-    for prerequisite in &inspection.prerequisites {
-        revwalk.hide(*prerequisite)?;
-    }
-
-    let mut commits = Vec::new();
-    for oid_result in revwalk {
-        commits.push(oid_result?);
-    }
-    Ok(commits)
 }
 
 /// Builds head-scoped audit entries for imported bundle heads.

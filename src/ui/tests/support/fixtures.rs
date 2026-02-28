@@ -69,11 +69,15 @@ pub(crate) fn create_diff_fixture() -> DiffFixture {
         .fetch(&["refs/heads/base:refs/heads/base"], None, None)
         .expect("must fetch prerequisite base ref");
 
-    let entries = git::collect_commit_audit_entries_for_bundle_input(
+    let head_entries = git::collect_head_audit_entries_for_bundle_input(
         &bundle_result.archive_path,
         &receiver_dir,
     )
-    .expect("must collect commit entries for fixture bundle");
+    .expect("must collect head entries for fixture bundle");
+    let entries = head_entries
+        .first()
+        .map(|entry| entry.commits.clone())
+        .unwrap_or_default();
     assert_eq!(
         entries.len(),
         1,
@@ -133,11 +137,15 @@ pub(crate) fn create_non_text_diff_fixture() -> DiffFixture {
         .fetch(&["refs/heads/base:refs/heads/base"], None, None)
         .expect("must fetch prerequisite base ref");
 
-    let entries = git::collect_commit_audit_entries_for_bundle_input(
+    let head_entries = git::collect_head_audit_entries_for_bundle_input(
         &bundle_result.archive_path,
         &receiver_dir,
     )
-    .expect("must collect commit entries for non-text fixture bundle");
+    .expect("must collect head entries for non-text fixture bundle");
+    let entries = head_entries
+        .first()
+        .map(|entry| entry.commits.clone())
+        .unwrap_or_default();
     assert_eq!(
         entries.len(),
         1,
