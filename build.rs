@@ -21,7 +21,9 @@ fn resolve_version() -> String {
         }
     }
 
-    git_describe().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+    git_describe()
+        .map(normalize_tag_prefix)
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
 }
 
 fn git_describe() -> Option<String> {
@@ -49,4 +51,18 @@ fn git_describe() -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn normalize_tag_prefix(version: String) -> String {
+    if let Some(stripped) = version.strip_prefix('v') {
+        if stripped
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        {
+            return stripped.to_string();
+        }
+    }
+
+    version
 }

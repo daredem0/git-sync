@@ -370,6 +370,13 @@ Build an Arch package (`.pkg.tar.zst`):
 ./scripts/build-arch.sh
 ```
 
+Use prebuilt release inputs (binary + manpages in `target/`) without rebuilding:
+
+```bash
+GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-deb.sh
+GIT_SYNC_AUDIT_USE_PREBUILT=1 ./scripts/build-arch.sh
+```
+
 Install the generated Arch package:
 
 ```bash
@@ -394,6 +401,22 @@ Notes:
 - Arch packaging uses a prebuilt release binary through `packaging/arch/PKGBUILD`.
 - Debian packaging uses `[package.metadata.deb]` in `Cargo.toml`.
 - Both package paths are printed by the scripts (`target/debian` and `target/arch`).
+
+### Release Workflow (cargo-release + CI)
+
+Target flow:
+1. Run `cargo-release` locally to create the release commit and tag.
+2. Push commit and tag.
+3. CI builds and packages with a consistent version everywhere.
+
+CI release/version behavior:
+- `scripts/verify-tag-version.sh` enforces: `git tag` version == `Cargo.toml` version.
+- On tagged commits, release binary build sets `GIT_SYNC_AUDIT_VERSION_OVERRIDE` from the Git tag.
+- `build-release` builds release binary + manpages exactly once and uploads them as `release-package-inputs`.
+- `package-deb` and `package-arch` download `release-package-inputs` and package from those prebuilt files.
+- `package-crate` runs `cargo package --locked` and uploads the produced `.crate`.
+
+This keeps the release pipeline immutable for tagged builds and avoids rebuilding release binaries in package jobs.
 
 ### Generate Documentation
 

@@ -1,5 +1,5 @@
 pkgname=git-sync-audit-bin
-pkgver=${PKGVER:-0.1.0}
+pkgver=${PKGVER:-0.0.0}
 pkgrel=${PKGREL:-1}
 pkgdesc="Air-gap Git sync and audit tool (prebuilt binary package)"
 arch=('x86_64')
