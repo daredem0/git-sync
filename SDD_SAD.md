@@ -375,7 +375,7 @@ Payload view specifics:
 ### 10.2 Limits
 - No detached package signature verification yet (authenticity remains out of scope).
 - Receive-time `--verify-metadata` validates metadata integrity, not full metadata-vs-repo truth.
-- PACK proof path currently SHA-1-centric.
+- Payload proof supports SHA-1 repositories only; non-`sha1` object formats fail closed.
 - Interactive audit currently runs with pack-only resolve mode.
 
 ## 11. Build and Versioning
@@ -405,4 +405,8 @@ Representative covered areas:
 ## 13. Open TODOs
 - Detached package signature verification (authenticity).
 - Optional stricter proof artifacting (for example explicit parsed-entry OID set emission/checks).
+- Object-format-aware payload proofing (phase 6b):
+  - add SHA-256-capable object-id/hash abstraction (not hard-wired `git2::Oid` SHA-1 assumptions)
+  - parse PACK trailer/ref-delta base IDs with algorithm-specific hash length
+  - make baseline-assisted delta resolution and proof reporting algorithm-aware end-to-end
 - Policy-driven receive gates based on audit evidence.

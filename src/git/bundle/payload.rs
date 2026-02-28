@@ -127,6 +127,8 @@ pub fn open_payload_session_with_resolve_mode(
     repo_path: &Path,
     resolve_mode: PayloadResolveMode,
 ) -> Result<PayloadSession> {
+    ensure_supported_repo_object_format(repo_path)?;
+
     let baseline_repo = if matches!(resolve_mode, PayloadResolveMode::Baseline) {
         Some(git2::Repository::open(repo_path)?)
     } else {
@@ -207,6 +209,24 @@ pub fn open_payload_session_with_resolve_mode(
         bundle_size_bytes: bundle_bytes.len() as u64,
         bundle_sha256: sha256_hex(&bundle_bytes)?,
     })
+}
+
+/// Ensures payload audit runs only for repositories using SHA-1 object format.
+fn ensure_supported_repo_object_format(repo_path: &Path) -> Result<()> {
+    let repo = git2::Repository::open(repo_path)?;
+    let config = repo.config()?;
+    let object_format = config
+        .get_string("extensions.objectformat")
+        .unwrap_or_else(|_| "sha1".to_string())
+        .to_ascii_lowercase();
+    if object_format != "sha1" {
+        bail!(
+            "unsupported repository object format '{}' at {}: payload audit currently supports only sha1",
+            object_format,
+            repo_path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Returns a payload-audit snapshot captured in the provided session.

@@ -112,6 +112,66 @@ fn verify_pack_payload_validates_trailer_checksum() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that payload audit accepts repositories with explicit sha1 object format configuration.
+#[test]
+fn payload_audit_accepts_explicit_sha1_repo_object_format() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-object-format-sha1", false);
+    let repo = git2::Repository::open(&repo_dir).expect("must open fixture repository");
+    let mut config = repo
+        .config()
+        .expect("must open fixture repository config for object-format override");
+    config
+        .set_str("extensions.objectformat", "sha1")
+        .expect("must set explicit sha1 object format");
+
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
+    assert!(
+        result.is_ok(),
+        "payload audit should allow explicit sha1 object format"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload audit fails closed when repository object format is configured as non-sha1.
+#[test]
+fn payload_audit_rejects_non_sha1_repo_object_format() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-object-format-non-sha1", false);
+    let repo = git2::Repository::open(&repo_dir).expect("must open fixture repository");
+    let mut config = repo
+        .config()
+        .expect("must open fixture repository config for object-format override");
+    config
+        .set_str("extensions.objectformat", "sha256")
+        .expect("must set non-sha1 object format");
+
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_result.bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
+    assert!(
+        result.is_err(),
+        "payload audit must fail closed for unsupported non-sha1 object format"
+    );
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("non-sha1 object format should fail closed")
+    );
+    assert!(
+        error_text.contains("unsupported repository object format 'sha256'"),
+        "error should explicitly report unsupported object format"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload parsing reads PACK offset from parsed bundle header rather than scanning for first PACK bytes.
 #[test]
 fn bundle_pack_offset_is_read_from_header_not_scanned() {
