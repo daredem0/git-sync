@@ -1,7 +1,8 @@
 //! TUI-layer navigation functionality.
 
 use crate::ui::types::{
-    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, PayloadSortMode, PayloadSubView,
+    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, OverviewFocus, PayloadSortMode,
+    PayloadSubView,
 };
 
 impl AppState {
@@ -16,9 +17,11 @@ impl AppState {
         };
         Self {
             main_view: MainView::History,
+            overview_focus: OverviewFocus::Heads,
             payload_sub_view: PayloadSubView::Objects,
             page_index: 0,
             selected_head_index: 0,
+            selected_change_index: 0,
             selected_file_indices,
             payload_selected_index: 0,
             payload_sort_mode: PayloadSortMode::Canonical,
@@ -97,12 +100,25 @@ impl AppState {
 
     /// Moves file selection down within the current commit page.
     pub(crate) fn move_selection_down(&mut self, model: &AuditModel) {
-        if self.page_index == 0 {
-            let head_count = self.available_head_count(model);
-            if head_count > 0 {
-                let selected = self.clamped_selected_head_index(head_count);
-                self.selected_head_index = std::cmp::min(selected + 1, head_count - 1);
-                self.action_message = None;
+        if self.page_index == 0 && self.main_view == MainView::History {
+            match self.overview_focus {
+                OverviewFocus::Heads => {
+                    let head_count = self.available_head_count(model);
+                    if head_count > 0 {
+                        let selected = self.clamped_selected_head_index(head_count);
+                        self.selected_head_index = std::cmp::min(selected + 1, head_count - 1);
+                        self.selected_change_index = 0;
+                        self.action_message = None;
+                    }
+                }
+                OverviewFocus::WouldChange => {
+                    let change_count = self.available_change_count(model);
+                    if change_count > 0 {
+                        self.selected_change_index =
+                            std::cmp::min(self.selected_change_index + 1, change_count - 1);
+                        self.action_message = None;
+                    }
+                }
             }
             return;
         }
@@ -124,13 +140,22 @@ impl AppState {
 
     /// Moves file selection up within the current commit page.
     pub(crate) fn move_selection_up(&mut self, model: &AuditModel) {
-        if self.page_index == 0 {
-            let head_count = self.available_head_count(model);
-            if head_count > 0 {
-                self.selected_head_index = self
-                    .clamped_selected_head_index(head_count)
-                    .saturating_sub(1);
-                self.action_message = None;
+        if self.page_index == 0 && self.main_view == MainView::History {
+            match self.overview_focus {
+                OverviewFocus::Heads => {
+                    let head_count = self.available_head_count(model);
+                    if head_count > 0 {
+                        self.selected_head_index = self
+                            .clamped_selected_head_index(head_count)
+                            .saturating_sub(1);
+                        self.selected_change_index = 0;
+                        self.action_message = None;
+                    }
+                }
+                OverviewFocus::WouldChange => {
+                    self.selected_change_index = self.selected_change_index.saturating_sub(1);
+                    self.action_message = None;
+                }
             }
             return;
         }
@@ -212,9 +237,40 @@ impl AppState {
         }
         self.main_view = view;
         self.page_index = 0;
+        if view == MainView::History {
+            self.overview_focus = OverviewFocus::Heads;
+        }
         self.payload_preview = None;
         self.payload_object_view = None;
         self.action_message = None;
+    }
+
+    /// Toggles overview focus between heads and would-change tables.
+    pub(crate) fn toggle_overview_focus(&mut self) {
+        self.overview_focus = match self.overview_focus {
+            OverviewFocus::Heads => OverviewFocus::WouldChange,
+            OverviewFocus::WouldChange => OverviewFocus::Heads,
+        };
+        self.action_message = None;
+    }
+
+    /// Returns true when overview currently focuses the heads table.
+    pub(crate) fn is_overview_heads_focused(&self) -> bool {
+        self.overview_focus == OverviewFocus::Heads
+    }
+
+    /// Returns true when overview currently focuses the would-change table.
+    pub(crate) fn is_overview_changes_focused(&self) -> bool {
+        self.overview_focus == OverviewFocus::WouldChange
+    }
+
+    /// Returns selected would-change row index clamped to available rows.
+    pub(crate) fn selected_change_index(&self, change_count: usize) -> usize {
+        if change_count == 0 {
+            0
+        } else {
+            std::cmp::min(self.selected_change_index, change_count - 1)
+        }
     }
 
     /// Returns selected head index clamped to available head count.
@@ -232,6 +288,20 @@ impl AppState {
             CommitPagesModel::Ok(entries) => entries.len(),
             CommitPagesModel::Failed(_) => match &model.overview.dry_run {
                 DryRunLine::Ok(result) => result.imported_heads.len(),
+                DryRunLine::Failed(_) => 0,
+            },
+        }
+    }
+
+    /// Returns number of file rows available in selected would-change table.
+    fn available_change_count(&self, model: &AuditModel) -> usize {
+        match &model.commit_pages {
+            CommitPagesModel::Ok(entries) if !entries.is_empty() => {
+                let selected_head_index = self.clamped_selected_head_index(entries.len());
+                entries[selected_head_index].line_stats.len()
+            }
+            _ => match &model.overview.dry_run {
+                DryRunLine::Ok(result) => result.line_stats.len(),
                 DryRunLine::Failed(_) => 0,
             },
         }

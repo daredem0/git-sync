@@ -3,7 +3,7 @@
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
 use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};
-use super::super::types::{DiffViewState, MainView, PayloadModel, PayloadSubView};
+use super::super::types::{DiffViewState, MainView, OverviewFocus, PayloadModel, PayloadSubView};
 use super::support::*;
 use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
@@ -146,6 +146,7 @@ fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
         MainView::History,
         "key 1 should switch back to history view"
     );
+    assert_eq!(state.page_index, 0, "key 1 should return to overview page");
 
     handle_page_keys(&mut state, &model, KeyCode::Char('v'));
     assert_eq!(
@@ -157,8 +158,29 @@ fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
     handle_page_keys(&mut state, &model, KeyCode::Tab);
     assert_eq!(
         state.main_view,
+        MainView::Payload,
+        "Tab should no longer toggle payload/history views"
+    );
+}
+
+// Verifies that key `1` from commit-detail page returns to overview page in history view.
+#[test]
+fn handle_page_keys_key_one_from_commit_page_returns_overview() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::History;
+    state.page_index = 1;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('1'));
+
+    assert_eq!(
+        state.main_view,
         MainView::History,
-        "Tab should toggle from payload back to history view"
+        "key 1 should keep history view active"
+    );
+    assert_eq!(
+        state.page_index, 0,
+        "key 1 should return from commit detail to overview page"
     );
 }
 
@@ -198,9 +220,9 @@ fn payload_key_e_toggles_objects_entries() {
     );
 }
 
-// Verifies that view-switch shortcuts are ignored outside the main page context.
+// Verifies that direct view shortcuts remain available even when currently on a commit page.
 #[test]
-fn handle_page_keys_ignores_view_switch_shortcuts_off_main_page() {
+fn handle_page_keys_view_switch_shortcuts_work_off_main_page() {
     let model = sample_model(2, 1);
     let mut state = super::super::types::AppState::new(&model);
     state.page_index = 1;
@@ -209,15 +231,125 @@ fn handle_page_keys_ignores_view_switch_shortcuts_off_main_page() {
     handle_page_keys(&mut state, &model, KeyCode::Char('2'));
     assert_eq!(
         state.main_view,
-        MainView::History,
-        "view-switch shortcut should be ignored on commit pages"
+        MainView::Payload,
+        "key 2 should switch to payload view from commit pages"
     );
 
-    handle_page_keys(&mut state, &model, KeyCode::Char('v'));
+    handle_page_keys(&mut state, &model, KeyCode::Char('1'));
     assert_eq!(
         state.main_view,
         MainView::History,
-        "toggle shortcut should be ignored on commit pages"
+        "key 1 should switch back to history view from any page mode"
+    );
+}
+
+// Verifies that key `3` opens commit detail flow from overview by entering selected head.
+#[test]
+fn handle_page_keys_key_three_opens_commit_detail_from_overview() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(state.page_index, 0, "precondition: overview page");
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('3'));
+
+    assert_eq!(
+        state.page_index, 1,
+        "key 3 should enter first commit detail page for selected head"
+    );
+    assert!(
+        state.diff_view.is_none(),
+        "key 3 should not open inline diff directly"
+    );
+    assert!(
+        state.action_message.is_none(),
+        "key 3 should not set a diff-load failure message"
+    );
+}
+
+// Verifies that key `3` from payload view returns to history and opens first commit detail page.
+#[test]
+fn handle_page_keys_key_three_from_payload_switches_to_history_commit_detail() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('3'));
+
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "key 3 should switch from payload to history to open commit detail context"
+    );
+    assert_eq!(
+        state.page_index, 1,
+        "key 3 should enter first commit page while opening commit detail shortcut"
+    );
+    assert!(
+        state.diff_view.is_none(),
+        "key 3 should not directly open file diff from payload view"
+    );
+}
+
+// Verifies that Tab on overview toggles focus between heads and would-change tables.
+#[test]
+fn handle_page_keys_tab_toggles_overview_focus() {
+    let model = sample_multi_head_model(&[2, 2]);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::Heads,
+        "precondition: overview focus starts on heads table"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Tab);
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::WouldChange,
+        "first Tab should focus would-change table"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Tab);
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::Heads,
+        "second Tab should return focus to heads table"
+    );
+}
+
+// Verifies that overview navigation keys affect only the currently focused table.
+#[test]
+fn handle_page_keys_overview_navigation_applies_to_focused_table_only() {
+    let model = sample_multi_head_model(&[3, 3]);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(
+        state.selected_head_index, 0,
+        "precondition: head 0 selected"
+    );
+    assert_eq!(
+        state.selected_change_index, 0,
+        "precondition: first would-change row selected"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Tab);
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    assert_eq!(
+        state.selected_head_index, 0,
+        "while would-change is focused, head selection should remain unchanged"
+    );
+    assert_eq!(
+        state.selected_change_index, 1,
+        "while would-change is focused, down key should move would-change selection"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Tab);
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    assert_eq!(
+        state.selected_head_index, 1,
+        "while heads are focused, down key should move head selection"
+    );
+    assert_eq!(
+        state.selected_change_index, 0,
+        "changing head selection should reset would-change selection to first row"
     );
 }
 
@@ -234,6 +366,77 @@ fn handle_page_keys_ignores_history_paging_in_payload_view() {
     assert_eq!(
         state.page_index, 0,
         "payload mode should ignore history page navigation keys"
+    );
+}
+
+// Verifies that right-arrow pagination no longer leaves overview for commit pages.
+#[test]
+fn handle_page_keys_right_arrow_does_not_leave_overview() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::History;
+    state.page_index = 0;
+
+    handle_page_keys(&mut state, &model, KeyCode::Right);
+
+    assert_eq!(
+        state.page_index, 0,
+        "right arrow on overview should not navigate into commit pages"
+    );
+}
+
+// Verifies that left-arrow on first commit page does not navigate back to overview.
+#[test]
+fn handle_page_keys_left_arrow_on_first_commit_stays_on_commit_page() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::History;
+    state.page_index = 1;
+
+    handle_page_keys(&mut state, &model, KeyCode::Left);
+
+    assert_eq!(
+        state.page_index, 1,
+        "left arrow on first commit page should not navigate back to overview"
+    );
+}
+
+// Verifies that key `1` from open diff view closes diff and returns to history overview.
+#[test]
+fn handle_key_press_key_one_from_diff_view_returns_overview() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::History;
+    state.page_index = 1;
+    state.diff_view = Some(DiffViewState {
+        commit_index: 0,
+        commit_total: 1,
+        file_index: 0,
+        commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+            .expect("valid oid"),
+        commit_subject: "subject".to_string(),
+        file_path: "f.rs".to_string(),
+        syntax_name: "Rust".to_string(),
+        lines: vec![Line::from("line 1")],
+        max_line_width: 10,
+        scroll_y: 0,
+        scroll_x: 0,
+    });
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Char('1'));
+    assert!(!should_exit, "key 1 should navigate, not exit");
+    assert!(
+        state.diff_view.is_none(),
+        "key 1 should close open diff view when returning to overview"
+    );
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "key 1 should switch/keep history view"
+    );
+    assert_eq!(
+        state.page_index, 0,
+        "key 1 should return to overview page from diff view"
     );
 }
 

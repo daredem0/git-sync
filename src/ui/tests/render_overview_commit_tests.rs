@@ -46,6 +46,14 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include embedded tool version in general section"
     );
     assert!(
+        output.contains("Press 1 main | 2 payload | 3 commit"),
+        "overview render title should advertise direct page shortcuts"
+    );
+    assert!(
+        !output.contains("Use h/l or left/right"),
+        "overview render title should no longer advertise page movement shortcuts"
+    );
+    assert!(
         output.contains("metadata verification: OK"),
         "overview render should include metadata verification status in general section"
     );

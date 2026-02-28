@@ -95,6 +95,7 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
             };
             format!(
                 "Payload View\n\
+                 Press 1 main | 2 payload | 3 commit\n\
                  status: {proof_status} | pack version: {}\n\
                  entries: {}/{} | materialized: {}/{}\n\
                  unique objects: {} | duplicates: {}\n\
@@ -128,6 +129,7 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
             )
         }
         PayloadModel::Failed(_) => "Payload View\n\
+            Press 1 main | 2 payload | 3 commit\n\
             Transport package entries, selected-object preview, and full pack object listing\n\
             Use j/k to select object rows and Enter to open object detail"
             .to_string(),

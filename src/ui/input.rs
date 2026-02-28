@@ -10,6 +10,29 @@ const PAYLOAD_SELECT_PAGE_STEP: usize = 10;
 
 /// Handles one key press and returns `true` when the app should exit.
 pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: KeyCode) -> bool {
+    if code == KeyCode::Char('1') {
+        state.close_diff();
+        state.close_payload_object();
+        state.show_history_view();
+        state.first_page();
+        return false;
+    }
+    if code == KeyCode::Char('2') {
+        state.close_diff();
+        state.close_payload_object();
+        state.show_payload_view();
+        state.refresh_payload_preview(model);
+        return false;
+    }
+    if code == KeyCode::Char('3') {
+        state.close_diff();
+        state.close_payload_object();
+        state.show_history_view();
+        state.first_page();
+        state.enter_selected_head(model);
+        return false;
+    }
+
     match code {
         KeyCode::Char('q') => true,
         KeyCode::Esc => {
@@ -46,21 +69,33 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
 /// Handles navigation keys while the app is in page mode.
 pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
     let on_main_page = state.page_index == 0;
+    let on_history_overview = on_main_page && state.main_view == MainView::History;
     match code {
-        KeyCode::Tab | KeyCode::Char('v') if on_main_page => {
+        KeyCode::Char('1') => {
+            state.show_history_view();
+            state.first_page();
+            return;
+        }
+        KeyCode::Char('2') => {
+            state.show_payload_view();
+            state.refresh_payload_preview(model);
+            return;
+        }
+        KeyCode::Char('3') => {
+            state.show_history_view();
+            state.first_page();
+            state.enter_selected_head(model);
+            return;
+        }
+        KeyCode::Char('v') if on_main_page => {
             state.toggle_main_view();
             if state.main_view == MainView::Payload {
                 state.refresh_payload_preview(model);
             }
             return;
         }
-        KeyCode::Char('1') if on_main_page => {
-            state.show_history_view();
-            return;
-        }
-        KeyCode::Char('2') if on_main_page => {
-            state.show_payload_view();
-            state.refresh_payload_preview(model);
+        KeyCode::Tab if on_history_overview => {
+            state.toggle_overview_focus();
             return;
         }
         _ => {}
@@ -85,8 +120,8 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
     }
 
     match code {
-        KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
-        KeyCode::Left | KeyCode::Char('h') => state.previous_page(),
+        KeyCode::Right | KeyCode::Char('l') if state.page_index > 0 => state.next_page(model),
+        KeyCode::Left | KeyCode::Char('h') if state.page_index > 1 => state.previous_page(),
         KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(model),
         KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(model),
         KeyCode::Char('g') => state.first_page(),

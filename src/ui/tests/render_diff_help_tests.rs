@@ -21,7 +21,11 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         "overview footer should include top-level view switch hint"
     );
     assert!(
-        overview_footer.contains("Enter open selected head/diff"),
+        !overview_footer.contains("1 main | 2 payload | 3 commit"),
+        "overview footer should not include direct page shortcut legend"
+    );
+    assert!(
+        overview_footer.contains("Enter open selected head"),
         "overview footer should include commit-page action hints"
     );
 

@@ -46,13 +46,13 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     } else if state.is_payload_object_open() {
         "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | q quit"
     } else if state.main_view == MainView::Payload && state.is_payload_entries_view() {
-        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nTab/v toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nv toggle history/payload | ? help | q quit"
     } else if state.main_view == MainView::Payload {
-        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail\nTab/v toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail\nv toggle history/payload | ? help | q quit"
     } else if state.page_index == 0 {
-        "Tab/v toggle history/payload | h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected head/diff | Esc overview/quit | ? help | q quit"
+        "Tab switch heads/would-change focus | j/k or Up/Down move selection\nv toggle history/payload | Enter open selected head | Esc overview/quit | ? help | q quit"
     } else {
-        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected head/diff | Esc overview/quit | ? help | q quit"
+        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | q quit"
     };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
@@ -94,9 +94,11 @@ pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
          - PgUp / PgDn: in payload view, jump object selection by 10 rows\n\
          - s: in payload objects view, cycle object-list sort mode\n\
          - e: in payload view, toggle Objects/Entries subview\n\
-         - Tab / v: toggle History/Payload main view (overview only)\n\
-         - 1: switch to History main view (overview only)\n\
-         - 2: switch to Payload main view (overview only)\n\
+         - Tab: in overview, toggle focus between Heads and Would Change tables\n\
+         - v: toggle History/Payload main view (main page only)\n\
+         - 1: switch to History main view\n\
+         - 2: switch to Payload main view\n\
+         - 3: open first commit detail page for selected head\n\
          - g: first page\n\
          - G: last page\n\
          - Enter: open selected head (overview) or selected file diff (commit page)\n\

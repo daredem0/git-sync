@@ -777,8 +777,7 @@ fn verify_pack_payload_impl(
 
         let entry_offset = offset;
         let (entry_kind, expected_header_size, header_end) =
-            parse_pack_entry_header(pack_data, offset)
-            .map_err(|err| PayloadAuditError {
+            parse_pack_entry_header(pack_data, offset).map_err(|err| PayloadAuditError {
                 reason: err.to_string(),
                 blocked_entry_idx: Some(processed_object_count),
                 ledger_partial: Some(ledger.clone()),

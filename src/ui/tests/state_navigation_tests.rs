@@ -2,6 +2,7 @@
 
 // Focus: AppState page navigation and file selection movement invariants.
 
+use super::super::types::OverviewFocus;
 use super::support::*;
 
 // Verifies that total_pages returns one overview page plus one page per commit.
@@ -82,5 +83,31 @@ fn app_state_overview_head_navigation_updates_selected_head_and_total_pages() {
     assert_eq!(
         state.selected_head_index, 0,
         "overview up should move back to previous head"
+    );
+}
+
+// Verifies that overview focus starts on heads table and Tab-style toggling switches between heads and would-change.
+#[test]
+fn app_state_overview_focus_defaults_and_toggles() {
+    let model = sample_multi_head_model(&[2, 2]);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::Heads,
+        "new app state should default overview focus to heads table"
+    );
+
+    state.toggle_overview_focus();
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::WouldChange,
+        "focus toggle should switch to would-change table"
+    );
+
+    state.toggle_overview_focus();
+    assert_eq!(
+        state.overview_focus,
+        OverviewFocus::Heads,
+        "focus toggle should switch back to heads table"
     );
 }

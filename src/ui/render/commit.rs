@@ -82,7 +82,7 @@ pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, stat
             };
 
             let header = Paragraph::new(format!(
-                "Head {}/{} | {}\nCommit {}/{} | {}\n{}\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
+                "Head {}/{} | {}\nCommit {}/{} | {}\n{}\nPress 1 main | 2 payload | 3 commit\ncommitter date: {}\ncommitter: {}\nauthor date: {}\nauthor: {}\nChanged files: {}",
                 selected_head_index + 1,
                 entries.len(),
                 head_entry.head.reference,

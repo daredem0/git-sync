@@ -11,6 +11,7 @@ pub(super) fn render_heads_table(
     frame: &mut Frame<'_>,
     result: &git::ReceiveBundleResult,
     selected_head_index: usize,
+    is_focused: bool,
     area: Rect,
 ) {
     let version = match result.bundle_version {
@@ -38,13 +39,23 @@ pub(super) fn render_heads_table(
             ])
         })
         .collect();
+    let heads_title = if is_focused {
+        format!("Heads To Import (bundle {version}) [active]")
+    } else {
+        format!("Heads To Import (bundle {version})")
+    };
     let heads_table = Table::new(rows, [Constraint::Length(40), Constraint::Min(20)])
         .header(Row::new(vec!["OID", "REF"]).style(Style::default().add_modifier(Modifier::BOLD)))
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("Heads To Import (bundle {version})")),
+                .border_style(if is_focused {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                })
+                .title(heads_title),
         )
         .column_spacing(2);
 
@@ -63,6 +74,8 @@ pub(super) fn render_changes_table(
     frame: &mut Frame<'_>,
     line_stats: &[git::FileLineStat],
     selected_head_label: &str,
+    selected_change_index: usize,
+    is_focused: bool,
     area: Rect,
 ) {
     let rows: Vec<Row<'_>> = if line_stats.is_empty() {
@@ -84,6 +97,11 @@ pub(super) fn render_changes_table(
             .collect()
     };
 
+    let changes_title = if is_focused {
+        format!("Would Change (selected head: {selected_head_label}) [active]")
+    } else {
+        format!("Would Change (selected head: {selected_head_label})")
+    };
     let changes_table = Table::new(
         rows,
         [
@@ -96,9 +114,24 @@ pub(super) fn render_changes_table(
         Row::new(vec!["PATH", "+LINES", "-LINES"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .block(Block::default().borders(Borders::ALL).title(format!(
-        "Would Change (selected head: {selected_head_label})"
-    )))
+    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(if is_focused {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            })
+            .title(changes_title),
+    )
     .column_spacing(2);
-    frame.render_widget(changes_table, area);
+    let mut table_state = TableState::default();
+    if !line_stats.is_empty() {
+        table_state.select(Some(std::cmp::min(
+            selected_change_index,
+            line_stats.len() - 1,
+        )));
+    }
+    frame.render_stateful_widget(changes_table, area, &mut table_state);
 }

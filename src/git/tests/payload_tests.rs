@@ -1628,8 +1628,7 @@ fn write_synthetic_ofs_delta_size_mismatch_bundle(
         .ok_or_else(|| anyhow::anyhow!("ofs-delta distance underflow"))?;
     let delta_bytes = encode_literal_delta(base_blob.len(), target_blob)?;
     // Intentionally advertise wrong delta payload size (+1) to verify explicit PACK-header size validation.
-    let mut second_entry =
-        encode_pack_entry_header(PackEntryKind::OfsDelta, delta_bytes.len() + 1);
+    let mut second_entry = encode_pack_entry_header(PackEntryKind::OfsDelta, delta_bytes.len() + 1);
     second_entry.extend_from_slice(&encode_ofs_delta_distance(distance));
     second_entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
     pack_body.extend_from_slice(&second_entry);

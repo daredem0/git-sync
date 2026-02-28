@@ -16,14 +16,14 @@ pub(crate) fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),
+            Constraint::Length(7),
             Constraint::Min(10),
             Constraint::Length(2),
         ])
         .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "Commit {}/{} | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}",
+        "Commit {}/{} | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}\nPress 1 main | 2 payload | 3 commit",
         diff_view.commit_index + 1,
         diff_view.commit_total,
         diff_view.commit_id,

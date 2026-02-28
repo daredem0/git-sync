@@ -15,7 +15,7 @@ const OVERVIEW_COLUMN_SPLIT: [Constraint; 2] =
 /// Renders the overview page with validation, heads, and dry-run summaries.
 pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     let overview = &model.overview;
-    let page_label = format!("page {}/{}", state.page_index + 1, state.total_pages(model));
+    let page_label = "page 1/1";
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -29,7 +29,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     let title = Paragraph::new(format!(
         "Audit Overview ({})\n\
              This page shows package validity, import heads, and would-change summary\n\
-             Use h/l or left/right to move pages",
+             Press 1 main | 2 payload | 3 commit",
         page_label
     ))
     .block(Block::default().borders(Borders::ALL).title("git-sync"))
@@ -106,7 +106,13 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
                 .direction(Direction::Horizontal)
                 .constraints(OVERVIEW_COLUMN_SPLIT)
                 .split(chunks[2]);
-            render_heads_table(frame, result, state.selected_head_index, detail_chunks[0]);
+            render_heads_table(
+                frame,
+                result,
+                state.selected_head_index,
+                state.is_overview_heads_focused(),
+                detail_chunks[0],
+            );
 
             let (selected_stats, selected_head_label) = match &model.commit_pages {
                 CommitPagesModel::Ok(entries) if !entries.is_empty() => {
@@ -135,6 +141,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
                 frame,
                 &selected_stats,
                 &selected_head_label,
+                state.selected_change_index(selected_stats.len()),
+                state.is_overview_changes_focused(),
                 detail_chunks[1],
             );
         }
@@ -241,9 +249,7 @@ fn render_pack_proof_summary(
 }
 
 /// Returns general payload context lines for the overview's left-side General panel.
-fn render_general_payload_summary(
-    payload: &PayloadModel,
-) -> (String, String, String, String) {
+fn render_general_payload_summary(payload: &PayloadModel) -> (String, String, String, String) {
     match payload {
         PayloadModel::Ok(audit) => {
             let version = match audit.bundle_version {
