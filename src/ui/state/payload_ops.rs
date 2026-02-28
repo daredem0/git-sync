@@ -69,20 +69,32 @@ impl AppState {
 
     /// Moves payload object selection down by one row.
     pub(crate) fn move_payload_selection_down(&mut self, model: &AuditModel) {
+        self.move_payload_selection_down_by(model, 1);
+    }
+
+    /// Moves payload object selection up by one row.
+    pub(crate) fn move_payload_selection_up(&mut self, model: &AuditModel) {
+        self.move_payload_selection_up_by(model, 1);
+    }
+
+    /// Moves payload object selection down by `step` rows.
+    pub(crate) fn move_payload_selection_down_by(&mut self, model: &AuditModel, step: usize) {
         let PayloadModel::Ok(payload) = &model.payload else {
             return;
         };
         if payload.objects.is_empty() {
             return;
         }
-        self.payload_selected_index =
-            std::cmp::min(self.payload_selected_index + 1, payload.objects.len() - 1);
+        self.payload_selected_index = std::cmp::min(
+            self.payload_selected_index.saturating_add(step),
+            payload.objects.len() - 1,
+        );
         self.refresh_payload_preview(model);
     }
 
-    /// Moves payload object selection up by one row.
-    pub(crate) fn move_payload_selection_up(&mut self, model: &AuditModel) {
-        self.payload_selected_index = self.payload_selected_index.saturating_sub(1);
+    /// Moves payload object selection up by `step` rows.
+    pub(crate) fn move_payload_selection_up_by(&mut self, model: &AuditModel, step: usize) {
+        self.payload_selected_index = self.payload_selected_index.saturating_sub(step);
         self.refresh_payload_preview(model);
     }
 

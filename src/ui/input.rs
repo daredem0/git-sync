@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 const DIFF_SCROLL_VERTICAL_STEP: usize = 1;
 const DIFF_SCROLL_HORIZONTAL_STEP: usize = 2;
 const DIFF_SCROLL_PAGE_STEP: usize = 20;
+const PAYLOAD_SELECT_PAGE_STEP: usize = 10;
 
 /// Handles one key press and returns `true` when the app should exit.
 pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: KeyCode) -> bool {
@@ -69,6 +70,10 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
         match code {
             KeyCode::Down | KeyCode::Char('j') => state.move_payload_selection_down(model),
             KeyCode::Up | KeyCode::Char('k') => state.move_payload_selection_up(model),
+            KeyCode::PageDown => {
+                state.move_payload_selection_down_by(model, PAYLOAD_SELECT_PAGE_STEP)
+            }
+            KeyCode::PageUp => state.move_payload_selection_up_by(model, PAYLOAD_SELECT_PAGE_STEP),
             KeyCode::Enter => state.open_selected_payload_object(model),
             _ => {}
         }

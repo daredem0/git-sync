@@ -223,6 +223,55 @@ fn handle_page_keys_payload_navigation_and_enter_open_detail() {
     );
 }
 
+// Verifies that PageUp/PageDown in payload view jump pack-object selection by ten rows.
+#[test]
+fn handle_page_keys_payload_pageup_pagedown_jump_by_ten_rows() {
+    let fixture = create_diff_fixture();
+    let mut model = build_model_from_fixture(&fixture);
+    let PayloadModel::Ok(payload) = &mut model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    let base_objects = payload.objects.clone();
+    while payload.objects.len() < 25 {
+        payload.objects.extend(base_objects.clone());
+    }
+    payload.objects.truncate(25);
+
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    handle_page_keys(&mut state, &model, KeyCode::PageDown);
+    assert_eq!(
+        state.payload_selected_index, 10,
+        "PageDown should jump payload selection down by ten rows"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageDown);
+    assert_eq!(
+        state.payload_selected_index, 20,
+        "second PageDown should jump another ten rows"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageDown);
+    assert_eq!(
+        state.payload_selected_index, 24,
+        "PageDown should clamp at final object row"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageUp);
+    assert_eq!(
+        state.payload_selected_index, 14,
+        "PageUp should jump payload selection up by ten rows"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageUp);
+    handle_page_keys(&mut state, &model, KeyCode::PageUp);
+    assert_eq!(
+        state.payload_selected_index, 0,
+        "PageUp should clamp at first object row"
+    );
+}
+
 // Verifies that Esc closes payload object detail view without exiting the application.
 #[test]
 fn handle_key_press_esc_closes_payload_object_detail_view() {

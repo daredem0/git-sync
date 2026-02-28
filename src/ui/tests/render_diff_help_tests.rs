@@ -51,6 +51,15 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         diff_footer.contains("PgUp/PgDn"),
         "diff mode footer should include scrolling key hints"
     );
+
+    state.diff_view = None;
+    state.page_index = 0;
+    state.main_view = super::super::types::MainView::Payload;
+    let payload_footer = render_footer_text(&state);
+    assert!(
+        payload_footer.contains("PgUp/PgDn jump 10"),
+        "payload mode footer should include page jump key hints"
+    );
 }
 
 // Verifies that help text content changes between page mode and diff mode.
