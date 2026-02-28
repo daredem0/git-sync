@@ -229,6 +229,9 @@ Contains:
 - `--resolve pack-only|baseline` controls external delta-base resolution policy
   - `pack-only`: strict fail-closed if an external base is required
   - `baseline`: may resolve ref-delta bases from the provided repo ODB
+- repository object-format guard:
+  - payload proof path currently supports `sha1` repositories only
+  - non-`sha1` repository object formats are rejected fail-closed before payload parsing
 
 ### 7.4 Explicit Metadata Verification (`audit --verify-metadata`)
 - verifies metadata integrity against bundle + optional patch sidecar

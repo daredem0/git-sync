@@ -147,7 +147,7 @@ git-sync audit \
 
 What this reports:
 - transport entries (`name`, `size_bytes`, `sha256`)
-- PACK proof metrics (`entries_declared`, `entries_parsed`, `entries_materialized`, transfer gate status, checksum fields)
+- PACK proof metrics (`entries_declared`, `entries_parsed`, `entries_materialized`, `checksum_verified`, `thin_pack_detected`, `baseline_resolutions_count`, transfer gate status, checksum fields)
 - entry-ledger truth section (`entry_ledger`) in summary or full mode
 - materialized object inventory and per-object details
 
@@ -486,6 +486,7 @@ Global:
   - `--format table|json`
   - `--payload-ledger summary|full` (JSON mode)
   - `--resolve pack-only|baseline` (non-interactive modes)
+- Payload proof currently supports repositories using `sha1` object format only; non-`sha1` formats fail closed.
 - `audit --verify-metadata` is the explicit non-interactive verification path and requires `--bundle` and `--repo`.
 - `receive` requires prerequisite history to already exist in the receiver repository.
 - `receive --verify-metadata` validates bundle/sidecar integrity before import.

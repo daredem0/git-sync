@@ -5,7 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-02-28
+## [Unreleased]
+
+## [0.6.1] - 2026-02-28
+
+### Added
+- Payload guard for repository object format in audit/proof path:
+  - explicit support for `sha1`
+  - explicit fail-closed rejection for non-`sha1` object formats (for example `sha256`)
+- Payload tests for object-format policy:
+  - explicit `sha1` acceptance
+  - explicit non-`sha1` rejection
+
+### Changed
+- Delta PACK validation now enforces delta-payload-size semantics correctly:
+  - header size is checked against inflated delta payload bytes
+  - reconstructed result size remains validated via delta-apply checks
+- Payload proofing/runtime stability improvements for real-world ref-delta/ofs-delta bundles.
+
+### Documentation
+- V7 plan status updated with completed phases and explicit Definition-of-Done check.
+- README updated to include full payload proof field set and SHA-1 object-format constraint.
+- SDD/SAD open TODO extended with phase-6b object-format-aware hashing work.
 
 ## [0.6.0] - 2026-02-28
 
@@ -177,7 +198,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/daredem0/git-sync/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/daredem0/git-sync/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/daredem0/git-sync/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/daredem0/git-sync/compare/v0.3.2...v0.4.0
