@@ -13,6 +13,7 @@ mod util;
 #[allow(unused_imports)]
 pub use bundle::{
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
+    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
     create_bundle, create_bundle_with_options, inspect_bundle, receive_bundle_input,
     receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
 };
@@ -33,7 +34,8 @@ pub use range::resolve_repo_audit_range;
 pub use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, ChangedFile, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
-    OpenContext, ReceiveBundleOptions, ReceiveBundleResult, RepoAuditRange,
+    OpenContext, PayloadAudit, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
+    PayloadTransportEntry, ReceiveBundleOptions, ReceiveBundleResult, RepoAuditRange,
 };
 
 #[cfg(test)]

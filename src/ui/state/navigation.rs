@@ -17,8 +17,10 @@ impl AppState {
             page_index: 0,
             selected_head_index: 0,
             selected_file_indices,
+            payload_selected_index: 0,
             show_help: false,
             action_message: None,
+            payload_object_view: None,
             diff_view: None,
         }
     }
@@ -48,24 +50,28 @@ impl AppState {
         let last = self.total_pages(model).saturating_sub(1);
         self.page_index = std::cmp::min(self.page_index + 1, last);
         self.action_message = None;
+        self.payload_object_view = None;
     }
 
     /// Moves to the previous page, clamped at zero.
     pub(crate) fn previous_page(&mut self) {
         self.page_index = self.page_index.saturating_sub(1);
         self.action_message = None;
+        self.payload_object_view = None;
     }
 
     /// Jumps to the first page.
     pub(crate) fn first_page(&mut self) {
         self.page_index = 0;
         self.action_message = None;
+        self.payload_object_view = None;
     }
 
     /// Jumps to the last page.
     pub(crate) fn last_page(&mut self, model: &AuditModel) {
         self.page_index = self.total_pages(model).saturating_sub(1);
         self.action_message = None;
+        self.payload_object_view = None;
     }
 
     /// Enters commit-page mode from overview, selecting the first commit page.
@@ -199,6 +205,7 @@ impl AppState {
         }
         self.main_view = view;
         self.page_index = 0;
+        self.payload_object_view = None;
         self.action_message = None;
     }
 

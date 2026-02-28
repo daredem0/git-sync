@@ -15,6 +15,9 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
             if state.is_diff_open() {
                 state.close_diff();
                 false
+            } else if state.is_payload_object_open() {
+                state.close_payload_object();
+                false
             } else if state.page_index > 0 {
                 state.first_page();
                 false
@@ -29,6 +32,8 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
         _ => {
             if state.is_diff_open() {
                 handle_diff_keys(state, code);
+            } else if state.is_payload_object_open() {
+                handle_payload_object_keys(state, code);
             } else {
                 handle_page_keys(state, model, code);
             }
@@ -57,6 +62,12 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
     }
 
     if state.main_view == MainView::Payload {
+        match code {
+            KeyCode::Down | KeyCode::Char('j') => state.move_payload_selection_down(model),
+            KeyCode::Up | KeyCode::Char('k') => state.move_payload_selection_up(model),
+            KeyCode::Enter => state.open_selected_payload_object(model),
+            _ => {}
+        }
         return;
     }
 
@@ -88,6 +99,28 @@ pub(crate) fn handle_diff_keys(state: &mut AppState, code: KeyCode) {
         KeyCode::PageDown => state.scroll_diff_down(DIFF_SCROLL_PAGE_STEP),
         KeyCode::PageUp => state.scroll_diff_up(DIFF_SCROLL_PAGE_STEP),
         KeyCode::Home => state.reset_diff_scroll(),
+        _ => {}
+    }
+}
+
+/// Handles scrolling/navigation keys while payload object detail view is open.
+pub(crate) fn handle_payload_object_keys(state: &mut AppState, code: KeyCode) {
+    match code {
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.scroll_payload_object_down(DIFF_SCROLL_VERTICAL_STEP)
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.scroll_payload_object_up(DIFF_SCROLL_VERTICAL_STEP)
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            state.scroll_payload_object_right(DIFF_SCROLL_HORIZONTAL_STEP)
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            state.scroll_payload_object_left(DIFF_SCROLL_HORIZONTAL_STEP)
+        }
+        KeyCode::PageDown => state.scroll_payload_object_down(DIFF_SCROLL_PAGE_STEP),
+        KeyCode::PageUp => state.scroll_payload_object_up(DIFF_SCROLL_PAGE_STEP),
+        KeyCode::Home => state.reset_payload_object_scroll(),
         _ => {}
     }
 }

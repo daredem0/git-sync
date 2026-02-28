@@ -200,6 +200,51 @@ fn handle_page_keys_ignores_history_paging_in_payload_view() {
     );
 }
 
+// Verifies that payload-page navigation keys move object selection and Enter opens object detail view.
+#[test]
+fn handle_page_keys_payload_navigation_and_enter_open_detail() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    assert!(
+        state.payload_selected_index <= 1,
+        "payload selection should stay in valid object-row range"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Enter);
+    assert!(
+        state.payload_object_view.is_some(),
+        "Enter on payload object row should open object detail view"
+    );
+}
+
+// Verifies that Esc closes payload object detail view without exiting the application.
+#[test]
+fn handle_key_press_esc_closes_payload_object_detail_view() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.open_selected_payload_object(&model);
+    assert!(
+        state.payload_object_view.is_some(),
+        "precondition: payload object detail should be open"
+    );
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Esc);
+    assert!(
+        !should_exit,
+        "Esc should close payload object detail instead of exiting"
+    );
+    assert!(
+        state.payload_object_view.is_none(),
+        "Esc should close payload object detail view"
+    );
+}
+
 // Verifies that unmapped diff keys are no-ops for current scroll position.
 #[test]
 fn handle_diff_keys_unmapped_input_does_not_change_scroll_state() {

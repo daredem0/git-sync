@@ -113,6 +113,41 @@ fn render_page_in_payload_view_shows_payload_screen() {
         output.contains("Payload View"),
         "payload mode should render a dedicated payload page title"
     );
+    assert!(
+        output.contains("Transport Entries"),
+        "payload page should render transport entry table section"
+    );
+    assert!(
+        output.contains("Pack Objects"),
+        "payload page should render object listing section"
+    );
+}
+
+// Verifies that payload object drill-down renders object detail content after opening a selected payload row.
+#[test]
+fn render_page_in_payload_object_detail_mode_shows_object_content() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+    state.open_selected_payload_object(&model);
+    assert!(
+        state.payload_object_view.is_some(),
+        "precondition: payload object detail should be open"
+    );
+
+    let output = render_and_capture_text(140, 40, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("Payload Object Detail"),
+        "payload object detail render should include dedicated title"
+    );
+    assert!(
+        output.contains("Object Content"),
+        "payload object detail render should include object content section"
+    );
 }
 
 // Verifies that rendering commit page in normal mode shows commit metadata and changed-file table.
@@ -143,9 +178,11 @@ fn render_commit_page_shows_commit_detail_and_changed_files() {
 // Verifies that rendering commit page handles commit-page-load failures without panicking.
 #[test]
 fn render_commit_page_failed_mode_shows_unavailable_message() {
+    let sample = sample_model(1, 1);
     let model = super::super::types::AuditModel {
-        overview: sample_model(1, 1).overview,
+        overview: sample.overview,
         commit_pages: CommitPagesModel::Failed("metadata load failed".to_string()),
+        payload: sample.payload,
         repo_path: PathBuf::from("."),
         bundle_path: PathBuf::from("sync.bundle.zip"),
         syntax_highlighter: super::super::types::SyntaxHighlighter::load(),

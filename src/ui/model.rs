@@ -1,7 +1,9 @@
 //! TUI-layer model functionality.
 
 use super::format::single_line_error;
-use super::types::{AuditModel, CommitPagesModel, DryRunLine, OverviewModel, StatusLine};
+use super::types::{
+    AuditModel, CommitPagesModel, DryRunLine, OverviewModel, PayloadModel, StatusLine,
+};
 use crate::app::AppConfig;
 use crate::git::{self, ReceiveBundleOptions};
 use crate::version::APP_VERSION;
@@ -19,10 +21,16 @@ pub(crate) fn build_audit_model(config: &AppConfig) -> AuditModel {
         Ok(entries) => CommitPagesModel::Ok(entries),
         Err(err) => CommitPagesModel::Failed(single_line_error(&err)),
     };
+    let payload =
+        match git::collect_payload_audit_for_bundle_input(&config.bundle_path, &config.repo_path) {
+            Ok(payload) => PayloadModel::Ok(payload),
+            Err(err) => PayloadModel::Failed(single_line_error(&err)),
+        };
 
     AuditModel {
         overview,
         commit_pages,
+        payload,
         repo_path: config.repo_path.clone(),
         bundle_path: config.bundle_path.clone(),
         syntax_highlighter: super::types::SyntaxHighlighter::load(),

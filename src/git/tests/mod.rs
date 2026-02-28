@@ -14,6 +14,8 @@ mod bundle_create_tests;
 mod inspect_range_tests;
 // Focus: receive-path behavior, idempotency, and head-application checks.
 mod receive_tests;
+// Focus: payload audit transport/object listing and object detail drill-down behavior.
+mod payload_tests;
 // Focus: metadata parsing/integrity/repo-verification behavior.
 mod metadata_tests;
 // Focus: archive extraction/writing and artifact-cleanup helpers.

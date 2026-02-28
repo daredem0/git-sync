@@ -2,10 +2,14 @@
 
 mod create;
 mod inspect;
+mod payload;
 mod receive;
 
 pub use create::{create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts};
 pub use inspect::inspect_bundle;
+pub use payload::{
+    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
+};
 pub use receive::{
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
     receive_bundle_input, receive_bundle_input_with_options,

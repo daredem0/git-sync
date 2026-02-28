@@ -43,6 +43,10 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
 pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
         "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | q quit"
+    } else if state.is_payload_object_open() {
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | q quit"
+    } else if state.main_view == MainView::Payload {
+        "j/k or Up/Down select object | Enter open object detail\nTab/v toggle history/payload | ? help | q quit"
     } else if state.page_index == 0 {
         "Tab/v toggle history/payload | h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected head/diff | Esc overview/quit | ? help | q quit"
     } else {

@@ -10,6 +10,7 @@ use syntect::parsing::SyntaxSet;
 pub(crate) struct AuditModel {
     pub(crate) overview: OverviewModel,
     pub(crate) commit_pages: CommitPagesModel,
+    pub(crate) payload: PayloadModel,
     pub(crate) repo_path: PathBuf,
     pub(crate) bundle_path: PathBuf,
     pub(crate) syntax_highlighter: SyntaxHighlighter,
@@ -18,6 +19,12 @@ pub(crate) struct AuditModel {
 #[derive(Debug)]
 pub(crate) enum CommitPagesModel {
     Ok(Vec<git::HeadAuditEntry>),
+    Failed(String),
+}
+
+#[derive(Debug)]
+pub(crate) enum PayloadModel {
+    Ok(git::PayloadAudit),
     Failed(String),
 }
 
@@ -50,8 +57,10 @@ pub(crate) struct AppState {
     pub(crate) page_index: usize,
     pub(crate) selected_head_index: usize,
     pub(crate) selected_file_indices: Vec<Vec<usize>>,
+    pub(crate) payload_selected_index: usize,
     pub(crate) show_help: bool,
     pub(crate) action_message: Option<String>,
+    pub(crate) payload_object_view: Option<PayloadObjectViewState>,
     pub(crate) diff_view: Option<DiffViewState>,
 }
 
@@ -70,6 +79,16 @@ pub(crate) struct DiffViewState {
     pub(crate) commit_subject: String,
     pub(crate) file_path: String,
     pub(crate) syntax_name: String,
+    pub(crate) lines: Vec<Line<'static>>,
+    pub(crate) max_line_width: usize,
+    pub(crate) scroll_y: usize,
+    pub(crate) scroll_x: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PayloadObjectViewState {
+    pub(crate) oid: git2::Oid,
+    pub(crate) kind: git::PayloadObjectKind,
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) max_line_width: usize,
     pub(crate) scroll_y: usize,

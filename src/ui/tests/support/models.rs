@@ -3,12 +3,51 @@
 use super::fixtures::DiffFixture;
 use crate::git::{self, BundleVersion, CommitAuditEntry, CommitAuditIdentity};
 use crate::ui::types::{
-    AuditModel, CommitPagesModel, DryRunLine, OverviewModel, StatusLine, SyntaxHighlighter,
+    AuditModel, CommitPagesModel, DryRunLine, OverviewModel, PayloadModel, StatusLine,
+    SyntaxHighlighter,
 };
 use std::path::PathBuf;
 
 fn oid_from_u64(value: u64) -> git2::Oid {
     git2::Oid::from_str(&format!("{value:040x}")).expect("must create valid oid")
+}
+
+fn sample_payload_audit() -> git::PayloadAudit {
+    git::PayloadAudit {
+        bundle_version: BundleVersion::V2,
+        heads: vec![git::BundleHead {
+            oid: oid_from_u64(42),
+            reference: "refs/heads/main".to_string(),
+        }],
+        transport_entries: vec![
+            git::PayloadTransportEntry {
+                name: "sync.bundle".to_string(),
+                size_bytes: 1234,
+                sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+            },
+            git::PayloadTransportEntry {
+                name: "sync.bundle.caudit.json".to_string(),
+                size_bytes: 456,
+                sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+            },
+        ],
+        objects: vec![
+            git::PayloadObjectEntry {
+                oid: oid_from_u64(1000),
+                kind: git::PayloadObjectKind::Commit,
+                size_bytes: 180,
+                reachable_from_heads: true,
+            },
+            git::PayloadObjectEntry {
+                oid: oid_from_u64(1001),
+                kind: git::PayloadObjectKind::Blob,
+                size_bytes: 42,
+                reachable_from_heads: false,
+            },
+        ],
+    }
 }
 
 /// Builds a sample model with synthetic commits and file stats.
@@ -67,6 +106,7 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
             dry_run: DryRunLine::Failed("not needed for state tests".to_string()),
         },
         commit_pages,
+        payload: PayloadModel::Ok(sample_payload_audit()),
         repo_path: PathBuf::from("."),
         bundle_path: PathBuf::from("sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -147,6 +187,7 @@ pub(crate) fn sample_multi_head_model(commit_counts: &[usize]) -> AuditModel {
             }),
         },
         commit_pages: CommitPagesModel::Ok(head_entries),
+        payload: PayloadModel::Ok(sample_payload_audit()),
         repo_path: PathBuf::from("/tmp/repo"),
         bundle_path: PathBuf::from("/tmp/sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -197,6 +238,7 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
                 }],
             }],
         }]),
+        payload: PayloadModel::Ok(sample_payload_audit()),
         repo_path: PathBuf::from("/tmp/repo"),
         bundle_path: PathBuf::from("/tmp/sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -215,6 +257,11 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
         .first()
         .map(|entry| entry.files.clone())
         .unwrap_or_default();
+    let payload = git::collect_payload_audit_for_bundle_input(
+        &fixture.bundle_archive_path,
+        &fixture.receiver_dir,
+    )
+    .expect("must collect payload audit for fixture bundle");
 
     AuditModel {
         overview: OverviewModel {
@@ -234,6 +281,7 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
             line_stats,
             commits: fixture.entries.clone(),
         }]),
+        payload: PayloadModel::Ok(payload),
         repo_path: fixture.receiver_dir.clone(),
         bundle_path: fixture.bundle_archive_path.clone(),
         syntax_highlighter: SyntaxHighlighter::load(),
