@@ -7,6 +7,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-02-28
+
+### Added
+- CI release workflow now extracts release notes from the matching `CHANGELOG.md` version section and publishes them with the GitHub Release.
+
+### Changed
+- README was restructured toward an operator-first flow with clearer pre-air-gap audit guidance.
+- Command examples now use `git-sync` directly instead of `cargo run`.
+- Workflow documentation now distinguishes required core steps from optional non-interactive audit/reporting steps.
+
 ## [0.3.1] - 2026-02-28
 
 ### Fixed
@@ -70,7 +80,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/daredem0/git-sync/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/daredem0/git-sync/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/daredem0/git-sync/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/daredem0/git-sync/compare/0.2.0...v0.2.1
