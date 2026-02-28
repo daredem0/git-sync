@@ -56,6 +56,7 @@ pub(crate) enum DryRunLine {
 #[derive(Debug)]
 pub(crate) struct AppState {
     pub(crate) main_view: MainView,
+    pub(crate) payload_sub_view: PayloadSubView,
     pub(crate) payload_sort_mode: PayloadSortMode,
     pub(crate) page_index: usize,
     pub(crate) selected_head_index: usize,
@@ -74,6 +75,12 @@ pub(crate) struct AppState {
 pub(crate) enum MainView {
     History,
     Payload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PayloadSubView {
+    Objects,
+    Entries,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,6 +2,7 @@
 
 use crate::ui::types::{
     AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, PayloadSortMode,
+    PayloadSubView,
 };
 
 impl AppState {
@@ -16,6 +17,7 @@ impl AppState {
         };
         Self {
             main_view: MainView::History,
+            payload_sub_view: PayloadSubView::Objects,
             page_index: 0,
             selected_head_index: 0,
             selected_file_indices,

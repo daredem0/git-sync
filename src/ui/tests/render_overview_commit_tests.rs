@@ -3,7 +3,7 @@
 // Focus: rendering behavior for overview and commit pages, including unavailable and out-of-range commit states.
 
 use super::super::render::{render_commit_page, render_overview_page, render_page};
-use super::super::types::{CommitPagesModel, PayloadModel};
+use super::super::types::{CommitPagesModel, PayloadModel, PayloadSubView};
 use super::support::*;
 use crate::git::{self, BundleVersion};
 use std::path::PathBuf;
@@ -181,6 +181,40 @@ fn render_page_in_payload_view_shows_payload_screen() {
     assert!(
         output.contains("trailer checksum: cccccccccccccccccccccccccccccccccccccccc"),
         "payload page should render full trailer pack checksum"
+    );
+}
+
+// Verifies that payload entries subview renders the raw ledger table headers.
+#[test]
+fn entries_table_renders_expected_headers() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+    state.payload_sub_view = PayloadSubView::Entries;
+
+    let output = render_and_capture_text(160, 44, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("OFFSET"),
+        "entries subview should render OFFSET table header"
+    );
+    assert!(
+        output.contains("KIND"),
+        "entries subview should render KIND table header"
+    );
+    assert!(
+        output.contains("OUT_SIZE"),
+        "entries subview should render OUT_SIZE table header"
+    );
+    assert!(
+        output.contains("BASE"),
+        "entries subview should render BASE table header"
+    );
+    assert!(
+        output.contains("RESOLVED"),
+        "entries subview should render RESOLVED table header"
     );
 }
 

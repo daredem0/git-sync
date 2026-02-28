@@ -90,6 +90,8 @@ pub struct PayloadAudit {
     pub transport_entries: Vec<PayloadTransportEntry>,
     /// Verifiable PACK-level completeness and integrity metrics.
     pub pack_proof: PayloadPackProof,
+    /// Authoritative PACK entry ledger parsed from raw bundle pack bytes.
+    pub entry_ledger: PackEntryLedger,
     /// All imported objects collected from the bundle pack payload.
     pub objects: Vec<PayloadObjectEntry>,
 }

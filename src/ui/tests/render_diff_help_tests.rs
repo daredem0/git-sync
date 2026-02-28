@@ -5,7 +5,7 @@
 use super::super::render::{
     help_text_for_mode, render_diff_view, render_footer_text, render_help_overlay,
 };
-use super::super::types::DiffViewState;
+use super::super::types::{DiffViewState, PayloadSubView};
 use super::support::*;
 use ratatui::text::Line;
 
@@ -63,6 +63,17 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
     assert!(
         payload_footer.contains("s cycle sort"),
         "payload mode footer should include sort-cycle key hint"
+    );
+
+    state.payload_sub_view = PayloadSubView::Entries;
+    let entries_footer = render_footer_text(&state);
+    assert!(
+        entries_footer.contains("e toggle objects/entries"),
+        "payload entries footer should include subview toggle hint"
+    );
+    assert!(
+        !entries_footer.contains("s cycle sort"),
+        "payload entries footer should not include object-sort hint"
     );
 }
 
@@ -131,7 +142,7 @@ fn render_help_overlay_page_mode_renders_page_navigation_hints() {
         "page help overlay should label page-view help mode"
     );
     assert!(
-        output.contains("s: in payload view"),
+        output.contains("s: in payload objects view"),
         "page help overlay should include payload sort hint"
     );
 }

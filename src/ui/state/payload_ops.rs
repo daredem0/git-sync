@@ -4,7 +4,7 @@ use crate::git;
 use crate::ui::format::single_line_error;
 use crate::ui::types::{
     AppState, AuditModel, PayloadModel, PayloadObjectViewState, PayloadPreviewState,
-    PayloadSortMode, SyntaxHighlighter,
+    PayloadSortMode, PayloadSubView, SyntaxHighlighter,
 };
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -25,6 +25,10 @@ impl AppState {
 
     /// Refreshes cached payload preview content for the selected object row.
     pub(crate) fn refresh_payload_preview(&mut self, model: &AuditModel) {
+        if self.payload_sub_view != PayloadSubView::Objects {
+            self.payload_preview = None;
+            return;
+        }
         let PayloadModel::Ok(payload) = &model.payload else {
             self.payload_preview = None;
             return;
@@ -80,7 +84,11 @@ impl AppState {
         let PayloadModel::Ok(payload) = &model.payload else {
             return;
         };
-        let sorted_len = self.payload_sorted_objects(payload).len();
+        let sorted_len = if self.payload_sub_view == PayloadSubView::Entries {
+            payload.entry_ledger.entries.len()
+        } else {
+            self.payload_sorted_objects(payload).len()
+        };
         if sorted_len == 0 {
             return;
         }
@@ -88,17 +96,25 @@ impl AppState {
             self.payload_selected_index.saturating_add(step),
             sorted_len - 1,
         );
-        self.refresh_payload_preview(model);
+        if self.payload_sub_view == PayloadSubView::Objects {
+            self.refresh_payload_preview(model);
+        }
     }
 
     /// Moves payload object selection up by `step` rows.
     pub(crate) fn move_payload_selection_up_by(&mut self, model: &AuditModel, step: usize) {
         self.payload_selected_index = self.payload_selected_index.saturating_sub(step);
-        self.refresh_payload_preview(model);
+        if self.payload_sub_view == PayloadSubView::Objects {
+            self.refresh_payload_preview(model);
+        }
     }
 
     /// Opens detail view for the currently selected payload object row.
     pub(crate) fn open_selected_payload_object(&mut self, model: &AuditModel) {
+        if self.payload_sub_view != PayloadSubView::Objects {
+            self.action_message = Some("Enter opens detail only in Objects view".to_string());
+            return;
+        }
         let PayloadModel::Ok(payload) = &model.payload else {
             self.action_message = Some("payload audit data is unavailable".to_string());
             return;
@@ -242,6 +258,9 @@ impl AppState {
 
     /// Cycles payload list sorting mode and preserves current object selection when possible.
     pub(crate) fn cycle_payload_sort_mode(&mut self, model: &AuditModel) {
+        if self.payload_sub_view != PayloadSubView::Objects {
+            return;
+        }
         let PayloadModel::Ok(payload) = &model.payload else {
             return;
         };
@@ -264,6 +283,67 @@ impl AppState {
             .and_then(|oid| next_sorted.iter().position(|entry| entry.oid == oid))
             .unwrap_or(0);
         self.refresh_payload_preview(model);
+    }
+
+    /// Toggles payload main-page subview between object rows and raw ledger entry rows.
+    pub(crate) fn toggle_payload_sub_view(&mut self, model: &AuditModel) {
+        self.payload_sub_view = match self.payload_sub_view {
+            PayloadSubView::Objects => PayloadSubView::Entries,
+            PayloadSubView::Entries => PayloadSubView::Objects,
+        };
+
+        let PayloadModel::Ok(payload) = &model.payload else {
+            self.payload_preview = None;
+            self.payload_selected_index = 0;
+            return;
+        };
+        let max_index = if self.payload_sub_view == PayloadSubView::Entries {
+            payload.entry_ledger.entries.len().saturating_sub(1)
+        } else {
+            self.payload_sorted_objects(payload).len().saturating_sub(1)
+        };
+        self.payload_selected_index = std::cmp::min(self.payload_selected_index, max_index);
+        self.action_message = None;
+        if self.payload_sub_view == PayloadSubView::Objects {
+            self.refresh_payload_preview(model);
+        } else {
+            self.payload_preview = None;
+        }
+    }
+
+    /// Returns selected ledger entry row while in payload entries subview.
+    pub(crate) fn payload_selected_entry<'a>(
+        &self,
+        payload: &'a git::PayloadAudit,
+    ) -> Option<&'a git::PackEntryRecord> {
+        if self.payload_sub_view != PayloadSubView::Entries {
+            return None;
+        }
+        payload
+            .entry_ledger
+            .entries
+            .get(std::cmp::min(
+                self.payload_selected_index,
+                payload.entry_ledger.entries.len().saturating_sub(1),
+            ))
+    }
+
+    /// Returns human-readable payload subview label.
+    pub(crate) fn payload_sub_view_label(&self) -> &'static str {
+        match self.payload_sub_view {
+            PayloadSubView::Objects => "objects",
+            PayloadSubView::Entries => "entries",
+        }
+    }
+
+    /// Returns whether payload main page currently shows object rows.
+    pub(crate) fn is_payload_objects_view(&self) -> bool {
+        self.payload_sub_view == PayloadSubView::Objects
+    }
+
+    /// Returns whether payload main page currently shows ledger entry rows.
+    pub(crate) fn is_payload_entries_view(&self) -> bool {
+        self.payload_sub_view == PayloadSubView::Entries
     }
 
     /// Returns human-readable label for current payload sort mode.

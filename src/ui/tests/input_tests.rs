@@ -3,7 +3,7 @@
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
 use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};
-use super::super::types::{DiffViewState, MainView, PayloadModel};
+use super::super::types::{DiffViewState, MainView, PayloadModel, PayloadSubView};
 use super::support::*;
 use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
@@ -159,6 +159,42 @@ fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
         state.main_view,
         MainView::History,
         "Tab should toggle from payload back to history view"
+    );
+}
+
+// Verifies that payload subview defaults to Objects in fresh app state.
+#[test]
+fn payload_subview_defaults_to_objects() {
+    let model = sample_model(1, 1);
+    let state = super::super::types::AppState::new(&model);
+    assert_eq!(
+        state.payload_sub_view,
+        PayloadSubView::Objects,
+        "new app state should default payload subview to Objects"
+    );
+}
+
+// Verifies that key `e` toggles payload subview between Objects and Entries on payload main page.
+#[test]
+fn payload_key_e_toggles_objects_entries() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.page_index = 0;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('e'));
+    assert_eq!(
+        state.payload_sub_view,
+        PayloadSubView::Entries,
+        "first e press should switch payload subview to Entries"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('e'));
+    assert_eq!(
+        state.payload_sub_view,
+        PayloadSubView::Objects,
+        "second e press should switch payload subview back to Objects"
     );
 }
 

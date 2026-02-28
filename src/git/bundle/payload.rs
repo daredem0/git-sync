@@ -122,6 +122,7 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
             heads: inspection.heads.clone(),
             transport_entries,
             pack_proof,
+            entry_ledger: verification.ledger,
             objects,
         };
         return Ok(PayloadSession {
@@ -160,6 +161,7 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
         heads: inspection.heads.clone(),
         transport_entries,
         pack_proof,
+        entry_ledger: verification.ledger,
         objects,
     };
 

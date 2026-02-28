@@ -74,7 +74,10 @@ pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: K
                 state.move_payload_selection_down_by(model, PAYLOAD_SELECT_PAGE_STEP)
             }
             KeyCode::PageUp => state.move_payload_selection_up_by(model, PAYLOAD_SELECT_PAGE_STEP),
-            KeyCode::Char('s') => state.cycle_payload_sort_mode(model),
+            KeyCode::Char('s') if state.is_payload_objects_view() => {
+                state.cycle_payload_sort_mode(model)
+            }
+            KeyCode::Char('e') => state.toggle_payload_sub_view(model),
             KeyCode::Enter => state.open_selected_payload_object(model),
             _ => {}
         }

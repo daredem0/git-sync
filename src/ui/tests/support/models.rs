@@ -42,6 +42,36 @@ fn sample_payload_audit() -> git::PayloadAudit {
             computed_pack_checksum: "cccccccccccccccccccccccccccccccccccccccc".to_string(),
             trailer_pack_checksum: "cccccccccccccccccccccccccccccccccccccccc".to_string(),
         },
+        entry_ledger: git::PackEntryLedger {
+            pack_version: 2,
+            declared_entry_count: 2,
+            entries: vec![
+                git::PackEntryRecord {
+                    idx: 0,
+                    offset: 12,
+                    kind: git::PackEntryKind::Commit,
+                    out_size: 180,
+                    base_ref: None,
+                    result_oid: Some(oid_from_u64(1000)),
+                    result_kind: Some(git::PayloadObjectKind::Commit),
+                    resolved: true,
+                    resolved_via: Some(git::ResolutionSource::InPack),
+                    note: None,
+                },
+                git::PackEntryRecord {
+                    idx: 1,
+                    offset: 64,
+                    kind: git::PackEntryKind::Blob,
+                    out_size: 42,
+                    base_ref: None,
+                    result_oid: Some(oid_from_u64(1001)),
+                    result_kind: Some(git::PayloadObjectKind::Blob),
+                    resolved: true,
+                    resolved_via: Some(git::ResolutionSource::InPack),
+                    note: None,
+                },
+            ],
+        },
         objects: vec![
             git::PayloadObjectEntry {
                 oid: oid_from_u64(1000),

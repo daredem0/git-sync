@@ -1,7 +1,7 @@
 //! TUI-layer payload-page functionality.
 
 use super::render_footer_text;
-use crate::git::PayloadObjectKind;
+use crate::git::{PackEntryBaseRef, PackEntryKind, PayloadObjectKind};
 use crate::ui::types::{AppState, AuditModel, PayloadModel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -18,7 +18,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
         return;
     }
 
-    let title_text = payload_title_text(model);
+    let title_text = payload_title_text(model, state);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -52,7 +52,11 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
                 .constraints([Constraint::Length(9), Constraint::Min(8)])
                 .split(body_chunks[0]);
             render_transport_entries_table(frame, payload, left_chunks[0]);
-            render_objects_table(frame, payload, state, left_chunks[1]);
+            if state.is_payload_entries_view() {
+                render_entries_table(frame, payload, state, left_chunks[1]);
+            } else {
+                render_objects_table(frame, payload, state, left_chunks[1]);
+            }
             render_pack_preview(frame, model, state, body_chunks[1]);
         }
     }
@@ -63,7 +67,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
 }
 
 /// Builds payload-page top summary including pack-proof invariants.
-fn payload_title_text(model: &AuditModel) -> String {
+fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
     match &model.payload {
         PayloadModel::Ok(payload) => {
             let proof = &payload.pack_proof;
@@ -80,13 +84,14 @@ fn payload_title_text(model: &AuditModel) -> String {
                  objects: {}/{} | hash: {}\n\
                  computed checksum: {}\n\
                  trailer checksum: {}\n\
-                 Use j/k to select object rows and Enter to open object detail",
+                 subview: {} (toggle: e)",
                 proof.pack_version,
                 proof.processed_object_count,
                 proof.declared_object_count,
                 proof.hash_algorithm,
                 proof.computed_pack_checksum,
-                proof.trailer_pack_checksum
+                proof.trailer_pack_checksum,
+                state.payload_sub_view_label()
             )
         }
         PayloadModel::Failed(_) => "Payload View\n\
@@ -145,71 +150,200 @@ fn render_transport_entries_table(
 
 /// Renders selected pack object preview (commit/tree/blob/tag) on payload page.
 fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState, area: Rect) {
-    let selected_object = match &model.payload {
-        PayloadModel::Ok(payload) => {
-            let sorted = state.payload_sorted_objects(payload);
-            sorted
-                .get(std::cmp::min(
-                    state.payload_selected_index,
-                    sorted.len().saturating_sub(1),
-                ))
-                .copied()
-        }
-        PayloadModel::Failed(_) => None,
-    };
-    let lines: Vec<Line<'_>> = match &state.payload_preview {
-        Some(preview) => {
-            let mut raw_lines = vec![format!(
-                "selected: {} ({})",
-                preview.oid,
-                payload_kind_label(preview.kind)
-            )];
-            if let Some(entry) = selected_object {
-                raw_lines.push(format!(
-                    "reachable from heads: {}",
-                    if entry.reachable_from_heads { "yes" } else { "no" }
-                ));
-                raw_lines.push(format!(
-                    "context head: {}",
-                    entry
-                        .context_head_index
-                        .map(|index| format!("#{}", index + 1))
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-                raw_lines.push(format!(
-                    "context commit order: {}",
-                    entry
-                        .context_commit_order
-                        .map(|order| order.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-                raw_lines.push(format!(
-                    "context path: {}",
-                    entry.context_path.as_deref().unwrap_or("-")
-                ));
-            }
-            raw_lines.push(String::new());
-            let prefix_len = raw_lines.len();
-            raw_lines.extend(preview.lines.iter().cloned());
-            let syntax_start = preview.syntax_start_index.map(|index| index + prefix_len);
-            render_preview_lines_to_area(
-                raw_lines,
-                area,
-                preview.syntax_path_hint.as_deref(),
-                syntax_start,
-                &model.syntax_highlighter,
-            )
-        }
-        None => vec![
-            Line::from("No preview loaded."),
-            Line::from("Use j/k to select a pack object row."),
-            Line::from("Enter opens full object detail."),
+    let lines: Vec<Line<'_>> = match &model.payload {
+        PayloadModel::Failed(_) => vec![
+            Line::from("Payload data is unavailable."),
+            Line::from("Preview cannot be rendered."),
         ],
+        PayloadModel::Ok(payload) if state.is_payload_entries_view() => {
+            if let Some(entry) = state.payload_selected_entry(payload) {
+                let raw_lines = vec![
+                    format!("entry #{}", entry.idx + 1),
+                    format!("offset: {}", entry.offset),
+                    format!("kind: {}", payload_entry_kind_label(entry.kind)),
+                    format!("out size: {}", entry.out_size),
+                    format!("base: {}", payload_entry_base_ref_label(entry.base_ref.as_ref())),
+                    format!(
+                        "resolved: {}",
+                        if entry.resolved { "yes" } else { "no" }
+                    ),
+                    format!(
+                        "resolved via: {}",
+                        match entry.resolved_via {
+                            Some(crate::git::ResolutionSource::InPack) => "in-pack",
+                            Some(crate::git::ResolutionSource::Baseline) => "baseline",
+                            None => "-",
+                        }
+                    ),
+                    format!(
+                        "oid: {}",
+                        entry
+                            .result_oid
+                            .map(|oid| oid.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ),
+                    format!(
+                        "note: {}",
+                        entry.note.as_deref().unwrap_or("-")
+                    ),
+                ];
+                render_preview_lines_to_area(
+                    raw_lines,
+                    area,
+                    None,
+                    None,
+                    &model.syntax_highlighter,
+                )
+            } else {
+                vec![
+                    Line::from("No entry selected."),
+                    Line::from("Use j/k to select a ledger entry row."),
+                ]
+            }
+        }
+        PayloadModel::Ok(payload) => {
+            let selected_object = {
+                let sorted = state.payload_sorted_objects(payload);
+                sorted
+                    .get(std::cmp::min(
+                        state.payload_selected_index,
+                        sorted.len().saturating_sub(1),
+                    ))
+                    .copied()
+            };
+            match &state.payload_preview {
+                Some(preview) => {
+                    let mut raw_lines = vec![format!(
+                        "selected: {} ({})",
+                        preview.oid,
+                        payload_kind_label(preview.kind)
+                    )];
+                    if let Some(entry) = selected_object {
+                        raw_lines.push(format!(
+                            "reachable from heads: {}",
+                            if entry.reachable_from_heads { "yes" } else { "no" }
+                        ));
+                        raw_lines.push(format!(
+                            "context head: {}",
+                            entry
+                                .context_head_index
+                                .map(|index| format!("#{}", index + 1))
+                                .unwrap_or_else(|| "-".to_string())
+                        ));
+                        raw_lines.push(format!(
+                            "context commit order: {}",
+                            entry
+                                .context_commit_order
+                                .map(|order| order.to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        ));
+                        raw_lines.push(format!(
+                            "context path: {}",
+                            entry.context_path.as_deref().unwrap_or("-")
+                        ));
+                    }
+                    raw_lines.push(String::new());
+                    let prefix_len = raw_lines.len();
+                    raw_lines.extend(preview.lines.iter().cloned());
+                    let syntax_start = preview.syntax_start_index.map(|index| index + prefix_len);
+                    render_preview_lines_to_area(
+                        raw_lines,
+                        area,
+                        preview.syntax_path_hint.as_deref(),
+                        syntax_start,
+                        &model.syntax_highlighter,
+                    )
+                }
+                None => vec![
+                    Line::from("No preview loaded."),
+                    Line::from("Use j/k to select a pack object row."),
+                    Line::from("Enter opens full object detail."),
+                ],
+            }
+        }
     };
 
     let preview = Paragraph::new(ratatui::text::Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title("Pack Preview"));
     frame.render_widget(preview, area);
+}
+
+/// Renders payload entry-ledger table with selected-row highlight.
+fn render_entries_table(
+    frame: &mut Frame<'_>,
+    payload: &crate::git::PayloadAudit,
+    state: &AppState,
+    area: Rect,
+) {
+    let entries = &payload.entry_ledger.entries;
+    let rows: Vec<Row<'_>> = if entries.is_empty() {
+        vec![Row::new(vec![
+            Cell::from("(no entries)"),
+            Cell::from("-"),
+            Cell::from("-"),
+            Cell::from("-"),
+            Cell::from("-"),
+            Cell::from("-"),
+            Cell::from("-"),
+        ])]
+    } else {
+        entries
+            .iter()
+            .map(|entry| {
+                Row::new(vec![
+                    Cell::from((entry.idx + 1).to_string()),
+                    Cell::from(entry.offset.to_string()),
+                    Cell::from(payload_entry_kind_label(entry.kind)),
+                    Cell::from(entry.out_size.to_string()),
+                    Cell::from(payload_entry_base_ref_label(entry.base_ref.as_ref())),
+                    Cell::from(
+                        entry
+                            .result_oid
+                            .map(short_oid)
+                            .unwrap_or_else(|| "-".to_string()),
+                    ),
+                    Cell::from(if entry.resolved {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    }),
+                ])
+            })
+            .collect()
+    };
+    let title = format!(
+        "Pack Entries ({} parsed / {} declared)",
+        entries.len(),
+        payload.entry_ledger.declared_entry_count
+    );
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(5),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(8),
+        ],
+    )
+    .header(
+        Row::new(vec!["#", "OFFSET", "KIND", "OUT_SIZE", "BASE", "OID", "RESOLVED"])
+            .style(Style::default().add_modifier(Modifier::BOLD)),
+    )
+    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .block(Block::default().borders(Borders::ALL).title(title))
+    .column_spacing(1);
+
+    let mut table_state = TableState::default();
+    if !entries.is_empty() {
+        table_state.select(Some(std::cmp::min(
+            state.payload_selected_index,
+            entries.len() - 1,
+        )));
+    }
+    frame.render_stateful_widget(table, area, &mut table_state);
 }
 
 /// Clips plain preview lines to panel height and highlights only visible lines.
@@ -494,6 +628,27 @@ fn payload_kind_label(kind: PayloadObjectKind) -> &'static str {
         PayloadObjectKind::Blob => "blob",
         PayloadObjectKind::Tag => "tag",
         PayloadObjectKind::Unknown => "unknown",
+    }
+}
+
+/// Returns compact display label for pack entry kind.
+fn payload_entry_kind_label(kind: PackEntryKind) -> &'static str {
+    match kind {
+        PackEntryKind::Commit => "commit",
+        PackEntryKind::Tree => "tree",
+        PackEntryKind::Blob => "blob",
+        PackEntryKind::Tag => "tag",
+        PackEntryKind::OfsDelta => "ofs-delta",
+        PackEntryKind::RefDelta => "ref-delta",
+    }
+}
+
+/// Returns compact display label for pack entry base references.
+fn payload_entry_base_ref_label(base_ref: Option<&PackEntryBaseRef>) -> String {
+    match base_ref {
+        Some(PackEntryBaseRef::BaseOffset { distance, .. }) => format!("ofs:{distance}"),
+        Some(PackEntryBaseRef::BaseOid(oid)) => format!("oid:{}", short_oid(*oid)),
+        None => "-".to_string(),
     }
 }
 
