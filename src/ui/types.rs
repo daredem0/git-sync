@@ -46,12 +46,19 @@ pub(crate) enum DryRunLine {
 
 #[derive(Debug)]
 pub(crate) struct AppState {
+    pub(crate) main_view: MainView,
     pub(crate) page_index: usize,
     pub(crate) selected_head_index: usize,
     pub(crate) selected_file_indices: Vec<Vec<usize>>,
     pub(crate) show_help: bool,
     pub(crate) action_message: Option<String>,
     pub(crate) diff_view: Option<DiffViewState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MainView {
+    History,
+    Payload,
 }
 
 #[derive(Debug, Clone)]

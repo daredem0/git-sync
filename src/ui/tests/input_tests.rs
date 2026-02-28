@@ -3,7 +3,7 @@
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
 use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};
-use super::super::types::DiffViewState;
+use super::super::types::{DiffViewState, MainView};
 use super::support::*;
 use crossterm::event::KeyCode;
 use ratatui::text::Line;
@@ -118,6 +118,62 @@ fn handle_page_keys_enter_on_overview_enters_commit_pages() {
     assert!(
         state.diff_view.is_none(),
         "Enter on overview should not directly open a diff view"
+    );
+}
+
+// Verifies that page-mode shortcuts switch between history and payload top-level views.
+#[test]
+fn handle_page_keys_view_switch_shortcuts_toggle_and_select_views() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 1;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('2'));
+    assert_eq!(
+        state.main_view,
+        MainView::Payload,
+        "key 2 should switch to payload view"
+    );
+    assert_eq!(
+        state.page_index, 0,
+        "switching to payload view should reset to main page index"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('1'));
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "key 1 should switch back to history view"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('v'));
+    assert_eq!(
+        state.main_view,
+        MainView::Payload,
+        "key v should toggle from history to payload view"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Tab);
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "Tab should toggle from payload back to history view"
+    );
+}
+
+// Verifies that history page navigation keys are ignored while payload view is selected.
+#[test]
+fn handle_page_keys_ignores_history_paging_in_payload_view() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.page_index = 0;
+
+    handle_page_keys(&mut state, &model, KeyCode::Right);
+
+    assert_eq!(
+        state.page_index, 0,
+        "payload mode should ignore history page navigation keys"
     );
 }
 

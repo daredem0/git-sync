@@ -5,8 +5,9 @@ mod commit_table;
 mod diff_view;
 mod overview;
 mod overview_tables;
+mod payload;
 
-use crate::ui::types::{AppState, AuditModel};
+use crate::ui::types::{AppState, AuditModel, MainView};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -14,15 +15,23 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 pub(crate) use commit::render_commit_page;
 pub(crate) use diff_view::render_diff_view;
 pub(crate) use overview::render_overview_page;
+pub(crate) use payload::render_payload_page;
 
 /// Renders the active page (overview, commit, or diff) and optional help overlay.
 pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     if state.is_diff_open() {
         render_diff_view(frame, state);
-    } else if state.page_index == 0 {
-        render_overview_page(frame, model, state);
     } else {
-        render_commit_page(frame, model, state);
+        match state.main_view {
+            MainView::History => {
+                if state.page_index == 0 {
+                    render_overview_page(frame, model, state);
+                } else {
+                    render_commit_page(frame, model, state);
+                }
+            }
+            MainView::Payload => render_payload_page(frame, model, state),
+        }
     }
 
     if state.show_help {
@@ -33,9 +42,9 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
 /// Renders footer key-hint text, including transient action messages.
 pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
-        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset | Esc back | ? help | q quit"
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | q quit"
     } else {
-        "h/Left prev page | l/Right next page | j/k or Up/Down move selection | Enter open selected head/diff | Esc overview/quit | ? help | q quit"
+        "Tab/v toggle history/payload | h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected head/diff | Esc overview/quit | ? help | q quit"
     };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
@@ -74,6 +83,9 @@ pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
          - l / Right: next page\n\
          - j / Down: move head selection on overview, file selection on commit pages\n\
          - k / Up: move head selection on overview, file selection on commit pages\n\
+         - Tab / v: toggle History/Payload main view\n\
+         - 1: switch to History main view\n\
+         - 2: switch to Payload main view\n\
          - g: first page\n\
          - G: last page\n\
          - Enter: open selected head (overview) or selected file diff (commit page)\n\

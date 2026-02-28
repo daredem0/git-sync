@@ -2,7 +2,7 @@
 
 // Focus: rendering behavior for overview and commit pages, including unavailable and out-of-range commit states.
 
-use super::super::render::{render_commit_page, render_overview_page};
+use super::super::render::{render_commit_page, render_overview_page, render_page};
 use super::super::types::CommitPagesModel;
 use super::support::*;
 use crate::git::{self, BundleVersion};
@@ -95,6 +95,23 @@ fn render_overview_page_renders_selected_head_would_change_rows() {
     assert!(
         !output.contains("head-1-file-1.txt"),
         "unselected head file rows should not be shown in would-change table"
+    );
+}
+
+// Verifies that selecting payload view renders payload page instead of history overview/commit pages.
+#[test]
+fn render_page_in_payload_view_shows_payload_screen() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+
+    let output = render_and_capture_text(140, 40, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("Payload View"),
+        "payload mode should render a dedicated payload page title"
     );
 }
 

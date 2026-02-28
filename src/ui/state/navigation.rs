@@ -1,6 +1,6 @@
 //! TUI-layer navigation functionality.
 
-use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine};
+use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine, MainView};
 
 impl AppState {
     /// Creates initial UI state for the provided audit model.
@@ -13,6 +13,7 @@ impl AppState {
             CommitPagesModel::Failed(_) => Vec::new(),
         };
         Self {
+            main_view: MainView::History,
             page_index: 0,
             selected_head_index: 0,
             selected_file_indices,
@@ -24,6 +25,10 @@ impl AppState {
 
     /// Returns the total number of renderable pages in the current model.
     pub(crate) fn total_pages(&self, model: &AuditModel) -> usize {
+        if self.main_view == MainView::Payload {
+            return 1;
+        }
+
         match &model.commit_pages {
             CommitPagesModel::Ok(entries) => {
                 if entries.is_empty() {
@@ -165,6 +170,35 @@ impl AppState {
     /// Closes the diff view and clears transient action messages.
     pub(crate) fn close_diff(&mut self) {
         self.diff_view = None;
+        self.action_message = None;
+    }
+
+    /// Toggles main page view mode between history and payload.
+    pub(crate) fn toggle_main_view(&mut self) {
+        let next = match self.main_view {
+            MainView::History => MainView::Payload,
+            MainView::Payload => MainView::History,
+        };
+        self.set_main_view(next);
+    }
+
+    /// Switches to history main-page view.
+    pub(crate) fn show_history_view(&mut self) {
+        self.set_main_view(MainView::History);
+    }
+
+    /// Switches to payload main-page view.
+    pub(crate) fn show_payload_view(&mut self) {
+        self.set_main_view(MainView::Payload);
+    }
+
+    /// Sets main-page view mode and normalizes page-scoped state.
+    fn set_main_view(&mut self, view: MainView) {
+        if self.main_view == view {
+            return;
+        }
+        self.main_view = view;
+        self.page_index = 0;
         self.action_message = None;
     }
 

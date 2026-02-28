@@ -1,6 +1,6 @@
 //! TUI-layer input functionality.
 
-use super::types::{AppState, AuditModel};
+use super::types::{AppState, AuditModel, MainView};
 use crossterm::event::KeyCode;
 
 const DIFF_SCROLL_VERTICAL_STEP: usize = 1;
@@ -39,6 +39,26 @@ pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: K
 
 /// Handles navigation keys while the app is in page mode.
 pub(crate) fn handle_page_keys(state: &mut AppState, model: &AuditModel, code: KeyCode) {
+    match code {
+        KeyCode::Tab | KeyCode::Char('v') => {
+            state.toggle_main_view();
+            return;
+        }
+        KeyCode::Char('1') => {
+            state.show_history_view();
+            return;
+        }
+        KeyCode::Char('2') => {
+            state.show_payload_view();
+            return;
+        }
+        _ => {}
+    }
+
+    if state.main_view == MainView::Payload {
+        return;
+    }
+
     match code {
         KeyCode::Right | KeyCode::Char('l') => state.next_page(model),
         KeyCode::Left | KeyCode::Char('h') => state.previous_page(),
