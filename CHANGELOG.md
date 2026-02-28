@@ -7,12 +7,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-28
+
 ### Added
 - Payload entry-ledger rows now include `reconstructed_size` in memory, JSON export, and schema output.
 - Payload `Entries` UI now shows both `HDR_SIZE` and `RECON_SIZE` columns for explicit delta-stream versus reconstructed-size review.
 - Overview now shows `bundle fully reachable from heads: yes|no (...)` as an immediate history-versus-payload audit signal.
 - Overview main page now supports explicit focus switching between `Heads To Import` and `Would Change` tables.
 - Direct page shortcuts were added/standardized in the UI flow: `1` main overview, `2` payload page, `3` first commit detail page.
+- Added proof-boundary guard type (`VerifiedPayload`) in payload PACK verification to enforce fail-closed invariant checks before exposing verification results.
+- Added centralized digest module (`src/git/digest.rs`) with shared SHA-1/SHA-256 helpers and dedicated digest test coverage.
 
 ### Changed
 - Clarified PACK delta size semantics: pack-entry size for delta entries is treated as delta-stream byte length (spec-aligned).
@@ -25,15 +29,28 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Enriched overview `General` panel with payload context statistics (bundle version, advertised heads, transport entries, payload objects).
 - Aligned overview panel split so top and bottom sections use the same column proportions for cleaner layout consistency.
 - Restructured README workflow to focus on the core path (`create -> audit -> receive`) and moved optional/non-core CLI usage into `Additional Commands`.
+- Refactored payload verification internals into focused modules (`preflight`, `entry`, `delta`, `materialized`, `proof`) while preserving fail-closed behavior.
+- Split monolithic git type definitions into domain-focused `src/git/types/*` modules with stable re-exports.
+- Split CLI orchestration and non-interactive output rendering into `src/app/commands/*` and `src/app/output/*`.
+- Unified receive-path PACK parsing with the strict bundle-header parser (removed heuristic PACK offset scan).
+- Refactored UI input handling into router/action reducers (`src/ui/input/{router,actions}.rs`) with centralized key-action mapping.
+- Refactored payload renderer into focused modules (`src/ui/render/payload/{layout,tables,preview,detail,...}`).
+- Reduced UI state enum footprint by boxing `PayloadModel::Ok(Box<git::PayloadAudit>)`.
+- Narrowed `git::mod` export surface and isolated git test helpers into explicit `src/git/test_support.rs`.
+- Consolidated runtime hash call sites onto shared digest helpers to reduce duplicate OpenSSL/FFI hashing paths.
 
 ### Tests
 - Updated payload tests for `reconstructed_size` schema/document requirements and delta stream mismatch wording.
 - Updated UI tests for `Entries` table header changes (`HDR_SIZE`/`RECON_SIZE`).
 - Added/updated navigation tests for `1/2/3` routing, overview focus switching, commit/diff transitions, and page-boundary behavior.
 - Added footer-width regression checks to keep payload footer lines within 110 columns.
+- Added proof-boundary tests for invariant/counter consistency and fail-closed verification behavior.
+- Added strict parser regression tests for receive-path header framing and PACK-start gap rejection.
+- Added digest tests for SHA-1/SHA-256 helper consistency and known vectors.
 
 ### Documentation
 - Updated README and SDD/SAD to match current payload-proof semantics, UI behavior, and audit workflow expectations.
+- Updated SDD/SAD architecture chapter to match refactored source layout and added a concrete source module map with direct file mapping.
 
 ## [0.6.1] - 2026-02-28
 
@@ -226,7 +243,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/daredem0/git-sync/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/daredem0/git-sync/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/daredem0/git-sync/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/daredem0/git-sync/compare/v0.4.0...v0.5.0

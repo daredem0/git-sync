@@ -43,7 +43,7 @@ Single-process Rust CLI/TUI with in-process Git operations.
 Design characteristics:
 - Git operations through `git2` (libgit2 bindings), not shelling out for core logic
 - deterministic ordering where possible (sorted rows, stable traversal choices)
-- explicit typed domain models (`src/git/types.rs`)
+- explicit typed domain models (`src/git/types/*`)
 - fail-closed validation for transport/payload proof path
 - isolation for risky operations using temporary bare mirrors/repos
 
@@ -92,15 +92,20 @@ Behavior:
 ## 5. Module Decomposition
 
 ### 5.1 Entrypoint / CLI
-- `src/main.rs`: command dispatch and output rendering
+- `src/main.rs`: minimal process entrypoint (`Cli::parse()` + command dispatch)
 - `src/cli.rs`: clap models and payload-audit target resolution
 - `src/app.rs`: shared `AppConfig`
+- `src/app/commands/*`: per-command orchestration (`create`, `audit`, `receive`, `ui`)
+- `src/app/output/*`: non-interactive output rendering (`table`/`json`)
 - `src/version.rs`, `build.rs`: embedded version metadata
 
 ### 5.2 Git Domain (`src/git`)
 - `bundle/create.rs`: bundle/package creation and cleanup
 - `bundle/inspect.rs`: bundle header parsing (`v2`/`v3`, prerequisites, heads)
-- `bundle/payload.rs`: payload session, raw PACK-entry ledger proofing, materialized object index, optional baseline-assisted delta resolution, JSON document build
+- `bundle/parse.rs`: strict bundle-header framing and PACK payload extraction
+- `bundle/payload.rs`: payload API surface and session orchestration
+- `bundle/payload/verify.rs` + `bundle/payload/verify/*`: PACK verification pipeline and proof-boundary enforcement (`VerifiedPayload`)
+- `bundle/payload/{input,session,context,detail,document}.rs`: payload input/session, derived context, object detail, and JSON document mapping
 - `bundle/receive.rs`: receive, dry-run, history commit extraction, commit-file patch extraction
 - `metadata/collect.rs`: metadata commit-chain/changed-files collection
 - `metadata/load.rs`: metadata loading from sidecar
@@ -109,19 +114,58 @@ Behavior:
 - `archive.rs`: zip write/extract and artifact path helpers
 - `diff.rs`: deterministic diff entry collection
 - `context.rs`: base/tip/repo validation helper for UI contexts
-- `types.rs`: domain types
-- `util.rs`: helper functions (hashing, usernames, hostnames, formatting helpers)
+- `types/*`: split domain and export/document DTOs
+- `digest.rs`: centralized hashing helpers (SHA-1/SHA-256 + hex)
+- `util.rs`: non-cryptographic helper functions (user/host/time/path/format helpers)
 
 ### 5.3 UI Domain (`src/ui`)
 - `model.rs`: builds `AuditModel` from repo + bundle inputs
 - `runtime.rs`: terminal lifecycle and event loop
-- `input.rs`: mode-sensitive key handling
+- `input/{mod,router,actions}.rs`: key routing + reducer-based state updates
 - `render/*`: overview, commit pages, diff view, payload view
 - `state/*`: navigation, diff state ops, payload selection/detail ops
 - `diff/*`: patch parsing/rendering/highlighting support
 - `syntax.rs`: syntax set/theme loading + path-based syntax selection
 - `types.rs`: UI state and render model types
 - `tests/*`: UI unit tests for input, render, and state behavior
+
+### 5.4 Concrete Source Module Map
+
+This map links high-level responsibilities to concrete source files.
+
+#### CLI / Command Layer
+- `src/main.rs`: top-level process entrypoint
+- `src/cli.rs`: CLI argument model + validation
+- `src/app/commands/mod.rs`: command dispatch
+- `src/app/commands/create.rs`: `create` flow
+- `src/app/commands/audit.rs`: interactive/non-interactive audit flow + metadata verify mode
+- `src/app/commands/receive.rs`: receive + dry-run output
+- `src/app/commands/ui.rs`: direct TUI entrypoint
+- `src/app/output/{table,sections,layout,kind,json}.rs`: non-interactive output formatting
+
+#### Git Domain Layer
+- `src/git/bundle/create.rs`: package generation and artifact lifecycle
+- `src/git/bundle/inspect.rs`: bundle textual header inspection
+- `src/git/bundle/parse.rs`: strict bundle framing + PACK extraction
+- `src/git/bundle/payload.rs`: payload audit API
+- `src/git/bundle/payload/verify/{core,preflight,entry,delta,materialized,proof}.rs`: PACK parse/materialization/proof invariants
+- `src/git/bundle/receive.rs`: receive import, dry-run applicability, history extraction
+- `src/git/metadata/{collect,load,patch,verify}.rs`: metadata sidecar lifecycle
+- `src/git/archive.rs`: archive IO and artifact path helpers
+- `src/git/types/*.rs`: domain + document models
+- `src/git/digest.rs`: cryptographic digest helpers
+- `src/git/util.rs`: generic helper utilities
+
+#### UI Layer
+- `src/ui/runtime.rs`: terminal lifecycle + render loop
+- `src/ui/model.rs`: model construction from git-domain data
+- `src/ui/input/{router,actions}.rs`: keymap routing and action reducers
+- `src/ui/state/{navigation,payload_ops,diff_ops}.rs`: state transitions
+- `src/ui/render/overview.rs`: overview page
+- `src/ui/render/commit.rs`: commit detail pages
+- `src/ui/render/diff_view.rs`: file diff detail page
+- `src/ui/render/payload/{mod,layout,tables/*,preview/*,detail,util}.rs`: payload main/detail pages
+- `src/ui/diff/{parse,render,style}.rs`: diff parsing and highlighting helpers
 
 ```mermaid
 flowchart TD
@@ -200,7 +244,7 @@ Contains:
 6. compute metadata (`commit_chain`, `changed_files`, integrity fields)
 7. optionally write patch sidecar
 8. archive artifacts into `.zip`
-9. `main.rs` removes loose `.bundle`/sidecars
+9. `create` command handler removes loose `.bundle`/sidecars (keeping archive only)
 
 ### 7.2 Interactive Audit Flow (Default `audit`)
 `build_audit_model` assembles:
@@ -252,7 +296,7 @@ Idempotency behavior:
 
 ## 8. PACK Proofing Model (Critical)
 
-Proofing implementation lives in `src/git/bundle/payload.rs` (`verify_pack_payload_with_ledger_and_baseline_odb`).
+Proofing entrypoint is exposed by `src/git/bundle/payload.rs` (`verify_pack_payload_with_ledger_and_baseline_odb`) and enforced in `src/git/bundle/payload/verify/*` (`VerifiedPayload` invariant boundary).
 
 ### 8.1 Authoritative Truth Model
 The payload proof model has two layers:
@@ -458,7 +502,9 @@ Major modes:
 - Payload object detail view
 
 Key behavior highlights:
-- `Tab`/`v` toggle History/Payload from main page
+- `1` / `2` / `3` provide direct page navigation (history main / payload main / first commit detail)
+- `v` toggles History/Payload from the main page
+- `Tab` (overview only) switches focus between `Heads to Import` and `Would Change`
 - Payload object list supports `PgUp`/`PgDn` jump-by-10 and `s` sort cycle
 - Enter behavior is mode-sensitive:
   - overview: enter selected head
