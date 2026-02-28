@@ -22,13 +22,14 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),
+            Constraint::Length(9),
             Constraint::Min(8),
             Constraint::Length(2),
         ])
         .split(frame.area());
 
-    let title = Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("git-sync"));
+    let title =
+        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("git-sync"));
     frame.render_widget(title, chunks[0]);
 
     match &model.payload {
@@ -71,23 +72,43 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
     match &model.payload {
         PayloadModel::Ok(payload) => {
             let proof = &payload.pack_proof;
-            let counts_match = proof.declared_object_count == proof.processed_object_count;
+            let counts_match = proof.entries_declared == proof.entries_parsed;
             let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
-            let proof_status = if counts_match && checksums_match {
+            let proof_status = if proof.verification_status.eq_ignore_ascii_case("ok")
+                && counts_match
+                && checksums_match
+            {
                 "ok"
             } else {
                 "failed"
             };
+            let transfer_line = if proof.transfer_allowed {
+                "transfer: allowed".to_string()
+            } else {
+                format!(
+                    "transfer: blocked ({})",
+                    proof
+                        .blocked_reason
+                        .as_deref()
+                        .unwrap_or("entries not fully materialized")
+                )
+            };
             format!(
                 "Payload View\n\
                  status: {proof_status} | pack version: {}\n\
-                 objects: {}/{} | hash: {}\n\
+                 entries: {}/{} | materialized: {}/{}\n\
+                 unique objects: {} | duplicates: {}\n\
+                 {transfer_line} | hash: {}\n\
                  computed checksum: {}\n\
                  trailer checksum: {}\n\
                  subview: {} (toggle: e)",
                 proof.pack_version,
-                proof.processed_object_count,
-                proof.declared_object_count,
+                proof.entries_parsed,
+                proof.entries_declared,
+                proof.entries_materialized,
+                proof.entries_declared,
+                proof.unique_objects_materialized,
+                proof.duplicate_entry_count_materialized,
                 proof.hash_algorithm,
                 proof.computed_pack_checksum,
                 proof.trailer_pack_checksum,
@@ -162,11 +183,11 @@ fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppSta
                     format!("offset: {}", entry.offset),
                     format!("kind: {}", payload_entry_kind_label(entry.kind)),
                     format!("out size: {}", entry.out_size),
-                    format!("base: {}", payload_entry_base_ref_label(entry.base_ref.as_ref())),
                     format!(
-                        "resolved: {}",
-                        if entry.resolved { "yes" } else { "no" }
+                        "base: {}",
+                        payload_entry_base_ref_label(entry.base_ref.as_ref())
                     ),
+                    format!("resolved: {}", if entry.resolved { "yes" } else { "no" }),
                     format!(
                         "resolved via: {}",
                         match entry.resolved_via {
@@ -182,18 +203,9 @@ fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppSta
                             .map(|oid| oid.to_string())
                             .unwrap_or_else(|| "-".to_string())
                     ),
-                    format!(
-                        "note: {}",
-                        entry.note.as_deref().unwrap_or("-")
-                    ),
+                    format!("note: {}", entry.note.as_deref().unwrap_or("-")),
                 ];
-                render_preview_lines_to_area(
-                    raw_lines,
-                    area,
-                    None,
-                    None,
-                    &model.syntax_highlighter,
-                )
+                render_preview_lines_to_area(raw_lines, area, None, None, &model.syntax_highlighter)
             } else {
                 vec![
                     Line::from("No entry selected."),
@@ -221,7 +233,11 @@ fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppSta
                     if let Some(entry) = selected_object {
                         raw_lines.push(format!(
                             "reachable from heads: {}",
-                            if entry.reachable_from_heads { "yes" } else { "no" }
+                            if entry.reachable_from_heads {
+                                "yes"
+                            } else {
+                                "no"
+                            }
                         ));
                         raw_lines.push(format!(
                             "context head: {}",
@@ -329,8 +345,10 @@ fn render_entries_table(
         ],
     )
     .header(
-        Row::new(vec!["#", "OFFSET", "KIND", "OUT_SIZE", "BASE", "OID", "RESOLVED"])
-            .style(Style::default().add_modifier(Modifier::BOLD)),
+        Row::new(vec![
+            "#", "OFFSET", "KIND", "OUT_SIZE", "BASE", "OID", "RESOLVED",
+        ])
+        .style(Style::default().add_modifier(Modifier::BOLD)),
     )
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
     .block(Block::default().borders(Borders::ALL).title(title))

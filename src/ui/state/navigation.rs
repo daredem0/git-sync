@@ -1,8 +1,7 @@
 //! TUI-layer navigation functionality.
 
 use crate::ui::types::{
-    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, PayloadSortMode,
-    PayloadSubView,
+    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, PayloadSortMode, PayloadSubView,
 };
 
 impl AppState {

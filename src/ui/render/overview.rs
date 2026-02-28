@@ -33,8 +33,13 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     .wrap(Wrap { trim: false });
     frame.render_widget(title, chunks[0]);
 
-    let (pack_proof_status, pack_objects_processed, pack_checksum_status) =
-        render_pack_proof_summary(&model.payload);
+    let (
+        pack_proof_status,
+        pack_entries_parsed,
+        pack_entries_materialized,
+        pack_transfer_status,
+        pack_checksum_status,
+    ) = render_pack_proof_summary(&model.payload);
     let general_left_lines = vec![
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
@@ -49,9 +54,14 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
             "metadata verification: {}",
             render_status_line(&overview.metadata_verification)
         ),
-        format!("dry-run applicability: {}", render_dry_run_status(&overview.dry_run)),
+        format!(
+            "dry-run applicability: {}",
+            render_dry_run_status(&overview.dry_run)
+        ),
         format!("pack proof: {pack_proof_status}"),
-        format!("pack objects processed: {pack_objects_processed}"),
+        format!("pack entries parsed: {pack_entries_parsed}"),
+        format!("pack entries materialized: {pack_entries_materialized}"),
+        format!("transfer gate: {pack_transfer_status}"),
         format!("pack checksum: {pack_checksum_status}"),
     ];
     let general_chunks = Layout::default()
@@ -63,7 +73,11 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         .wrap(Wrap { trim: false });
     frame.render_widget(general_left, general_chunks[0]);
     let general_right = Paragraph::new(general_right_lines.join("\n"))
-        .block(Block::default().borders(Borders::ALL).title("Bundle Integrity"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Bundle Integrity"),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(general_right, general_chunks[1]);
 
@@ -121,27 +135,41 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
 }
 
 /// Returns concise pack-proof status lines for overview's general section.
-fn render_pack_proof_summary(payload: &PayloadModel) -> (String, String, String) {
+fn render_pack_proof_summary(payload: &PayloadModel) -> (String, String, String, String, String) {
     match payload {
         PayloadModel::Ok(audit) => {
             let proof = &audit.pack_proof;
-            let counts_match = proof.declared_object_count == proof.processed_object_count;
+            let counts_match = proof.entries_declared == proof.entries_parsed;
             let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
-            let status = if counts_match && checksums_match {
+            let status = if proof.verification_status.eq_ignore_ascii_case("ok")
+                && counts_match
+                && checksums_match
+            {
                 "OK".to_string()
             } else {
                 "FAILED".to_string()
             };
-            let processed = format!(
-                "{}/{}",
-                proof.processed_object_count, proof.declared_object_count
-            );
+            let parsed = format!("{}/{}", proof.entries_parsed, proof.entries_declared);
+            let materialized = format!("{}/{}", proof.entries_materialized, proof.entries_declared);
+            let transfer = if proof.transfer_allowed {
+                "allowed".to_string()
+            } else {
+                format!(
+                    "blocked ({})",
+                    proof
+                        .blocked_reason
+                        .as_deref()
+                        .unwrap_or("entries not fully materialized")
+                )
+            };
             let checksum = if checksums_match { "match" } else { "mismatch" }.to_string();
-            (status, processed, checksum)
+            (status, parsed, materialized, transfer, checksum)
         }
         PayloadModel::Failed(err) => (
             format!("FAILED (payload unavailable: {err})"),
             "-".to_string(),
+            "-".to_string(),
+            "blocked".to_string(),
             "-".to_string(),
         ),
     }

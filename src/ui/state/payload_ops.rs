@@ -319,13 +319,10 @@ impl AppState {
         if self.payload_sub_view != PayloadSubView::Entries {
             return None;
         }
-        payload
-            .entry_ledger
-            .entries
-            .get(std::cmp::min(
-                self.payload_selected_index,
-                payload.entry_ledger.entries.len().saturating_sub(1),
-            ))
+        payload.entry_ledger.entries.get(std::cmp::min(
+            self.payload_selected_index,
+            payload.entry_ledger.entries.len().saturating_sub(1),
+        ))
     }
 
     /// Returns human-readable payload subview label.

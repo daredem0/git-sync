@@ -360,6 +360,58 @@ fn proof_counters_are_independent_of_reachability() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that transfer gate is open when all declared entries are parsed and materialized.
+#[test]
+fn transfer_allowed_true_when_materialized_equals_declared() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("transfer-gate-allowed", false);
+
+    let verification = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("pack verification should succeed for fixture bundle");
+    assert_eq!(
+        verification.proof.entries_declared, verification.proof.entries_parsed,
+        "successful pack proof should parse all declared entries"
+    );
+    assert_eq!(
+        verification.proof.entries_declared, verification.proof.entries_materialized,
+        "successful pack proof should materialize all declared entries"
+    );
+    assert!(
+        verification.proof.transfer_allowed,
+        "transfer gate should be open when materialized entry count equals declared count"
+    );
+    assert!(
+        verification.proof.blocked_reason.is_none(),
+        "blocked reason must be absent when transfer gate is open"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that transfer gate is blocked when materialized entries are fewer than declared entries.
+#[test]
+fn transfer_allowed_false_when_materialized_less_than_declared() {
+    let proof = PayloadPackProof::from_entry_counters(
+        2,
+        2,
+        2,
+        1,
+        1,
+        0,
+        "sha1".to_string(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+    );
+    assert!(
+        !proof.transfer_allowed,
+        "transfer gate should be blocked when materialized entries are below declared count"
+    );
+    assert!(
+        proof.blocked_reason.is_some(),
+        "blocked transfer should include an explanatory blocked reason"
+    );
+}
+
 // Verifies that duplicate-entry signal is reported deterministically from materialized ledger rows.
 #[test]
 fn duplicate_entry_count_materialized_is_reported_deterministically() {
@@ -374,8 +426,7 @@ fn duplicate_entry_count_materialized_is_reported_deterministically() {
     let second = verify_pack_payload_for_bundle_input(&bundle_path)
         .expect("second verification should succeed for duplicate-entry pack");
     assert_eq!(
-        first.materialized_index.duplicate_entry_count_materialized,
-        1,
+        first.materialized_index.duplicate_entry_count_materialized, 1,
         "duplicate-entry pack should report one duplicate materialized entry"
     );
     assert_eq!(
@@ -384,8 +435,7 @@ fn duplicate_entry_count_materialized_is_reported_deterministically() {
         "duplicate materialized-entry count should be deterministic across runs"
     );
     assert_eq!(
-        first.materialized_index.unique_object_count,
-        1,
+        first.materialized_index.unique_object_count, 1,
         "duplicate-entry pack should collapse to one unique materialized object"
     );
 
@@ -424,6 +474,66 @@ fn collect_payload_audit_for_bundle_input_includes_transport_entries_and_objects
             .iter()
             .any(|entry| matches!(entry.kind, PayloadObjectKind::Commit)),
         "payload object list should include commit objects"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that large text blobs remain materialized via object-detail export even when UI preview is partial.
+#[test]
+fn large_blob_is_materialized_via_export_even_if_preview_is_partial() {
+    let repo_dir = temp_repo_dir("payload-large-blob-materialized");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base", &[("base.txt", "base")], &[]);
+    let large_content = (0..220usize)
+        .map(|index| format!("line-{index:04} some large textual payload content"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip",
+        &[("big.txt", &large_content), ("base.txt", "base")],
+        &[base_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+        .expect("must collect payload audit from bundle archive");
+    assert!(
+        payload.pack_proof.transfer_allowed,
+        "large textual blob should still be fully materialized for transfer-gate completeness"
+    );
+    assert_eq!(
+        payload.pack_proof.entries_materialized, payload.pack_proof.entries_declared,
+        "large textual blob should not reduce materialized-entry completeness"
+    );
+
+    let blob_target = payload
+        .objects
+        .iter()
+        .find(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("payload should include blob object");
+    let detail = collect_payload_object_detail_for_bundle_input(
+        &bundle_result.archive_path,
+        &repo_dir,
+        blob_target.oid,
+    )
+    .expect("must be able to export/read full blob detail");
+    assert!(
+        detail.lines.len() >= 200,
+        "full object-detail export should include full large-blob content lines"
+    );
+    assert!(
+        detail.text_line_count.unwrap_or(0) >= 200,
+        "text line count should report full large-blob line count"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
@@ -822,7 +932,10 @@ fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
     digest
 }
 
-fn write_synthetic_ref_delta_bundle(repo_dir: &std::path::Path, file_name: &str) -> std::path::PathBuf {
+fn write_synthetic_ref_delta_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+) -> std::path::PathBuf {
     let mut pack_prefix = Vec::new();
     pack_prefix.extend_from_slice(b"PACK");
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());

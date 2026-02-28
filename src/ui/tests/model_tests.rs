@@ -3,8 +3,8 @@
 //! Focus: overview-model repository display helpers and remote-name derivation.
 
 use super::super::model::build_audit_model;
-use super::support::create_diff_fixture;
 use super::super::model::{derive_repo_name_from_remote_url, format_repo_display};
+use super::support::create_diff_fixture;
 use crate::app::AppConfig;
 use crate::ui::types::PayloadModel;
 use std::fs;
@@ -25,9 +25,8 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 // Verifies that HTTPS remote URLs derive the repository tail name without `.git` suffix.
 #[test]
 fn derive_repo_name_from_remote_url_handles_https_url() {
-    let name =
-        derive_repo_name_from_remote_url("https://github.com/daredem0/git-sync.git")
-            .expect("https remote should yield repo name");
+    let name = derive_repo_name_from_remote_url("https://github.com/daredem0/git-sync.git")
+        .expect("https remote should yield repo name");
     assert_eq!(name, "git-sync");
 }
 
@@ -98,6 +97,8 @@ fn payload_model_build_still_loads_with_existing_bundle_fixture() {
                 "fixture payload model should preserve pack proof declared/processed invariants"
             );
         }
-        PayloadModel::Failed(err) => panic!("payload model build should succeed for fixture: {err}"),
+        PayloadModel::Failed(err) => {
+            panic!("payload model build should succeed for fixture: {err}")
+        }
     }
 }

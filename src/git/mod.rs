@@ -30,12 +30,12 @@ pub use metadata::{
 pub use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
-    OpenContext, PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead,
-    PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
-    PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadObjectDetail,
-    PayloadObjectEntry, PayloadObjectKind, PayloadPackProof, PayloadPackVerification,
-    PayloadTransportEntry, ReceiveBundleOptions, ReceiveBundleResult, PackEntryBaseRef,
-    PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAuditError, ResolutionSource,
+    OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAudit,
+    PayloadAuditDocument, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
+    PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
+    PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
+    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ReceiveBundleOptions,
+    ReceiveBundleResult, ResolutionSource,
 };
 
 #[cfg(test)]

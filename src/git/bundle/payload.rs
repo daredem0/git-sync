@@ -4,11 +4,11 @@ use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
     BundleInspection, MaterializedObjectIndex, MaterializedObjectRecord, PackEntryBaseRef,
-    PackEntryKind, PackEntryLedger, PackEntryRecord,
-    PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
-    PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
-    PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
+    PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAudit, PayloadAuditDocument,
+    PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
+    PayloadAuditDocumentTransportEntry, PayloadAuditError, PayloadAuditPackSummary,
+    PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind, PayloadPackProof,
+    PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
@@ -98,7 +98,8 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let bundle_bytes = fs::read(&extracted.bundle_path)?;
         let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-        let verification = verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
+        let verification =
+            verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
         let pack_proof = verification.proof;
         let bundle_path = extracted
             .bundle_path
@@ -116,7 +117,10 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
             &reachable,
             &context_map,
         );
-        ensure_materialized_index_matches_pack_proof(&verification.materialized_index, &pack_proof)?;
+        ensure_materialized_index_matches_pack_proof(
+            &verification.materialized_index,
+            &pack_proof,
+        )?;
         let payload = PayloadAudit {
             bundle_version: inspection.version,
             heads: inspection.heads.clone(),
@@ -403,11 +407,12 @@ pub fn verify_pack_payload_for_bundle_input(
     bundle_input_path: &Path,
 ) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
     if is_zip_bundle_input_path(bundle_input_path) {
-        let extracted = extract_bundle_archive(bundle_input_path).map_err(|err| PayloadAuditError {
-            reason: err.to_string(),
-            blocked_entry_idx: None,
-            ledger_partial: None,
-        })?;
+        let extracted =
+            extract_bundle_archive(bundle_input_path).map_err(|err| PayloadAuditError {
+                reason: err.to_string(),
+                blocked_entry_idx: None,
+                ledger_partial: None,
+            })?;
         let bundle_bytes = fs::read(&extracted.bundle_path).map_err(|err| PayloadAuditError {
             reason: err.to_string(),
             blocked_entry_idx: None,
@@ -463,11 +468,20 @@ fn ensure_materialized_index_matches_pack_proof(
     index: &MaterializedObjectIndex,
     pack_proof: &PayloadPackProof,
 ) -> Result<()> {
-    if index.materialized_entry_count != pack_proof.declared_object_count {
+    if index.materialized_entry_count != pack_proof.entries_materialized {
         bail!(
-            "materialized entry count mismatch: materialized={}, declared={}",
+            "materialized entry count mismatch: materialized={}, proof_materialized={}",
             index.materialized_entry_count,
-            pack_proof.declared_object_count
+            pack_proof.entries_materialized
+        );
+    }
+    if !pack_proof.transfer_allowed {
+        bail!(
+            "transfer blocked by proof gate: {}",
+            pack_proof
+                .blocked_reason
+                .as_deref()
+                .unwrap_or("entries are not fully materialized")
         );
     }
     Ok(())
@@ -524,11 +538,12 @@ fn verify_pack_payload_impl(
             blocked_entry_idx: None,
             ledger_partial: None,
         })?;
-    let computed_checksum = sha1_hex(&pack_data[..trailer_offset]).map_err(|err| PayloadAuditError {
-        reason: err.to_string(),
-        blocked_entry_idx: None,
-        ledger_partial: None,
-    })?;
+    let computed_checksum =
+        sha1_hex(&pack_data[..trailer_offset]).map_err(|err| PayloadAuditError {
+            reason: err.to_string(),
+            blocked_entry_idx: None,
+            ledger_partial: None,
+        })?;
     let trailer_checksum = hex_encode(&pack_data[trailer_offset..]);
     if computed_checksum != trailer_checksum {
         return Err(PayloadAuditError {
@@ -589,20 +604,21 @@ fn verify_pack_payload_impl(
             | PackEntryKind::Tree
             | PackEntryKind::Blob
             | PackEntryKind::Tag => {
-                let (consumed, content) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
-                    .map_err(|err| {
-                        anyhow!(
-                            "failed to decompress pack object #{} ({:?}) at offset {}: {err}",
-                            processed_object_count + 1,
-                            entry_kind,
-                            offset
-                        )
-                    })
-                    .map_err(|err| PayloadAuditError {
-                        reason: err.to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
-                    })?;
+                let (consumed, content) =
+                    decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                        .map_err(|err| {
+                            anyhow!(
+                                "failed to decompress pack object #{} ({:?}) at offset {}: {err}",
+                                processed_object_count + 1,
+                                entry_kind,
+                                offset
+                            )
+                        })
+                        .map_err(|err| PayloadAuditError {
+                            reason: err.to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        })?;
                 offset = offset
                     .checked_add(consumed)
                     .ok_or_else(|| PayloadAuditError {
@@ -629,10 +645,12 @@ fn verify_pack_payload_impl(
             }
             PackEntryKind::OfsDelta => {
                 let (base_offset_distance, consumed) =
-                    parse_ofs_delta_base_distance(pack_data, offset).map_err(|err| PayloadAuditError {
-                        reason: err.to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
+                    parse_ofs_delta_base_distance(pack_data, offset).map_err(|err| {
+                        PayloadAuditError {
+                            reason: err.to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        }
                     })?;
                 offset = offset
                     .checked_add(consumed)
@@ -641,13 +659,14 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                let base_entry_offset = entry_offset
-                    .checked_sub(base_offset_distance)
-                    .ok_or_else(|| PayloadAuditError {
-                        reason: "ofs-delta base offset underflow".to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
-                    })?;
+                let base_entry_offset =
+                    entry_offset
+                        .checked_sub(base_offset_distance)
+                        .ok_or_else(|| PayloadAuditError {
+                            reason: "ofs-delta base offset underflow".to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        })?;
                 entry_record.base_ref = Some(PackEntryBaseRef::BaseOffset {
                     distance: base_offset_distance,
                     base_offset: Some(base_entry_offset),
@@ -665,19 +684,20 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger),
                     });
                 };
-                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
-                    .map_err(|err| {
-                        anyhow!(
-                            "failed to decompress ofs-delta object #{} at offset {}: {err}",
-                            processed_object_count + 1,
-                            offset
-                        )
-                    })
-                    .map_err(|err| PayloadAuditError {
-                        reason: err.to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
-                    })?;
+                let (delta_consumed, delta_bytes) =
+                    decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                        .map_err(|err| {
+                            anyhow!(
+                                "failed to decompress ofs-delta object #{} at offset {}: {err}",
+                                processed_object_count + 1,
+                                offset
+                            )
+                        })
+                        .map_err(|err| PayloadAuditError {
+                            reason: err.to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        })?;
                 offset = offset
                     .checked_add(delta_consumed)
                     .ok_or_else(|| PayloadAuditError {
@@ -685,10 +705,12 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| PayloadAuditError {
-                    reason: err.to_string(),
-                    blocked_entry_idx: Some(processed_object_count),
-                    ledger_partial: Some(ledger.clone()),
+                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| {
+                    PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    }
                 })?;
                 ParsedPackObject {
                     kind: base.kind,
@@ -697,7 +719,8 @@ fn verify_pack_payload_impl(
             }
             PackEntryKind::RefDelta => {
                 if trailer_offset.saturating_sub(offset) < 20 {
-                    entry_record.note = Some("ref-delta entry is missing base object id bytes".to_string());
+                    entry_record.note =
+                        Some("ref-delta entry is missing base object id bytes".to_string());
                     ledger.entries.push(entry_record);
                     return Err(PayloadAuditError {
                         reason: "ref-delta entry is missing base object id bytes".to_string(),
@@ -705,13 +728,14 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger),
                     });
                 }
-                let base_oid = git2::Oid::from_bytes(&pack_data[offset..offset + 20]).map_err(
-                    |err| PayloadAuditError {
-                        reason: err.to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
-                    },
-                )?;
+                let base_oid =
+                    git2::Oid::from_bytes(&pack_data[offset..offset + 20]).map_err(|err| {
+                        PayloadAuditError {
+                            reason: err.to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        }
+                    })?;
                 entry_record.base_ref = Some(PackEntryBaseRef::BaseOid(base_oid));
                 offset += 20;
 
@@ -728,19 +752,20 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger),
                     });
                 };
-                let (delta_consumed, delta_bytes) = decompress_zlib_stream(&pack_data[offset..trailer_offset])
-                    .map_err(|err| {
-                        anyhow!(
-                            "failed to decompress ref-delta object #{} at offset {}: {err}",
-                            processed_object_count + 1,
-                            offset
-                        )
-                    })
-                    .map_err(|err| PayloadAuditError {
-                        reason: err.to_string(),
-                        blocked_entry_idx: Some(processed_object_count),
-                        ledger_partial: Some(ledger.clone()),
-                    })?;
+                let (delta_consumed, delta_bytes) =
+                    decompress_zlib_stream(&pack_data[offset..trailer_offset])
+                        .map_err(|err| {
+                            anyhow!(
+                                "failed to decompress ref-delta object #{} at offset {}: {err}",
+                                processed_object_count + 1,
+                                offset
+                            )
+                        })
+                        .map_err(|err| PayloadAuditError {
+                            reason: err.to_string(),
+                            blocked_entry_idx: Some(processed_object_count),
+                            ledger_partial: Some(ledger.clone()),
+                        })?;
                 offset = offset
                     .checked_add(delta_consumed)
                     .ok_or_else(|| PayloadAuditError {
@@ -748,10 +773,12 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
-                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| PayloadAuditError {
-                    reason: err.to_string(),
-                    blocked_entry_idx: Some(processed_object_count),
-                    ledger_partial: Some(ledger.clone()),
+                let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| {
+                    PayloadAuditError {
+                        reason: err.to_string(),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger.clone()),
+                    }
                 })?;
                 ParsedPackObject {
                     kind: base.kind,
@@ -798,16 +825,18 @@ fn verify_pack_payload_impl(
         });
     }
 
-    let proof = PayloadPackProof {
-        verification_status: "ok".to_string(),
+    let materialized_index = build_materialized_object_index_from_ledger(&ledger);
+    let proof = PayloadPackProof::from_entry_counters(
         pack_version,
         declared_object_count,
         processed_object_count,
-        hash_algorithm: "sha1".to_string(),
-        computed_pack_checksum: computed_checksum,
-        trailer_pack_checksum: trailer_checksum,
-    };
-    let materialized_index = build_materialized_object_index_from_ledger(&ledger);
+        materialized_index.materialized_entry_count,
+        materialized_index.unique_object_count,
+        materialized_index.duplicate_entry_count_materialized,
+        "sha1".to_string(),
+        computed_checksum,
+        trailer_checksum,
+    );
     Ok(PayloadPackVerification {
         proof,
         ledger,
@@ -1113,7 +1142,7 @@ fn build_materialized_object_index_from_ledger(
     let mut materialized_entry_count = 0usize;
 
     for entry in &ledger.entries {
-        if !entry.resolved {
+        if !is_materialized_entry(entry) {
             continue;
         }
         let (Some(oid), Some(kind)) = (entry.result_oid, entry.result_kind) else {
@@ -1144,6 +1173,14 @@ fn build_materialized_object_index_from_ledger(
         unique_object_count,
         duplicate_entry_count_materialized,
     }
+}
+
+/// Returns true when an entry is fully materialized and exportable as exact object bytes.
+fn is_materialized_entry(entry: &PackEntryRecord) -> bool {
+    entry.resolved
+        && entry.result_oid.is_some()
+        && entry.result_kind.is_some()
+        && entry.resolved_via.is_some()
 }
 
 /// Builds payload object rows from the deduplicated materialized index.

@@ -292,15 +292,17 @@ fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
     );
 
     let mut out = String::new();
-    let proof_ok = payload.pack_proof.declared_object_count
-        == payload.pack_proof.processed_object_count
+    let proof_ok = payload.pack_proof.entries_declared == payload.pack_proof.entries_parsed
+        && payload.pack_proof.entries_materialized == payload.pack_proof.entries_declared
         && payload.pack_proof.computed_pack_checksum == payload.pack_proof.trailer_pack_checksum;
     out.push_str(&format!(
-        "PACK PROOF status={} version={} declared={} processed={} hash={}\n",
+        "PACK PROOF status={} version={} entries={}/{} materialized={}/{} hash={}\n",
         if proof_ok { "ok" } else { "failed" },
         payload.pack_proof.pack_version,
-        payload.pack_proof.declared_object_count,
-        payload.pack_proof.processed_object_count,
+        payload.pack_proof.entries_parsed,
+        payload.pack_proof.entries_declared,
+        payload.pack_proof.entries_materialized,
+        payload.pack_proof.entries_declared,
         payload.pack_proof.hash_algorithm
     ));
     out.push_str(&format!(

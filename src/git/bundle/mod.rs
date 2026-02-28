@@ -11,7 +11,8 @@ pub use payload::{
     PayloadSession, build_payload_audit_document_for_bundle_input,
     collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
     collect_payload_object_detail_for_session, open_payload_session,
-    payload_audit_document_from_session, payload_audit_from_session, verify_pack_payload_with_ledger,
+    payload_audit_document_from_session, payload_audit_from_session,
+    verify_pack_payload_with_ledger,
 };
 
 #[cfg(test)]

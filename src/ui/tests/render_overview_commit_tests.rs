@@ -58,8 +58,16 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include pack-proof status in general section"
     );
     assert!(
-        output.contains("pack objects processed: 2/2"),
-        "overview render should include processed/declared object counts in general section"
+        output.contains("pack entries parsed: 2/2"),
+        "overview render should include parsed/declared entry counts in general section"
+    );
+    assert!(
+        output.contains("pack entries materialized: 2/2"),
+        "overview render should include materialized/declared entry counts in general section"
+    );
+    assert!(
+        output.contains("transfer gate: allowed"),
+        "overview render should include transfer-gate status in general section"
     );
     assert!(
         output.contains("pack checksum: match"),
@@ -80,7 +88,11 @@ fn render_overview_page_shows_pack_proof_failure_summary() {
     let PayloadModel::Ok(payload) = &mut model.payload else {
         panic!("fixture model must include payload audit data");
     };
-    payload.pack_proof.processed_object_count = 1;
+    payload.pack_proof.entries_parsed = 1;
+    payload.pack_proof.entries_materialized = 1;
+    payload.pack_proof.transfer_allowed = false;
+    payload.pack_proof.blocked_reason =
+        Some("materialized entries below declared count".to_string());
     payload.pack_proof.trailer_pack_checksum =
         "dddddddddddddddddddddddddddddddddddddddd".to_string();
     let state = super::super::types::AppState::new(&model);
@@ -94,8 +106,16 @@ fn render_overview_page_shows_pack_proof_failure_summary() {
         "overview render should mark pack proof as failed when object counts/checksums mismatch"
     );
     assert!(
-        output.contains("pack objects processed: 1/2"),
-        "overview render should show mismatched processed/declared object counts"
+        output.contains("pack entries parsed: 1/2"),
+        "overview render should show mismatched parsed/declared entry counts"
+    );
+    assert!(
+        output.contains("pack entries materialized: 1/2"),
+        "overview render should show mismatched materialized/declared entry counts"
+    );
+    assert!(
+        output.contains("transfer gate: blocked"),
+        "overview render should show blocked transfer-gate status when entries are incomplete"
     );
     assert!(
         output.contains("pack checksum: mismatch"),
@@ -175,12 +195,63 @@ fn render_page_in_payload_view_shows_payload_screen() {
         "payload page should render pack version in top summary"
     );
     assert!(
+        output.contains("entries: 2/2"),
+        "payload page should render parsed/declared entry counters in top summary"
+    );
+    assert!(
+        output.contains("materialized: 2/2"),
+        "payload page should render materialized/declared entry counters in top summary"
+    );
+    assert!(
         output.contains("computed checksum: cccccccccccccccccccccccccccccccccccccccc"),
         "payload page should render full computed pack checksum"
     );
     assert!(
         output.contains("trailer checksum: cccccccccccccccccccccccccccccccccccccccc"),
         "payload page should render full trailer pack checksum"
+    );
+}
+
+// Verifies that payload top summary uses entry-based proof counters instead of object-count wording.
+#[test]
+fn payload_summary_uses_entry_based_counters_not_odb_count() {
+    let mut model = sample_model(1, 1);
+    let PayloadModel::Ok(payload) = &mut model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    payload.pack_proof.entries_declared = 7;
+    payload.pack_proof.entries_parsed = 7;
+    payload.pack_proof.entries_materialized = 6;
+    payload.pack_proof.unique_objects_materialized = 5;
+    payload.pack_proof.duplicate_entry_count_materialized = 1;
+    payload.pack_proof.transfer_allowed = false;
+    payload.pack_proof.blocked_reason = Some("1 unresolved entry".to_string());
+
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+
+    let output = render_and_capture_text(160, 44, |frame| {
+        render_page(frame, &model, &state);
+    });
+    assert!(
+        output.contains("entries: 7/7"),
+        "payload summary should render parsed/declared entry counters"
+    );
+    assert!(
+        output.contains("materialized: 6/7"),
+        "payload summary should render materialized/declared entry counters"
+    );
+    assert!(
+        output.contains("unique objects: 5"),
+        "payload summary should render unique-materialized-object counter"
+    );
+    assert!(
+        output.contains("duplicates: 1"),
+        "payload summary should render duplicate materialized-entry counter"
+    );
+    assert!(
+        !output.contains("objects: 7/7"),
+        "payload summary should avoid legacy parsed/declared object-counter wording"
     );
 }
 
