@@ -188,7 +188,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: release-package-inputs
-          path: .
+          path: target
 
       - name: Verify tag/version consistency
         run: ./scripts/verify-tag-version.sh
@@ -222,7 +222,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: release-package-inputs
-          path: .
+          path: target
 
       - name: Verify tag/version consistency
         run: ./scripts/verify-tag-version.sh
