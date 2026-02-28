@@ -8,18 +8,32 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
-- Payload entry-ledger rows now include `reconstructed_size` (in-memory model, JSON export, and schema).
-- Payload `Entries` UI now shows both `HDR_SIZE` and `RECON_SIZE` for clearer audit review.
+- Payload entry-ledger rows now include `reconstructed_size` in memory, JSON export, and schema output.
+- Payload `Entries` UI now shows both `HDR_SIZE` and `RECON_SIZE` columns for explicit delta-stream versus reconstructed-size review.
+- Overview now shows `bundle fully reachable from heads: yes|no (...)` as an immediate history-versus-payload audit signal.
+- Overview main page now supports explicit focus switching between `Heads To Import` and `Would Change` tables.
+- Direct page shortcuts were added/standardized in the UI flow: `1` main overview, `2` payload page, `3` first commit detail page.
 
 ### Changed
-- Clarified PACK delta size handling in code: delta header size is treated as delta-stream byte length (spec-aligned).
-- Kept reconstructed target size validation via delta-apply checks (fail-closed).
-- Updated payload object index derivation to use reconstructed size for materialized entries.
+- Clarified PACK delta size semantics: pack-entry size for delta entries is treated as delta-stream byte length (spec-aligned).
+- Kept reconstructed target size validation after delta apply as a fail-closed invariant.
+- Updated payload materialized-object sizing to use reconstructed object size for derived object rows.
+- Reworked audit UI navigation model so `Tab` no longer toggles main views, `v` toggles overview/payload on main pages, and `3` opens commit detail instead of opening file diff directly.
+- Tightened page movement behavior so overview no longer pages into commit view via right-arrow, first commit page no longer returns to overview via left-arrow, and overview remains explicitly reachable via `1` or `Esc`.
+- Moved `1/2/3` navigation hints from footer into headers with explicit wording (`Press 1 main | 2 payload | 3 commit`).
+- Split payload footer hints across two lines so each line fits 110-column terminals.
+- Enriched overview `General` panel with payload context statistics (bundle version, advertised heads, transport entries, payload objects).
+- Aligned overview panel split so top and bottom sections use the same column proportions for cleaner layout consistency.
+- Restructured README workflow to focus on the core path (`create -> audit -> receive`) and moved optional/non-core CLI usage into `Additional Commands`.
 
 ### Tests
-- Updated payload tests for `reconstructed_size` schema/document requirements.
-- Updated payload tests for delta mismatch error wording (`stream size mismatch`).
-- Updated UI tests for `Entries` table header changes (`HDR_SIZE` and reconstructed-size column).
+- Updated payload tests for `reconstructed_size` schema/document requirements and delta stream mismatch wording.
+- Updated UI tests for `Entries` table header changes (`HDR_SIZE`/`RECON_SIZE`).
+- Added/updated navigation tests for `1/2/3` routing, overview focus switching, commit/diff transitions, and page-boundary behavior.
+- Added footer-width regression checks to keep payload footer lines within 110 columns.
+
+### Documentation
+- Updated README and SDD/SAD to match current payload-proof semantics, UI behavior, and audit workflow expectations.
 
 ## [0.6.1] - 2026-02-28
 
