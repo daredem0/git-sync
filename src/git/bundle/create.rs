@@ -4,6 +4,7 @@ use super::inspect::inspect_bundle;
 use crate::git::archive::{
     bundle_archive_path, caudit_sidecar_path, remove_file_if_exists, write_zip_archive,
 };
+use crate::git::digest::sha256_hex;
 use crate::git::metadata::{
     collect_changed_files_for_metadata, collect_commit_chain_for_metadata, write_patch_sidecar,
 };
@@ -12,7 +13,6 @@ use crate::git::types::{
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
-    sha256_hex,
 };
 use anyhow::{Result, bail};
 use std::fs::{self, File};

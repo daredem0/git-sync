@@ -44,7 +44,7 @@ fn verify_pack_payload_parses_declared_count_for_delta_bundle() {
     pack_prefix.push(0x70);
     // Missing base OID triggers unresolved-external-base fail-closed path after parsing.
     pack_prefix.extend_from_slice(&[0x11; 20]);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -180,7 +180,8 @@ fn payload_audit_rejects_non_utf8_bundle_header_line() {
     bundle_bytes.extend_from_slice(b"\nPACK");
     bundle_bytes.extend_from_slice(&2u32.to_be_bytes());
     bundle_bytes.extend_from_slice(&0u32.to_be_bytes());
-    let trailer = sha1_bytes(&bundle_bytes[bundle_bytes.len() - 12..]);
+    let trailer = sha1_bytes(&bundle_bytes[bundle_bytes.len() - 12..])
+        .expect("sha1 hashing should succeed in test helper");
     bundle_bytes.extend_from_slice(&trailer);
     std::fs::write(&bundle_path, bundle_bytes).expect("must write non-utf8 header fixture bundle");
 
@@ -1381,7 +1382,7 @@ fn collect_payload_audit_for_bundle_input_rejects_unresolved_ref_delta_base() {
     pack_prefix.push(0x70);
     // Missing base OID (not present in this pack).
     pack_prefix.extend_from_slice(&[0x11; 20]);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1616,20 +1617,6 @@ fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_contex
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
-    let mut ctx = std::mem::MaybeUninit::<openssl_sys::SHA_CTX>::uninit();
-    let init_ok = unsafe { openssl_sys::SHA1_Init(ctx.as_mut_ptr()) } == 1;
-    assert!(init_ok, "sha1 init should succeed in test helper");
-    let mut ctx = unsafe { ctx.assume_init() };
-    let update_ok =
-        unsafe { openssl_sys::SHA1_Update(&mut ctx, bytes.as_ptr().cast(), bytes.len()) } == 1;
-    assert!(update_ok, "sha1 update should succeed in test helper");
-    let mut digest = [0u8; 20];
-    let final_ok = unsafe { openssl_sys::SHA1_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
-    assert!(final_ok, "sha1 final should succeed in test helper");
-    digest
-}
-
 fn write_synthetic_pack_bundle(
     repo_dir: &std::path::Path,
     file_name: &str,
@@ -1642,7 +1629,7 @@ fn write_synthetic_pack_bundle(
     pack_prefix.extend_from_slice(&pack_version.to_be_bytes());
     pack_prefix.extend_from_slice(&declared_entries.to_be_bytes());
     pack_prefix.extend_from_slice(pack_body);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1666,7 +1653,7 @@ fn write_synthetic_ref_delta_bundle(
     pack_prefix.extend_from_slice(&1u32.to_be_bytes());
     pack_prefix.push(0x70);
     pack_prefix.extend_from_slice(&[0x11; 20]);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1698,7 +1685,7 @@ fn write_synthetic_external_ref_delta_bundle(
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&1u32.to_be_bytes());
     pack_prefix.extend_from_slice(&pack_body);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1740,7 +1727,7 @@ fn write_synthetic_ofs_delta_bundle(
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&pack_body);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1783,7 +1770,7 @@ fn write_synthetic_ofs_delta_size_mismatch_bundle(
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&pack_body);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1814,7 +1801,7 @@ fn write_synthetic_truncated_second_entry_bundle(
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&pack_body);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 
@@ -1922,7 +1909,7 @@ fn write_synthetic_duplicate_blob_bundle(
     pack_prefix.extend_from_slice(&2u32.to_be_bytes());
     pack_prefix.extend_from_slice(&first);
     pack_prefix.extend_from_slice(&second);
-    let trailer = sha1_bytes(&pack_prefix);
+    let trailer = sha1_bytes(&pack_prefix).expect("sha1 hashing should succeed in test helper");
     let mut pack_bytes = pack_prefix;
     pack_bytes.extend_from_slice(&trailer);
 

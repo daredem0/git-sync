@@ -5,12 +5,13 @@ use crate::git::archive::{
     resolve_patch_sidecar_path,
 };
 use crate::git::bundle::inspect_bundle;
+use crate::git::digest::sha256_hex;
 use crate::git::metadata::collect::{
     collect_changed_files_for_metadata, collect_commit_chain_for_metadata,
 };
 use crate::git::metadata::load::load_bundle_metadata_from_path;
 use crate::git::types::{CreateBundleAuditHead, CreateBundleAuditMetadata};
-use crate::git::util::{bundle_version_code, sha256_hex};
+use crate::git::util::bundle_version_code;
 use anyhow::{Result, bail};
 use std::fs;
 use std::path::Path;

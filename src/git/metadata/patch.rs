@@ -1,8 +1,8 @@
 //! Git-layer patch functionality.
 
 use crate::git::archive::patch_sidecar_path;
+use crate::git::digest::sha256_hex;
 use crate::git::types::CreateBundleAuditPatchSidecar;
-use crate::git::util::sha256_hex;
 use anyhow::Result;
 use std::fs;
 use std::path::Path;

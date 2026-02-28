@@ -1,8 +1,8 @@
 //! PACK preflight parsing and checksum validation.
 
+use crate::git::digest::{hex_encode, sha1_hex};
 use crate::git::types::PayloadAuditError;
 
-use super::object::{hex_encode, sha1_hex};
 use super::pack::read_be_u32;
 
 #[derive(Debug, Clone)]

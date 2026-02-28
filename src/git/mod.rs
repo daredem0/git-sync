@@ -4,6 +4,7 @@ mod archive;
 mod bundle;
 mod context;
 mod diff;
+mod digest;
 mod metadata;
 mod types;
 mod util;

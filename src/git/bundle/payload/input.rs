@@ -1,8 +1,8 @@
 //! Bundle-input loading helpers for payload audit.
 
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
+use crate::git::digest::sha256_hex;
 use crate::git::types::PayloadTransportEntry;
-use crate::git::util::sha256_hex;
 use anyhow::{Result, bail};
 use std::fs;
 use std::io::Read;

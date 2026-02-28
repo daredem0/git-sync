@@ -1,9 +1,8 @@
 //! Git-layer util functionality.
 
 use crate::git::{BundleVersion, ChangeStatus};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use std::fs;
-use std::mem::MaybeUninit;
 use std::path::Path;
 
 /// Returns the current UNIX timestamp in seconds.
@@ -52,40 +51,6 @@ pub(crate) fn current_hostname() -> String {
     }
 
     "unknown-host".to_string()
-}
-
-/// Returns the SHA-256 digest of `bytes` as a lowercase hex string.
-///
-/// # Errors
-///
-/// Returns an error when OpenSSL digest operations fail.
-pub(crate) fn sha256_hex(bytes: &[u8]) -> Result<String> {
-    let mut ctx = MaybeUninit::<openssl_sys::SHA256_CTX>::uninit();
-
-    // SAFETY: SHA256_Init initializes the context pointed to by ctx.
-    let init_ok = unsafe { openssl_sys::SHA256_Init(ctx.as_mut_ptr()) } == 1;
-    if !init_ok {
-        bail!("failed to initialize SHA-256 context");
-    }
-
-    // SAFETY: ctx was initialized successfully by SHA256_Init above.
-    let mut ctx = unsafe { ctx.assume_init() };
-
-    // SAFETY: bytes pointer and length are valid for the lifetime of this call.
-    let update_ok =
-        unsafe { openssl_sys::SHA256_Update(&mut ctx, bytes.as_ptr().cast(), bytes.len()) } == 1;
-    if !update_ok {
-        bail!("failed to update SHA-256 digest");
-    }
-
-    let mut digest = [0u8; 32];
-    // SAFETY: digest points to a 32-byte output buffer and ctx is a valid hash context.
-    let final_ok = unsafe { openssl_sys::SHA256_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
-    if !final_ok {
-        bail!("failed to finalize SHA-256 digest");
-    }
-
-    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// Converts an optional git path into a lossy UTF-8 string.

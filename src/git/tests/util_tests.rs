@@ -55,14 +55,3 @@ fn path_to_string_handles_some_and_none_paths() {
         "missing path should error to protect callers from invalid diff entries"
     );
 }
-
-// Verifies that sha256_hex returns deterministic known digest output for a fixed byte sequence.
-#[test]
-fn sha256_hex_returns_expected_digest_for_known_input() {
-    let digest = sha256_hex(b"abc").expect("sha256 hashing should succeed");
-    assert_eq!(
-        digest,
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string(),
-        "sha256 digest should match known test vector for 'abc'"
-    );
-}

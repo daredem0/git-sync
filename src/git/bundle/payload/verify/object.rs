@@ -1,5 +1,6 @@
 //! Object/OID mapping helpers for PACK verification.
 
+use crate::git::digest::sha1_hex;
 use crate::git::types::{PackEntryKind, PayloadObjectKind};
 use anyhow::{Result, bail};
 
@@ -7,32 +8,6 @@ use anyhow::{Result, bail};
 pub(super) struct ParsedPackObject {
     pub(super) kind: PayloadObjectKind,
     pub(super) content: Vec<u8>,
-}
-
-/// Returns lowercase hex for arbitrary bytes.
-pub(super) fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Returns SHA-1 digest hex for bytes.
-pub(super) fn sha1_hex(bytes: &[u8]) -> Result<String> {
-    let mut ctx = std::mem::MaybeUninit::<openssl_sys::SHA_CTX>::uninit();
-    let init_ok = unsafe { openssl_sys::SHA1_Init(ctx.as_mut_ptr()) } == 1;
-    if !init_ok {
-        bail!("failed to initialize SHA-1 context");
-    }
-    let mut ctx = unsafe { ctx.assume_init() };
-    let update_ok =
-        unsafe { openssl_sys::SHA1_Update(&mut ctx, bytes.as_ptr().cast(), bytes.len()) } == 1;
-    if !update_ok {
-        bail!("failed to update SHA-1 digest");
-    }
-    let mut digest = [0u8; 20];
-    let final_ok = unsafe { openssl_sys::SHA1_Final(digest.as_mut_ptr(), &mut ctx) } == 1;
-    if !final_ok {
-        bail!("failed to finalize SHA-1 digest");
-    }
-    Ok(hex_encode(&digest))
 }
 
 /// Returns the canonical object id for `(kind, content)` as SHA-1.

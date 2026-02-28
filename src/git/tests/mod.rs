@@ -23,3 +23,5 @@ mod metadata_tests;
 mod archive_tests;
 // Focus: utility helper behavior for parsing, formatting, hashing, and OID/path conversions.
 mod util_tests;
+// Focus: centralized digest helper behavior for SHA-1/SHA-256 and hex rendering.
+mod digest_tests;
