@@ -12,12 +12,11 @@ mod version;
 use anyhow::Result;
 use app::AppConfig;
 use clap::Parser;
-use cli::{AuditTarget, Cli, Command, OutputFormat, resolve_audit_target};
+use cli::{Cli, Command, OutputFormat, resolve_payload_audit_target};
 use git::{
-    CreateBundleOptions, ReceiveBundleOptions, collect_changed_files,
-    collect_changed_files_from_bundle_input, create_bundle, create_bundle_with_options,
-    receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
-    render_manifest, render_manifest_json, resolve_repo_audit_range,
+    CreateBundleOptions, ReceiveBundleOptions, collect_payload_audit_for_bundle_input,
+    create_bundle, create_bundle_with_options, receive_bundle_input,
+    receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
     verify_bundle_metadata_against_repo_input,
 };
 
@@ -77,16 +76,25 @@ fn main() -> Result<()> {
             verify_metadata,
             format,
         }) => {
+            if verify_metadata {
+                let repo_path =
+                    repo.ok_or_else(|| anyhow::anyhow!("metadata verification requires --repo"))?;
+                let bundle_path = bundle
+                    .ok_or_else(|| anyhow::anyhow!("metadata verification requires --bundle"))?;
+                if from.is_some() || to.is_some() {
+                    anyhow::bail!("metadata verification does not accept --from or --to");
+                }
+
+                verify_bundle_metadata_against_repo_input(&bundle_path, &repo_path)?;
+                println!("metadata verification passed");
+                return Ok(());
+            }
+
             // `audit` without `--format` enters interactive TUI mode.
             if format.is_none() {
-                if verify_metadata {
-                    anyhow::bail!(
-                        "interactive audit does not accept --verify-metadata; metadata is shown in the TUI overview"
-                    );
-                }
                 if from.is_some() || to.is_some() {
                     anyhow::bail!(
-                        "interactive audit does not accept --from/--to; use --format for non-interactive repo-range audit"
+                        "interactive audit does not accept --from/--to; use --format for non-interactive payload audit"
                     );
                 }
                 let repo_path =
@@ -105,62 +113,17 @@ fn main() -> Result<()> {
 
             let format = format.expect("format should be present in non-interactive audit mode");
 
-            if verify_metadata {
-                let repo_path =
-                    repo.ok_or_else(|| anyhow::anyhow!("metadata verification requires --repo"))?;
-                let bundle_path = bundle
-                    .ok_or_else(|| anyhow::anyhow!("metadata verification requires --bundle"))?;
-                if from.is_some() || to.is_some() {
-                    anyhow::bail!("metadata verification does not accept --from or --to");
+            let target = resolve_payload_audit_target(repo, bundle, from, to)?;
+            let payload =
+                collect_payload_audit_for_bundle_input(&target.bundle_path, &target.repo_path)?;
+            match format {
+                OutputFormat::Table => {
+                    let table = render_payload_audit_table(&payload);
+                    println!("{table}");
                 }
-
-                verify_bundle_metadata_against_repo_input(&bundle_path, &repo_path)?;
-                match format {
-                    OutputFormat::Tsv => {
-                        println!("VERIFY\tOK");
-                    }
-                    OutputFormat::Json => {
-                        println!("{{\"verification\":\"ok\"}}");
-                    }
-                }
-                return Ok(());
-            }
-
-            match resolve_audit_target(repo, bundle, from, to)? {
-                AuditTarget::RepoRange {
-                    repo_path,
-                    from_rev,
-                    to_rev,
-                } => {
-                    let range = resolve_repo_audit_range(&repo_path, &from_rev, &to_rev)?;
-                    let changes = collect_changed_files(
-                        &repo_path,
-                        range.base_commit_id,
-                        range.tip_commit_id,
-                    )?;
-                    match format {
-                        OutputFormat::Tsv => {
-                            let manifest = render_manifest(&changes);
-                            print!("{manifest}");
-                        }
-                        OutputFormat::Json => {
-                            let manifest = render_manifest_json(&changes)?;
-                            println!("{manifest}");
-                        }
-                    }
-                }
-                AuditTarget::Bundle { bundle_path } => {
-                    let changes = collect_changed_files_from_bundle_input(&bundle_path)?;
-                    match format {
-                        OutputFormat::Tsv => {
-                            let manifest = render_manifest(&changes);
-                            print!("{manifest}");
-                        }
-                        OutputFormat::Json => {
-                            let manifest = render_manifest_json(&changes)?;
-                            println!("{manifest}");
-                        }
-                    }
+                OutputFormat::Json => {
+                    let payload_json = render_payload_audit_json(&payload)?;
+                    println!("{payload_json}");
                 }
             }
         }
@@ -273,4 +236,117 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Renders non-interactive payload audit as a human-readable aligned table.
+fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
+    let oid_header = "OID";
+    let type_header = "TYPE";
+    let size_header = "SIZE";
+    let reachable_header = "REACHABLE";
+
+    let oid_width = std::cmp::max(
+        oid_header.len(),
+        payload
+            .objects
+            .iter()
+            .map(|entry| entry.oid.to_string().len())
+            .max()
+            .unwrap_or(0),
+    );
+    let type_width = std::cmp::max(
+        type_header.len(),
+        payload
+            .objects
+            .iter()
+            .map(|entry| payload_kind_label(entry.kind).len())
+            .max()
+            .unwrap_or(0),
+    );
+    let size_width = std::cmp::max(
+        size_header.len(),
+        payload
+            .objects
+            .iter()
+            .map(|entry| entry.size_bytes.to_string().len())
+            .max()
+            .unwrap_or(0),
+    );
+    let reachable_width = std::cmp::max(reachable_header.len(), 9);
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "PACK OBJECTS (bundle {}, heads={})\n",
+        match payload.bundle_version {
+            git::BundleVersion::V2 => "v2",
+            git::BundleVersion::V3 => "v3",
+        },
+        payload.heads.len()
+    ));
+    out.push_str(&format!(
+        "{:<oid_width$}  {:<type_width$}  {:>size_width$}  {:<reachable_width$}\n",
+        oid_header, type_header, size_header, reachable_header
+    ));
+
+    for object in &payload.objects {
+        out.push_str(&format!(
+            "{:<oid_width$}  {:<type_width$}  {:>size_width$}  {:<reachable_width$}\n",
+            object.oid,
+            payload_kind_label(object.kind),
+            object.size_bytes,
+            if object.reachable_from_heads {
+                "yes"
+            } else {
+                "no"
+            }
+        ));
+    }
+
+    if payload.objects.is_empty() {
+        out.push_str("(no pack objects)\n");
+    }
+
+    out
+}
+
+/// Renders non-interactive payload audit as JSON.
+///
+/// This is a phase-1 contract shape and will be extended in subsequent phases.
+fn render_payload_audit_json(payload: &git::PayloadAudit) -> Result<String> {
+    let value = serde_json::json!({
+        "bundle_header_version": match payload.bundle_version {
+            git::BundleVersion::V2 => "v2",
+            git::BundleVersion::V3 => "v3",
+        },
+        "heads": payload.heads.iter().map(|head| serde_json::json!({
+            "oid": head.oid.to_string(),
+            "reference": head.reference,
+        })).collect::<Vec<_>>(),
+        "transport_entries": payload.transport_entries.iter().map(|entry| serde_json::json!({
+            "name": entry.name,
+            "size_bytes": entry.size_bytes,
+            "sha256": entry.sha256,
+        })).collect::<Vec<_>>(),
+        "pack_objects": payload.objects.iter().map(|object| serde_json::json!({
+            "oid": object.oid.to_string(),
+            "type": payload_kind_label(object.kind),
+            "size_bytes": object.size_bytes,
+            "reachable_from_heads": object.reachable_from_heads,
+            "context_head_index": object.context_head_index,
+            "context_commit_order": object.context_commit_order,
+            "context_path": object.context_path,
+        })).collect::<Vec<_>>(),
+    });
+    Ok(serde_json::to_string_pretty(&value)?)
+}
+
+/// Returns stable labels for payload object kinds.
+fn payload_kind_label(kind: git::PayloadObjectKind) -> &'static str {
+    match kind {
+        git::PayloadObjectKind::Commit => "commit",
+        git::PayloadObjectKind::Tree => "tree",
+        git::PayloadObjectKind::Blob => "blob",
+        git::PayloadObjectKind::Tag => "tag",
+        git::PayloadObjectKind::Unknown => "unknown",
+    }
 }

@@ -250,15 +250,15 @@ fn version_flag_prints_version_line() {
     );
 }
 
-// Verifies that interactive audit rejects --verify-metadata when no --format is provided.
+// Verifies that verify-metadata mode is non-interactive and requires explicit --repo/--bundle inputs.
 #[test]
-fn audit_interactive_rejects_verify_metadata_flag() {
+fn audit_verify_metadata_requires_repo_and_bundle_inputs() {
     let output = run_bin(&["audit", "--verify-metadata"], None);
-    assert_failure(&output, "interactive audit with verify-metadata");
+    assert_failure(&output, "verify-metadata without required inputs");
     let text = output_text(&output);
     assert!(
-        text.contains("interactive audit does not accept --verify-metadata"),
-        "interactive audit should explain verify-metadata/format constraint"
+        text.contains("metadata verification requires --repo"),
+        "verify-metadata should fail fast for missing --repo"
     );
 }
 
@@ -298,9 +298,9 @@ fn audit_interactive_requires_bundle_argument() {
     );
 }
 
-// Verifies that metadata verification in JSON format prints the expected success JSON document.
+// Verifies that metadata verification works without --format and prints a plain success message.
 #[test]
-fn audit_verify_metadata_json_outputs_verification_ok() {
+fn audit_verify_metadata_without_format_outputs_verification_ok() {
     let fixture = create_fixture();
     let output = run_bin(
         &[
@@ -310,17 +310,110 @@ fn audit_verify_metadata_json_outputs_verification_ok() {
             "--repo",
             fixture.source_repo.to_string_lossy().as_ref(),
             "--verify-metadata",
+        ],
+        None,
+    );
+    assert_success(&output, "audit verify-metadata without format");
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    assert_eq!(
+        stdout.trim(),
+        "metadata verification passed",
+        "verify-metadata mode should print a plain success message"
+    );
+}
+
+// Verifies that non-interactive audit rejects legacy TSV output in V5 payload-only mode.
+#[test]
+fn audit_non_interactive_rejects_legacy_tsv_output() {
+    let fixture = create_fixture();
+    let output = run_bin(
+        &[
+            "audit",
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--repo",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "--format",
+            "tsv",
+        ],
+        None,
+    );
+    assert_failure(&output, "audit non-interactive tsv output");
+}
+
+// Verifies that non-interactive audit no longer supports direct repo-range mode in payload-only contract.
+#[test]
+fn audit_non_interactive_rejects_repo_range_mode() {
+    let fixture = create_fixture();
+    let output = run_bin(
+        &[
+            "audit",
+            "--repo",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "--from",
+            "sync/base",
+            "--to",
+            "sync/tip",
             "--format",
             "json",
         ],
         None,
     );
-    assert_success(&output, "audit verify-metadata json");
+    assert_failure(&output, "audit non-interactive repo-range mode");
+    let text = output_text(&output);
+    assert!(
+        text.contains("payload") || text.contains("--bundle"),
+        "repo-range mode should fail with payload contract guidance"
+    );
+}
+
+// Verifies that non-interactive audit supports payload table output for a bundle+repo input pair.
+#[test]
+fn audit_non_interactive_payload_table_output_succeeds() {
+    let fixture = create_fixture();
+    let output = run_bin(
+        &[
+            "audit",
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--repo",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "--format",
+            "table",
+        ],
+        None,
+    );
+    assert_success(&output, "audit non-interactive payload table");
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
-    assert_eq!(
-        stdout.trim(),
-        "{\"verification\":\"ok\"}",
-        "verification JSON mode should print deterministic OK payload"
+    assert!(
+        stdout.contains("OID") && stdout.contains("TYPE"),
+        "payload table output should include object table headers"
+    );
+}
+
+// Verifies that non-interactive audit supports payload JSON output for a bundle+repo input pair.
+#[test]
+fn audit_non_interactive_payload_json_output_succeeds() {
+    let fixture = create_fixture();
+    let output = run_bin(
+        &[
+            "audit",
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--repo",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert_success(&output, "audit non-interactive payload json");
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("payload json output should parse as valid json");
+    assert!(
+        value.get("pack_objects").is_some(),
+        "payload json output should include pack_objects section"
     );
 }
 

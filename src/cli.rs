@@ -1,4 +1,4 @@
-//! CLI argument models and audit-target resolution.
+//! CLI argument models and audit-input resolution.
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -75,56 +75,49 @@ pub enum Command {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 /// Non-interactive output encoding for `audit --format`.
 pub enum OutputFormat {
-    /// Tab-separated manifest rows.
-    Tsv,
+    /// Human-readable aligned payload table.
+    Table,
     /// Pretty-printed JSON manifest.
     Json,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Resolved non-interactive audit mode target.
-pub enum AuditTarget {
-    /// Audit based on bundle metadata sidecar content.
-    Bundle { bundle_path: PathBuf },
-    /// Audit directly from repository history between two revisions.
-    RepoRange {
-        repo_path: PathBuf,
-        from_rev: String,
-        to_rev: String,
-    },
+/// Resolved non-interactive payload audit target.
+pub struct PayloadAuditTarget {
+    /// Repository path used to resolve prerequisite object dependencies.
+    pub repo_path: PathBuf,
+    /// Bundle/package path being audited.
+    pub bundle_path: PathBuf,
 }
 
-/// Resolves mutually-exclusive audit inputs into a concrete target mode.
+/// Resolves non-interactive payload-audit inputs.
 ///
 /// # Errors
 ///
-/// Returns an error when required argument combinations are missing or when
-/// repository and bundle modes are mixed.
-pub fn resolve_audit_target(
+/// Returns an error when `--repo`/`--bundle` are missing or when deprecated
+/// repo-range flags are provided.
+pub fn resolve_payload_audit_target(
     repo: Option<PathBuf>,
     bundle: Option<PathBuf>,
     from: Option<String>,
     to: Option<String>,
-) -> Result<AuditTarget> {
+) -> Result<PayloadAuditTarget> {
     match (repo, bundle, from, to) {
-        (None, Some(bundle_path), None, None) => Ok(AuditTarget::Bundle { bundle_path }),
-        (Some(repo_path), None, Some(from_rev), Some(to_rev)) => Ok(AuditTarget::RepoRange {
+        (Some(repo_path), Some(bundle_path), None, None) => Ok(PayloadAuditTarget {
             repo_path,
-            from_rev,
-            to_rev,
+            bundle_path,
         }),
-        (Some(_), Some(_), _, _) => bail!("provide either --repo or --bundle, not both"),
-        (Some(_), None, _, None) => {
-            bail!("repo audit mode requires both --from and --to")
+        (Some(_), Some(_), _, _) => {
+            bail!("payload audit does not accept --from or --to")
         }
-        (Some(_), None, None, Some(_)) => {
-            bail!("repo audit mode requires both --from and --to")
+        (Some(_), None, _, _) => {
+            bail!("payload audit requires --bundle")
         }
-        (None, Some(_), Some(_), _) | (None, Some(_), _, Some(_)) => {
-            bail!("bundle audit mode does not accept --from or --to")
+        (None, Some(_), _, _) => {
+            bail!("payload audit requires --repo")
         }
         (None, None, _, _) => {
-            bail!("audit requires either --bundle or --repo with --from and --to")
+            bail!("payload audit requires both --repo and --bundle")
         }
     }
 }
@@ -133,40 +126,31 @@ pub fn resolve_audit_target(
 mod tests {
     use super::*;
 
-    // Verifies that resolve_audit_target selects bundle mode when only --bundle is provided.
+    // Verifies that resolve_payload_audit_target accepts payload mode with --repo and --bundle.
     #[test]
-    fn resolve_audit_target_accepts_bundle_mode_without_base_or_tip() {
-        let bundle_path = PathBuf::from("sync.bundle");
-        let result = resolve_audit_target(None, Some(bundle_path.clone()), None, None)
-            .expect("bundle-only input should be accepted");
-        assert_eq!(result, AuditTarget::Bundle { bundle_path });
-    }
-
-    // Verifies that resolve_audit_target selects repo mode when --repo, --from, and --to are provided.
-    #[test]
-    fn resolve_audit_target_accepts_repo_mode_with_from_and_to() {
+    fn resolve_payload_audit_target_accepts_bundle_with_repo() {
         let repo_path = PathBuf::from(".");
-        let result = resolve_audit_target(
+        let bundle_path = PathBuf::from("sync.bundle");
+        let result = resolve_payload_audit_target(
             Some(repo_path.clone()),
+            Some(bundle_path.clone()),
             None,
-            Some("HEAD~3".to_string()),
-            Some("HEAD".to_string()),
+            None,
         )
-        .expect("repo range input should be accepted");
+        .expect("payload audit input should be accepted");
         assert_eq!(
             result,
-            AuditTarget::RepoRange {
+            PayloadAuditTarget {
                 repo_path,
-                from_rev: "HEAD~3".to_string(),
-                to_rev: "HEAD".to_string(),
+                bundle_path,
             }
         );
     }
 
-    // Verifies that resolve_audit_target rejects mixed bundle and repo arguments.
+    // Verifies that resolve_payload_audit_target rejects deprecated --from/--to usage.
     #[test]
-    fn resolve_audit_target_rejects_bundle_and_repo_combined() {
-        let result = resolve_audit_target(
+    fn resolve_payload_audit_target_rejects_from_to_flags() {
+        let result = resolve_payload_audit_target(
             Some(PathBuf::from(".")),
             Some(PathBuf::from("sync.bundle")),
             Some("HEAD~1".to_string()),
@@ -174,50 +158,25 @@ mod tests {
         );
         assert!(
             result.is_err(),
-            "audit mode selection must reject combined bundle and repo inputs"
+            "payload audit target resolution must reject --from/--to flags"
         );
     }
 
-    // Verifies that resolve_audit_target rejects repo mode when --from or --to is missing.
+    // Verifies that resolve_payload_audit_target requires both --repo and --bundle.
     #[test]
-    fn resolve_audit_target_rejects_repo_mode_without_complete_range() {
-        let missing_to = resolve_audit_target(
-            Some(PathBuf::from(".")),
-            None,
-            Some("HEAD~1".to_string()),
-            None,
-        );
-        assert!(missing_to.is_err(), "repo mode must reject missing --to");
-
-        let missing_from = resolve_audit_target(
-            Some(PathBuf::from(".")),
-            None,
-            None,
-            Some("HEAD".to_string()),
-        );
+    fn resolve_payload_audit_target_requires_repo_and_bundle() {
+        let missing_bundle =
+            resolve_payload_audit_target(Some(PathBuf::from(".")), None, None, None);
         assert!(
-            missing_from.is_err(),
-            "repo mode must reject missing --from"
+            missing_bundle.is_err(),
+            "payload audit target resolution must reject missing --bundle"
         );
-    }
 
-    // Verifies that resolve_audit_target rejects from/to arguments when auditing a bundle directly.
-    #[test]
-    fn resolve_audit_target_rejects_bundle_mode_with_from_or_to() {
-        let with_from = resolve_audit_target(
-            None,
-            Some(PathBuf::from("sync.bundle")),
-            Some("HEAD~1".to_string()),
-            None,
+        let missing_repo =
+            resolve_payload_audit_target(None, Some(PathBuf::from("sync.bundle")), None, None);
+        assert!(
+            missing_repo.is_err(),
+            "payload audit target resolution must reject missing --repo"
         );
-        assert!(with_from.is_err(), "bundle mode must reject --from");
-
-        let with_to = resolve_audit_target(
-            None,
-            Some(PathBuf::from("sync.bundle")),
-            None,
-            Some("HEAD".to_string()),
-        );
-        assert!(with_to.is_err(), "bundle mode must reject --to");
     }
 }

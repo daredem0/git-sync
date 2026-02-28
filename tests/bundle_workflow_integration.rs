@@ -54,17 +54,8 @@ fn zip_entry_names(archive_path: &Path) -> Vec<String> {
     names
 }
 
-fn normalize_tsv(output: &str) -> String {
-    output
-        .lines()
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 // Verifies the full end-to-end workflow:
-// generate fixture repo, create bundle package, audit from bundle and repo, verify metadata,
+// generate fixture repo, create bundle package, verify metadata,
 // receive into a separate receiver repo, and confirm receiver refs resolve to the expected tip commit.
 #[test]
 fn integration_bundle_create_audit_verify_and_receive_flow() {
@@ -143,53 +134,6 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
     );
 
     let bundle_arg_owned = archive_path.to_string_lossy().into_owned();
-    let bundle_audit_tsv = run_checked_command(
-        "cargo",
-        &[
-            "run",
-            "--quiet",
-            "--",
-            "audit",
-            "--bundle",
-            &bundle_arg_owned,
-            "--format",
-            "tsv",
-        ],
-        Some(&manifest_dir),
-    );
-    assert!(
-        bundle_audit_tsv.starts_with("STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n"),
-        "bundle audit should print changed-file manifest as TSV"
-    );
-
-    let repo_audit_tsv = run_checked_command(
-        "cargo",
-        &[
-            "run",
-            "--quiet",
-            "--",
-            "audit",
-            "--repo",
-            &repo_arg_owned,
-            "--from",
-            "sync/base",
-            "--to",
-            "sync/tip",
-            "--format",
-            "tsv",
-        ],
-        Some(&manifest_dir),
-    );
-    assert!(
-        repo_audit_tsv.starts_with("STATUS\tPATH\tOLD_PATH\tOLD_OID\tNEW_OID\n"),
-        "repo audit should print changed-file manifest as TSV"
-    );
-    assert_eq!(
-        normalize_tsv(&bundle_audit_tsv),
-        normalize_tsv(&repo_audit_tsv),
-        "bundle and repo audit manifests should match for the same range"
-    );
-
     let verify_output = run_checked_command(
         "cargo",
         &[
@@ -202,14 +146,12 @@ fn integration_bundle_create_audit_verify_and_receive_flow() {
             "--repo",
             &repo_arg_owned,
             "--verify-metadata",
-            "--format",
-            "tsv",
         ],
         Some(&manifest_dir),
     );
     assert_eq!(
         verify_output.trim(),
-        "VERIFY\tOK",
+        "metadata verification passed",
         "metadata verification should succeed against the source repo"
     );
 
