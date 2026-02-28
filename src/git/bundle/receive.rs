@@ -2,7 +2,6 @@
 
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
-use crate::git::metadata::load_bundle_metadata_from_input;
 use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
 use crate::git::{
@@ -67,14 +66,13 @@ pub fn receive_bundle_input_with_options(
 ///
 /// # Errors
 ///
-/// Returns an error when metadata loading, bundle import, or commit traversal
-/// fails.
+/// Returns an error when bundle inspection/import or commit traversal fails.
 pub fn collect_commit_audit_entries_for_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
 ) -> Result<Vec<CommitAuditEntry>> {
-    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, metadata| {
-        collect_commit_audit_entries(repo, metadata)
+    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, inspection| {
+        collect_commit_audit_entries(repo, inspection)
     })
 }
 
@@ -90,9 +88,11 @@ pub fn collect_commit_file_patch_for_bundle_input(
     commit_id: git2::Oid,
     path: &str,
 ) -> Result<String> {
-    with_imported_bundle_input_repo(bundle_input_path, receiver_repo_path, |repo, _| {
-        collect_commit_file_patch(repo, commit_id, path)
-    })
+    with_imported_bundle_input_repo(
+        bundle_input_path,
+        receiver_repo_path,
+        |repo, _inspection| collect_commit_file_patch(repo, commit_id, path),
+    )
 }
 
 /// Applies a bundle to the receiver repository or to a dry-run mirror.
@@ -261,14 +261,14 @@ fn collect_line_stats_for_head(
     Ok(stats)
 }
 
-/// Builds commit-page entries from metadata and imported repository objects.
+/// Builds commit-page entries from imported bundle objects.
 fn collect_commit_audit_entries(
     repo: &git2::Repository,
-    metadata: &crate::git::types::CreateBundleAuditMetadata,
+    inspection: &BundleInspection,
 ) -> Result<Vec<CommitAuditEntry>> {
+    let commit_ids = collect_imported_commit_ids(repo, inspection)?;
     let mut entries = Vec::new();
-    for commit_meta in &metadata.commit_chain {
-        let commit_id = git2::Oid::from_str(&commit_meta.oid)?;
+    for commit_id in commit_ids {
         let commit = repo.find_commit(commit_id)?;
         let tip_tree = commit.tree()?;
         let base_tree = if commit.parent_count() == 0 {
@@ -278,26 +278,61 @@ fn collect_commit_audit_entries(
         };
 
         let files = collect_line_stats_for_tree_diff(repo, base_tree.as_ref(), &tip_tree)?;
+        let committer = commit.committer();
+        let author = commit.author();
         entries.push(CommitAuditEntry {
             commit_id,
-            subject: commit_meta.subject.clone(),
+            subject: commit
+                .summary()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_else(|| "<no subject>".to_string()),
             committer: CommitAuditIdentity {
-                name: commit_meta.committer.name.clone(),
-                email: commit_meta.committer.email.clone(),
-                time_seconds: commit_meta.committer.time_seconds,
-                offset_minutes: commit_meta.committer.offset_minutes,
+                name: committer.name().unwrap_or("<unknown>").to_string(),
+                email: committer.email().unwrap_or("<unknown>").to_string(),
+                time_seconds: committer.when().seconds(),
+                offset_minutes: committer.when().offset_minutes(),
             },
             author: CommitAuditIdentity {
-                name: commit_meta.author.name.clone(),
-                email: commit_meta.author.email.clone(),
-                time_seconds: commit_meta.author.time_seconds,
-                offset_minutes: commit_meta.author.offset_minutes,
+                name: author.name().unwrap_or("<unknown>").to_string(),
+                email: author.email().unwrap_or("<unknown>").to_string(),
+                time_seconds: author.when().seconds(),
+                offset_minutes: author.when().offset_minutes(),
             },
             files,
         });
     }
 
     Ok(entries)
+}
+
+/// Enumerates commits carried by imported bundle heads, excluding prerequisites.
+///
+/// Returned OIDs are ordered oldest-first for stable page progression.
+fn collect_imported_commit_ids(
+    repo: &git2::Repository,
+    inspection: &BundleInspection,
+) -> Result<Vec<git2::Oid>> {
+    let mut revwalk = repo.revwalk()?;
+    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME | git2::Sort::REVERSE)?;
+
+    let mut heads = inspection.heads.clone();
+    heads.sort_by(|left, right| {
+        left.reference
+            .cmp(&right.reference)
+            .then_with(|| left.oid.cmp(&right.oid))
+    });
+    for head in heads {
+        revwalk.push(head.oid)?;
+    }
+    for prerequisite in &inspection.prerequisites {
+        revwalk.hide(*prerequisite)?;
+    }
+
+    let mut commits = Vec::new();
+    for oid_result in revwalk {
+        commits.push(oid_result?);
+    }
+    Ok(commits)
 }
 
 /// Returns a textual patch for one file in a single commit.
@@ -355,23 +390,24 @@ fn collect_commit_file_patch(
 fn with_imported_bundle_input_repo<T>(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
-    func: impl FnOnce(&git2::Repository, &crate::git::types::CreateBundleAuditMetadata) -> Result<T>,
+    func: impl FnOnce(&git2::Repository, &BundleInspection) -> Result<T>,
 ) -> Result<T> {
-    let metadata = load_bundle_metadata_from_input(bundle_input_path)?;
     // Analysis helpers run against a temporary imported repo to avoid mutating the receiver.
     let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
     let repo = git2::Repository::open_bare(&temp_repo.path)?;
 
-    if is_zip_bundle_input_path(bundle_input_path) {
+    let inspection = if is_zip_bundle_input_path(bundle_input_path) {
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let inspection = inspect_bundle(&extracted.bundle_path)?;
         apply_bundle_to_repo(&repo, &extracted.bundle_path, &inspection.heads)?;
+        inspection
     } else {
         let inspection = inspect_bundle(bundle_input_path)?;
         apply_bundle_to_repo(&repo, bundle_input_path, &inspection.heads)?;
-    }
+        inspection
+    };
 
-    func(&repo, &metadata)
+    func(&repo, &inspection)
 }
 
 /// Computes line stats for a direct tree-to-tree diff.

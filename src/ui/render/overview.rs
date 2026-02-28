@@ -16,8 +16,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),
             Constraint::Length(6),
+            Constraint::Length(8),
             Constraint::Min(10),
             Constraint::Length(2),
         ])

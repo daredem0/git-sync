@@ -937,6 +937,45 @@ fn collect_commit_audit_entries_includes_author_and_committer_identity() {
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that commit-audit page data can be collected from a plain bundle even when the metadata sidecar is absent.
+#[test]
+fn collect_commit_audit_entries_for_plain_bundle_succeeds_without_metadata_sidecar() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-commit-audit-no-sidecar", false);
+    let metadata_path = PathBuf::from(format!(
+        "{}.caudit.json",
+        bundle_result.bundle_path.display()
+    ));
+    std::fs::remove_file(&metadata_path).expect("must remove metadata sidecar");
+
+    let receiver_dir = temp_repo_dir("receive-commit-audit-no-sidecar-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let entries =
+        collect_commit_audit_entries_for_bundle_input(&bundle_result.bundle_path, &receiver_dir)
+            .expect("must collect commit-audit entries from plain bundle without metadata sidecar");
+    assert_eq!(
+        entries.len(),
+        1,
+        "fixture range should produce one commit entry (base..tip)"
+    );
+    assert_eq!(
+        entries[0].commit_id, tip_commit_id,
+        "entry commit id should match the tip commit in this fixture range"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that a per-file patch can be collected for a changed file in a commit inside a bundle package.
 #[test]
 fn collect_commit_file_patch_for_bundle_input_returns_patch_for_changed_file() {
@@ -972,6 +1011,44 @@ fn collect_commit_file_patch_for_bundle_input_returns_patch_for_changed_file() {
     assert!(
         patch.contains("@@"),
         "patch should include at least one hunk for modified file content"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that per-file patch collection from a plain bundle does not depend on a metadata sidecar file.
+#[test]
+fn collect_commit_file_patch_for_plain_bundle_succeeds_without_metadata_sidecar() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-commit-file-patch-no-sidecar", false);
+    let metadata_path = PathBuf::from(format!(
+        "{}.caudit.json",
+        bundle_result.bundle_path.display()
+    ));
+    std::fs::remove_file(&metadata_path).expect("must remove metadata sidecar");
+
+    let receiver_dir = temp_repo_dir("receive-commit-file-patch-no-sidecar-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch prerequisite base history");
+
+    let patch = collect_commit_file_patch_for_bundle_input(
+        &bundle_result.bundle_path,
+        &receiver_dir,
+        tip_commit_id,
+        "f.txt",
+    )
+    .expect("must collect patch for changed file from plain bundle without metadata sidecar");
+    assert!(
+        patch.contains("diff --git a/f.txt b/f.txt"),
+        "patch should include diff header for selected path"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
