@@ -151,6 +151,43 @@ What this reports:
 - entry-ledger truth section (`entry_ledger`) in summary or full mode
 - materialized object inventory and per-object details
 
+## Audit Completeness Guarantee (PACK-Level, Fail-Closed)
+
+What you see in `git-sync` payload audit is the full bundle payload, not a filtered reachable-history view.
+
+A Git bundle payload is a Git PACK stream. PACK provides:
+- a header with declared entry count `N`
+- a trailer checksum over the pack bytes
+
+`git-sync` uses these guarantees as proof anchors:
+- unambiguous PACK start:
+  - parse bundle header to blank-line terminator
+  - require next bytes to be exactly `PACK` (no byte-pattern heuristics)
+- integrity check:
+  - recompute PACK trailer checksum and require exact match
+- completeness check:
+  - read declared entry count `entries_declared = N`
+  - parse and validate exactly `N` entries into authoritative `PackEntryLedger` rows
+  - require `entries_parsed == entries_declared`
+
+Why this is complete:
+1. Completeness:
+   - declared `N` entries
+   - one ledger row per parsed entry
+   - `ledger.len() == N`
+2. Integrity:
+   - checksum verification binds ledger/proof to exact payload bytes audited
+3. Fail-closed transfer gate:
+   - transfer is allowed only when checksum is valid and:
+   - `entries_parsed == entries_declared`
+   - `entries_materialized == entries_declared`
+
+Result:
+- additional smuggled objects cannot be hidden from audit output:
+  - either they appear as extra PACK entries (and ledger rows), or
+  - declared-count/checksum/parse invariants break and audit blocks transfer
+- unreachable objects are still covered, because proof is PACK-entry-based, not reachability-based
+
 ### 6) Receive into target repository
 
 ```bash

@@ -317,6 +317,120 @@ Failure output includes actionable partial proof context:
 - Proof failures return errors (no synthetic “failed payload document” is emitted).
 - Interactive audit path currently uses pack-only resolve policy.
 
+### 8.7 Security Argument: Why Payload Audit Is Complete and Safe (Selling Point)
+
+This section explains why payload audit is complete for a Git bundle PACK payload and why it can be used as a DLP/air-gap transfer gate. The objective is not just reviewing expected commits; it is proving that every Git object payload entry crossing the boundary is accounted for under policy.
+
+#### 8.7.1 Threat Model and Security Goal
+
+Threat model:
+- Bundle/package may be malformed, truncated, or intentionally crafted to include unexpected objects.
+- Sidecar metadata (`.caudit.json`) must not be trusted as source of payload truth.
+- Prerequisite-dependent deltas may require explicit baseline policy.
+
+Security goal:
+- Payload audit must account for the complete PACK stream and fail closed if full entry enumeration/materialization cannot be established under selected resolve policy.
+
+#### 8.7.2 Source of Truth: PACK Bytes, Not Metadata or Reachability
+
+Bundle payload truth is the raw PACK stream after the bundle header terminator. Metadata and reachability are auxiliary evidence/views only. This prevents a class of smuggling where extra objects are present in PACK but unreachable from advertised heads.
+
+Completeness is therefore defined at PACK entry level (`PackEntryLedger`), not commit graph reachability.
+
+#### 8.7.3 Unambiguous PACK Identification (No Heuristics)
+
+`git-sync` parses the bundle header line-by-line to the required blank-line terminator, then requires the next bytes to be exactly `PACK`. It does not scan for a first `PACK` byte pattern in arbitrary body content.
+
+Guarantee:
+- Proof is bound to the exact payload bytes Git would interpret as this bundle's PACK section.
+
+#### 8.7.4 Completeness Proof: Declared Entry Count + Exact Iteration + Ledger
+
+PACK declares entry count `N` (`entries_declared`). `git-sync`:
+- parses and stores `entries_declared = N`
+- iterates stream entries and appends one authoritative ledger row per parsed entry
+- records `entries_parsed = ledger.entries.len()`
+
+Completeness gate:
+- `entries_parsed` must equal `entries_declared`; mismatch fails closed.
+
+Security argument:
+- Given sequential PACK encoding with explicit count plus strict parsing, any hidden additional entry must cause either parse/count divergence or checksum failure.
+
+#### 8.7.5 Integrity Binding: Trailer Checksum
+
+`git-sync` recomputes PACK trailer checksum and requires exact match with stored trailer digest.
+
+Security meaning:
+- Byte-level tampering in audited payload is detected before proof acceptance.
+- Ledger/proof is cryptographically bound to the specific payload bytes audited.
+
+#### 8.7.6 Per-Entry Validation and Canonical Object Identity
+
+For each ledger entry, `git-sync` validates:
+- header decode (`kind`, `out_size`)
+- zlib stream inflation
+- non-delta entries: inflated object size must match header size
+- delta entries:
+  - header size is validated as delta-stream length per PACK rules
+  - delta apply reconstructs canonical target bytes
+  - delta-embedded source/target size constraints are validated during apply
+  - ledger records reconstructed target length (`reconstructed_size`)
+- canonical object id is recomputed from object bytes (`type size\0content`) for materialized rows
+
+Audit benefit:
+- Reviewers can inspect both stream-level and reconstructed-level sizes (`out_size` and `reconstructed_size`) for delta rows.
+
+#### 8.7.7 Resolve Modes: Explicit External-Dependency Policy
+
+Non-interactive payload audit uses explicit resolve mode:
+- `pack-only`:
+  - in-pack-only base resolution
+  - unresolved external base fails closed
+- `baseline`:
+  - allows `ref-delta` base lookup from provided baseline ODB
+  - ledger records `resolved_via=baseline`
+
+This keeps prerequisite trust explicit and auditable.
+
+#### 8.7.8 Fail-Closed Transfer Gate
+
+Audit fails closed on structural/integrity/materialization failures including:
+- malformed/truncated PACK
+- decode/inflate failures
+- unresolved delta bases under policy
+- size/checksum/count mismatches
+
+Entry-truth counters:
+- `entries_declared`
+- `entries_parsed`
+- `entries_materialized`
+
+Transfer is allowed only when all declared entries are materialized under policy; otherwise audit fails with actionable diagnostics (`blocked_entry_idx`, `ledger_partial`).
+
+#### 8.7.9 Smuggling Resistance for Unreachable Objects
+
+Because proof unit is PACK entries, unreachable objects are still parsed, ledgered, and (when resolvable) materialized. Reachability flags are reviewer context only and not part of completeness gating.
+
+#### 8.7.10 Boundaries and Non-Goals
+
+- PACK/object proof path currently assumes SHA-1 semantics.
+- Payload proof establishes completeness + integrity of audited payload bytes, not package authorship authenticity.
+- Authenticity requires separate signing/trust controls.
+
+#### 8.7.11 Guarantee Summary
+
+Given valid bundle header framing and PACK payload:
+- PACK start is unambiguous
+- trailer checksum binds audited bytes
+- declared entry count is enforced via exact ledger parse
+- entries are validated/materialized under explicit resolve policy
+- canonical object identity is recomputed for materialized rows
+- transfer is blocked unless the full entry set is accounted for
+
+Result:
+- Whole-pack payload auditing is complete by construction (entry ledger + checksum + fail-closed gate).
+
 ```mermaid
 flowchart TD
     A[Locate PACK bytes] --> B[Parse PACK header and declared entry count]
