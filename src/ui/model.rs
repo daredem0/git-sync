@@ -7,6 +7,7 @@ use super::types::{
 use crate::app::AppConfig;
 use crate::git::{self, ReceiveBundleOptions};
 use crate::version::APP_VERSION;
+use std::path::Path;
 
 /// Builds the full UI model used by overview and commit pages.
 ///
@@ -78,11 +79,51 @@ fn build_overview_model(config: &AppConfig) -> OverviewModel {
 
     OverviewModel {
         app_version: APP_VERSION.to_string(),
-        repo_path: config.repo_path.display().to_string(),
+        repo_path: format_repo_display(&config.repo_path),
         bundle_path: config.bundle_path.display().to_string(),
         base_ref: config.base_ref.clone(),
         tip_ref: config.tip_ref.clone().unwrap_or_else(|| "-".to_string()),
         metadata_verification,
         dry_run,
     }
+}
+
+/// Formats repository display as `<path> (<repo_name>)` when a remote-derived
+/// repository name can be determined.
+pub(super) fn format_repo_display(repo_path: &Path) -> String {
+    let path = repo_path.display().to_string();
+    match derive_repo_name_from_repo(repo_path) {
+        Some(name) => format!("{path} ({name})"),
+        None => path,
+    }
+}
+
+/// Attempts to derive a repository name from the configured remotes.
+fn derive_repo_name_from_repo(repo_path: &Path) -> Option<String> {
+    let repo = git2::Repository::open(repo_path).ok()?;
+    let remotes = repo.remotes().ok()?;
+
+    let remote_name = if remotes.iter().flatten().any(|name| name == "origin") {
+        "origin".to_string()
+    } else {
+        remotes.iter().flatten().next()?.to_string()
+    };
+
+    let remote = repo.find_remote(&remote_name).ok()?;
+    let remote_url = remote.url()?;
+    derive_repo_name_from_remote_url(remote_url)
+}
+
+/// Extracts repo-name tail from common git remote URL forms.
+pub(super) fn derive_repo_name_from_remote_url(remote_url: &str) -> Option<String> {
+    let trimmed = remote_url.trim().trim_end_matches('/');
+    let tail = trimmed.rsplit(['/', ':']).next()?;
+    if tail.is_empty() {
+        return None;
+    }
+    let name = tail.strip_suffix(".git").unwrap_or(tail);
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
 }

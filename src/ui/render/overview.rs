@@ -35,7 +35,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
 
     let (pack_proof_status, pack_objects_processed, pack_checksum_status) =
         render_pack_proof_summary(&model.payload);
-    let general_lines = vec![
+    let general_left_lines = vec![
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
         format!("bundle: {}", overview.bundle_path),
@@ -43,21 +43,29 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
             "base_ref: {} | tip_ref: {}",
             overview.base_ref, overview.tip_ref
         ),
+    ];
+    let general_right_lines = vec![
         format!(
             "metadata verification: {}",
             render_status_line(&overview.metadata_verification)
         ),
-        format!(
-            "dry-run applicability: {}",
-            render_dry_run_status(&overview.dry_run)
-        ),
+        format!("dry-run applicability: {}", render_dry_run_status(&overview.dry_run)),
         format!("pack proof: {pack_proof_status}"),
         format!("pack objects processed: {pack_objects_processed}"),
         format!("pack checksum: {pack_checksum_status}"),
     ];
-    let general = Paragraph::new(general_lines.join("\n"))
-        .block(Block::default().borders(Borders::ALL).title("General"));
-    frame.render_widget(general, chunks[1]);
+    let general_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .split(chunks[1]);
+    let general_left = Paragraph::new(general_left_lines.join("\n"))
+        .block(Block::default().borders(Borders::ALL).title("General"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(general_left, general_chunks[0]);
+    let general_right = Paragraph::new(general_right_lines.join("\n"))
+        .block(Block::default().borders(Borders::ALL).title("Bundle Integrity"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(general_right, general_chunks[1]);
 
     match &overview.dry_run {
         DryRunLine::Ok(result) => {
