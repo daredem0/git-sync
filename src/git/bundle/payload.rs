@@ -1391,7 +1391,10 @@ fn collect_tree_context(
             },
         });
 
-    let tree = repo.find_tree(tree_id)?;
+    let Ok(tree) = repo.find_tree(tree_id) else {
+        // Prerequisite-dependent bundles may reference trees not present in pack payload.
+        return Ok(());
+    };
     for entry in &tree {
         let name = entry.name().unwrap_or("<invalid-utf8>");
         let path = if prefix.is_empty() {
@@ -1768,7 +1771,10 @@ fn collect_blob_paths_in_tree(
     if !seen_trees.insert(tree_id) {
         return Ok(());
     }
-    let tree = repo.find_tree(tree_id)?;
+    let Ok(tree) = repo.find_tree(tree_id) else {
+        // Skip missing prerequisite trees instead of failing payload/detail rendering.
+        return Ok(());
+    };
 
     for entry in &tree {
         if paths.len() >= max_paths {

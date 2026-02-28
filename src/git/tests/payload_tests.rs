@@ -1031,6 +1031,35 @@ fn collect_payload_audit_for_bundle_input_rejects_unresolved_ref_delta_base() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that payload audit remains robust when commit trees are omitted from pack and only available via prerequisites.
+#[test]
+fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_context() {
+    let repo_dir = temp_repo_dir("payload-missing-prerequisite-tree");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base", &[("f.txt", "same")], &[]);
+    // Same file set/content as base produces a commit whose tree can be reused from prerequisite.
+    let tip_commit_id = commit_from_files(&repo, "tip-same-tree", &[("f.txt", "same")], &[base_commit_id]);
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("same-tree.bundle");
+    let bundle_result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed for same-tree range");
+
+    let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+        .expect("payload audit should not fail when prerequisite tree context is missing from pack");
+    assert!(
+        !payload.objects.is_empty(),
+        "payload audit should still provide materialized object rows"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
     let mut ctx = std::mem::MaybeUninit::<openssl_sys::SHA_CTX>::uninit();
     let init_ok = unsafe { openssl_sys::SHA1_Init(ctx.as_mut_ptr()) } == 1;
