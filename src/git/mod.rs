@@ -14,13 +14,16 @@ pub use bundle::PayloadSession;
 pub use bundle::{
     build_payload_audit_document_for_bundle_input,
     build_payload_audit_document_for_bundle_input_with_ledger_mode,
+    build_payload_audit_document_for_bundle_input_with_options,
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
-    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
-    collect_payload_object_detail_for_session, create_bundle, create_bundle_with_options,
-    inspect_bundle, open_payload_session, payload_audit_document_from_session,
+    collect_payload_audit_for_bundle_input,
+    collect_payload_audit_for_bundle_input_with_resolve_mode,
+    collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
+    create_bundle, create_bundle_with_options, inspect_bundle, open_payload_session,
+    open_payload_session_with_resolve_mode, payload_audit_document_from_session,
     payload_audit_document_from_session_with_ledger_mode, payload_audit_from_session,
     receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
-    verify_pack_payload_with_ledger,
+    verify_pack_payload_with_ledger, verify_pack_payload_with_ledger_and_baseline_odb,
 };
 #[allow(unused_imports)]
 pub use context::open_context;
@@ -37,8 +40,8 @@ pub use types::{
     PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackEntry,
     PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
     PayloadAuditLedgerMode, PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry,
-    PayloadObjectKind, PayloadPackProof, PayloadPackVerification, PayloadTransportEntry,
-    ReceiveBundleOptions, ReceiveBundleResult, ResolutionSource,
+    PayloadObjectKind, PayloadPackProof, PayloadPackVerification, PayloadResolveMode,
+    PayloadTransportEntry, ReceiveBundleOptions, ReceiveBundleResult, ResolutionSource,
 };
 
 #[cfg(test)]
@@ -56,6 +59,9 @@ pub(crate) use bundle::is_head_already_applied;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use bundle::verify_pack_payload_for_bundle_input;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use bundle::verify_pack_payload_for_bundle_input_with_resolve_mode;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use diff::collect_diff_entries;

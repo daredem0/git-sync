@@ -12,13 +12,16 @@ mod version;
 use anyhow::Result;
 use app::AppConfig;
 use clap::Parser;
-use cli::{Cli, Command, OutputFormat, PayloadLedgerMode, resolve_payload_audit_target};
+use cli::{
+    Cli, Command, OutputFormat, PayloadLedgerMode, PayloadResolveMode as CliPayloadResolveMode,
+    resolve_payload_audit_target,
+};
 use git::{
-    CreateBundleOptions, PayloadAuditLedgerMode, ReceiveBundleOptions,
-    build_payload_audit_document_for_bundle_input_with_ledger_mode,
-    collect_payload_audit_for_bundle_input, create_bundle, create_bundle_with_options,
-    receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
-    verify_bundle_metadata_against_repo_input,
+    CreateBundleOptions, PayloadAuditLedgerMode, PayloadResolveMode, ReceiveBundleOptions,
+    build_payload_audit_document_for_bundle_input_with_options,
+    collect_payload_audit_for_bundle_input_with_resolve_mode, create_bundle,
+    create_bundle_with_options, receive_bundle_input, receive_bundle_input_with_options,
+    remove_unarchived_bundle_artifacts, verify_bundle_metadata_against_repo_input,
 };
 
 /// Entrypoint for CLI parsing and subcommand dispatch.
@@ -75,6 +78,7 @@ fn main() -> Result<()> {
             verify_metadata,
             format,
             payload_ledger,
+            resolve,
         }) => {
             if verify_metadata {
                 let repo_path =
@@ -89,6 +93,11 @@ fn main() -> Result<()> {
 
             // `audit` without `--format` enters interactive TUI mode.
             if format.is_none() {
+                if !matches!(resolve, CliPayloadResolveMode::PackOnly) {
+                    return Err(anyhow::anyhow!(
+                        "interactive audit currently supports only --resolve pack-only"
+                    ));
+                }
                 let repo_path =
                     repo.ok_or_else(|| anyhow::anyhow!("interactive audit requires --repo"))?;
                 let bundle_path =
@@ -104,26 +113,32 @@ fn main() -> Result<()> {
             }
 
             let format = format.expect("format should be present in non-interactive audit mode");
+            let resolve_mode = match resolve {
+                CliPayloadResolveMode::PackOnly => PayloadResolveMode::PackOnly,
+                CliPayloadResolveMode::Baseline => PayloadResolveMode::Baseline,
+            };
 
             let target = resolve_payload_audit_target(repo, bundle)?;
             match format {
                 OutputFormat::Table => {
-                    let payload = collect_payload_audit_for_bundle_input(
+                    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
                         &target.bundle_path,
                         &target.repo_path,
+                        resolve_mode,
                     )?;
                     let table = render_payload_audit_table(&payload);
                     println!("{table}");
                 }
                 OutputFormat::Json => {
                     let payload_document =
-                        build_payload_audit_document_for_bundle_input_with_ledger_mode(
+                        build_payload_audit_document_for_bundle_input_with_options(
                             &target.bundle_path,
                             &target.repo_path,
                             match payload_ledger {
                                 PayloadLedgerMode::Summary => PayloadAuditLedgerMode::Summary,
                                 PayloadLedgerMode::Full => PayloadAuditLedgerMode::Full,
                             },
+                            resolve_mode,
                         )?;
                     let payload_json = render_payload_audit_json(&payload_document)?;
                     println!("{payload_json}");

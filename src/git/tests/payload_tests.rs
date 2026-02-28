@@ -1031,6 +1031,128 @@ fn collect_payload_audit_for_bundle_input_rejects_unresolved_ref_delta_base() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that baseline-assisted resolve mode materializes external ref-delta entries when the base object exists.
+#[test]
+fn baseline_resolution_materializes_external_ref_delta_when_base_exists() {
+    let repo_dir = temp_repo_dir("payload-baseline-resolve-success");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let base_bytes = b"base\n";
+    let target_bytes = b"target\n";
+    let base_oid = repo
+        .blob(base_bytes)
+        .expect("must write baseline base blob");
+    let bundle_path = write_synthetic_external_ref_delta_bundle(
+        &repo_dir,
+        "external-ref-delta.bundle",
+        base_oid,
+        base_bytes,
+        target_bytes,
+    )
+    .expect("must write synthetic external ref-delta bundle");
+
+    let verification =
+        verify_pack_payload_for_bundle_input_with_resolve_mode(&bundle_path, Some(&repo_dir))
+            .expect("baseline resolve mode should materialize external ref-delta base");
+    assert!(
+        verification.proof.transfer_allowed,
+        "baseline-assisted resolution should keep transfer gate open when base exists"
+    );
+    assert_eq!(
+        verification.proof.entries_materialized, verification.proof.entries_declared,
+        "baseline-assisted resolution should materialize all declared entries"
+    );
+    assert_eq!(
+        verification.ledger.entries[0].resolved_via,
+        Some(ResolutionSource::Baseline),
+        "resolved entry should be marked as baseline-resolved"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that pack-only mode keeps external ref-delta bases unresolved and fails closed.
+#[test]
+fn resolve_mode_pack_only_keeps_external_base_unresolved() {
+    let repo_dir = temp_repo_dir("payload-pack-only-unresolved");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let base_bytes = b"base\n";
+    let target_bytes = b"target\n";
+    let base_oid = repo
+        .blob(base_bytes)
+        .expect("must write baseline base blob");
+    let bundle_path = write_synthetic_external_ref_delta_bundle(
+        &repo_dir,
+        "external-ref-delta-pack-only.bundle",
+        base_oid,
+        base_bytes,
+        target_bytes,
+    )
+    .expect("must write synthetic external ref-delta bundle");
+
+    let error = verify_pack_payload_for_bundle_input_with_resolve_mode(&bundle_path, None)
+        .expect_err("pack-only mode should fail for external ref-delta base");
+    assert_eq!(
+        error.blocked_entry_idx,
+        Some(0),
+        "pack-only unresolved external base should block on first entry"
+    );
+    let partial = error
+        .ledger_partial
+        .expect("pack-only unresolved error should include partial ledger");
+    assert!(
+        !partial.entries[0].resolved,
+        "pack-only unresolved row should remain unresolved"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that strict mode blocks transfer when unresolved external entries remain.
+#[test]
+fn strict_mode_blocks_when_unresolved_entries_remain() {
+    let repo_dir = temp_repo_dir("payload-strict-unresolved-block");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let base_bytes = b"base\n";
+    let target_bytes = b"target\n";
+    let base_oid = repo
+        .blob(base_bytes)
+        .expect("must write baseline base blob");
+    let bundle_path = write_synthetic_external_ref_delta_bundle(
+        &repo_dir,
+        "external-ref-delta-strict.bundle",
+        base_oid,
+        base_bytes,
+        target_bytes,
+    )
+    .expect("must write synthetic external ref-delta bundle");
+
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
+    assert!(
+        result.is_err(),
+        "strict pack-only mode should block payload audit when unresolved entries remain"
+    );
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("strict unresolved mode should return an error")
+    );
+    assert!(
+        error_text.contains("unresolved base") || error_text.contains("thin pack"),
+        "strict unresolved error should mention external/unresolved base dependency"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit remains robust when commit trees are omitted from pack and only available via prerequisites.
 #[test]
 fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_context() {
@@ -1040,7 +1162,12 @@ fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_contex
 
     let base_commit_id = commit_from_files(&repo, "base", &[("f.txt", "same")], &[]);
     // Same file set/content as base produces a commit whose tree can be reused from prerequisite.
-    let tip_commit_id = commit_from_files(&repo, "tip-same-tree", &[("f.txt", "same")], &[base_commit_id]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "tip-same-tree",
+        &[("f.txt", "same")],
+        &[base_commit_id],
+    );
     repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
         .expect("must create base ref");
     repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
@@ -1051,7 +1178,9 @@ fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_contex
         .expect("create_bundle should succeed for same-tree range");
 
     let payload = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
-        .expect("payload audit should not fail when prerequisite tree context is missing from pack");
+        .expect(
+            "payload audit should not fail when prerequisite tree context is missing from pack",
+        );
     assert!(
         !payload.objects.is_empty(),
         "payload audit should still provide materialized object rows"
@@ -1095,6 +1224,39 @@ fn write_synthetic_ref_delta_bundle(
     let bundle_path = repo_dir.join(file_name);
     std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic ref-delta bundle");
     bundle_path
+}
+
+fn write_synthetic_external_ref_delta_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+    base_oid: git2::Oid,
+    base_bytes: &[u8],
+    target_bytes: &[u8],
+) -> anyhow::Result<std::path::PathBuf> {
+    let mut pack_body = Vec::new();
+    let mut entry = encode_pack_entry_header(PackEntryKind::RefDelta, target_bytes.len());
+    entry.extend_from_slice(base_oid.as_bytes());
+    let delta_bytes = encode_literal_delta(base_bytes.len(), target_bytes)?;
+    entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
+    pack_body.extend_from_slice(&entry);
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&1u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&pack_body);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
 }
 
 fn write_synthetic_ofs_delta_bundle(

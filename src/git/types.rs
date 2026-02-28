@@ -122,6 +122,15 @@ pub enum PayloadObjectKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Resolve strategy for external delta-base dependencies during payload parsing.
+pub enum PayloadResolveMode {
+    /// Only in-pack data may be used (strict fail-closed).
+    PackOnly,
+    /// Allow resolving missing ref-delta bases from provided baseline repository ODB.
+    Baseline,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One pack object row shown in payload object listing.
 pub struct PayloadObjectEntry {

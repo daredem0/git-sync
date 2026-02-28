@@ -45,6 +45,8 @@ pub enum Command {
         format: Option<OutputFormat>,
         #[arg(long, value_enum, default_value_t = PayloadLedgerMode::Summary)]
         payload_ledger: PayloadLedgerMode,
+        #[arg(long, value_enum, default_value_t = PayloadResolveMode::PackOnly)]
+        resolve: PayloadResolveMode,
     },
     /// Opens the interactive terminal UI audit view.
     Ui {
@@ -86,6 +88,15 @@ pub enum PayloadLedgerMode {
     Summary,
     /// Emit full parsed entry-ledger rows.
     Full,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+/// External-base resolve strategy for payload parsing.
+pub enum PayloadResolveMode {
+    /// Strict in-pack-only resolution.
+    PackOnly,
+    /// Allow baseline repository ODB as delta-base source.
+    Baseline,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

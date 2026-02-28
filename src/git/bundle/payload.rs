@@ -9,7 +9,8 @@ use crate::git::types::{
     PayloadAuditDocumentPackEntry, PayloadAuditDocumentPackObject,
     PayloadAuditDocumentTransportEntry, PayloadAuditError, PayloadAuditLedgerMode,
     PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
+    PayloadPackProof, PayloadPackVerification, PayloadResolveMode, PayloadTransportEntry,
+    ResolutionSource,
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
@@ -56,7 +57,27 @@ pub fn collect_payload_audit_for_bundle_input(
     bundle_input_path: &Path,
     repo_path: &Path,
 ) -> Result<PayloadAudit> {
-    let session = open_payload_session(bundle_input_path, repo_path)?;
+    let session = open_payload_session_with_resolve_mode(
+        bundle_input_path,
+        repo_path,
+        PayloadResolveMode::PackOnly,
+    )?;
+    Ok(payload_audit_from_session(&session))
+}
+
+/// Collects transport-entry and pack-object payload audit data for a bundle input with explicit resolve mode.
+///
+/// # Errors
+///
+/// Returns an error when the bundle input cannot be parsed/imported or objects
+/// cannot be enumerated.
+pub fn collect_payload_audit_for_bundle_input_with_resolve_mode(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+    resolve_mode: PayloadResolveMode,
+) -> Result<PayloadAudit> {
+    let session =
+        open_payload_session_with_resolve_mode(bundle_input_path, repo_path, resolve_mode)?;
     Ok(payload_audit_from_session(&session))
 }
 
@@ -71,10 +92,11 @@ pub fn build_payload_audit_document_for_bundle_input(
     bundle_input_path: &Path,
     repo_path: &Path,
 ) -> Result<PayloadAuditDocument> {
-    build_payload_audit_document_for_bundle_input_with_ledger_mode(
+    build_payload_audit_document_for_bundle_input_with_options(
         bundle_input_path,
         repo_path,
         PayloadAuditLedgerMode::Summary,
+        PayloadResolveMode::PackOnly,
     )
 }
 
@@ -84,12 +106,34 @@ pub fn build_payload_audit_document_for_bundle_input(
 ///
 /// Returns an error when bundle import/inspection fails or object-detail
 /// materialization fails.
+#[allow(dead_code)]
 pub fn build_payload_audit_document_for_bundle_input_with_ledger_mode(
     bundle_input_path: &Path,
     repo_path: &Path,
     ledger_mode: PayloadAuditLedgerMode,
 ) -> Result<PayloadAuditDocument> {
-    let session = open_payload_session(bundle_input_path, repo_path)?;
+    build_payload_audit_document_for_bundle_input_with_options(
+        bundle_input_path,
+        repo_path,
+        ledger_mode,
+        PayloadResolveMode::PackOnly,
+    )
+}
+
+/// Builds a serialized payload-audit JSON document with explicit ledger and resolve modes.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails or object-detail
+/// materialization fails.
+pub fn build_payload_audit_document_for_bundle_input_with_options(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+    ledger_mode: PayloadAuditLedgerMode,
+    resolve_mode: PayloadResolveMode,
+) -> Result<PayloadAuditDocument> {
+    let session =
+        open_payload_session_with_resolve_mode(bundle_input_path, repo_path, resolve_mode)?;
     payload_audit_document_from_session_with_ledger_mode(&session, ledger_mode)
 }
 
@@ -103,7 +147,11 @@ pub fn collect_payload_object_detail_for_bundle_input(
     repo_path: &Path,
     object_id: git2::Oid,
 ) -> Result<PayloadObjectDetail> {
-    let session = open_payload_session(bundle_input_path, repo_path)?;
+    let session = open_payload_session_with_resolve_mode(
+        bundle_input_path,
+        repo_path,
+        PayloadResolveMode::PackOnly,
+    )?;
     collect_payload_object_detail_for_session(&session, object_id)
 }
 
@@ -113,14 +161,37 @@ pub fn collect_payload_object_detail_for_bundle_input(
 ///
 /// Returns an error when bundle import/inspection fails.
 pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Result<PayloadSession> {
-    let _source_repo = git2::Repository::open(repo_path)?;
+    open_payload_session_with_resolve_mode(
+        bundle_input_path,
+        repo_path,
+        PayloadResolveMode::PackOnly,
+    )
+}
+
+/// Opens an imported payload session that can be reused across many detail lookups with explicit resolve mode.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails.
+pub fn open_payload_session_with_resolve_mode(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+    resolve_mode: PayloadResolveMode,
+) -> Result<PayloadSession> {
+    let source_repo = git2::Repository::open(repo_path)?;
+    let resolve_odb = if matches!(resolve_mode, PayloadResolveMode::Baseline) {
+        Some(source_repo.odb()?)
+    } else {
+        None
+    };
     if is_zip_bundle_input_path(bundle_input_path) {
         let transport_entries = collect_transport_entries_for_zip(bundle_input_path)?;
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let bundle_bytes = fs::read(&extracted.bundle_path)?;
         let pack_data = bundle_pack_bytes(&bundle_bytes)?;
         let verification =
-            verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
+            verify_pack_payload_with_ledger_and_baseline_odb(pack_data, resolve_odb.as_ref())
+                .map_err(anyhow::Error::from)?;
         let pack_proof = verification.proof;
         let bundle_path = extracted
             .bundle_path
@@ -163,7 +234,9 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
     let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
     let bundle_bytes = fs::read(bundle_input_path)?;
     let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-    let verification = verify_pack_payload_with_ledger(pack_data).map_err(anyhow::Error::from)?;
+    let verification =
+        verify_pack_payload_with_ledger_and_baseline_odb(pack_data, resolve_odb.as_ref())
+            .map_err(anyhow::Error::from)?;
     let pack_proof = verification.proof;
     let bundle_path = bundle_input_path
         .file_name()
@@ -508,6 +581,17 @@ fn bundle_pack_bytes(bundle_bytes: &[u8]) -> Result<&[u8]> {
 pub fn verify_pack_payload_for_bundle_input(
     bundle_input_path: &Path,
 ) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
+    verify_pack_payload_for_bundle_input_with_resolve_mode(bundle_input_path, None)
+}
+
+/// Verifies pack proof + ledger from bundle input with optional baseline resolve repository (tests only).
+#[cfg(test)]
+pub fn verify_pack_payload_for_bundle_input_with_resolve_mode(
+    bundle_input_path: &Path,
+    baseline_repo_path: Option<&Path>,
+) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
+    let baseline_repo = baseline_repo_path.and_then(|path| git2::Repository::open(path).ok());
+    let baseline_odb = baseline_repo.as_ref().and_then(|repo| repo.odb().ok());
     if is_zip_bundle_input_path(bundle_input_path) {
         let extracted =
             extract_bundle_archive(bundle_input_path).map_err(|err| PayloadAuditError {
@@ -525,7 +609,7 @@ pub fn verify_pack_payload_for_bundle_input(
             blocked_entry_idx: None,
             ledger_partial: None,
         })?;
-        return verify_pack_payload_with_ledger(pack_data);
+        return verify_pack_payload_with_ledger_and_baseline_odb(pack_data, baseline_odb.as_ref());
     }
 
     let bundle_bytes = fs::read(bundle_input_path).map_err(|err| PayloadAuditError {
@@ -538,7 +622,7 @@ pub fn verify_pack_payload_for_bundle_input(
         blocked_entry_idx: None,
         ledger_partial: None,
     })?;
-    verify_pack_payload_with_ledger(pack_data)
+    verify_pack_payload_with_ledger_and_baseline_odb(pack_data, baseline_odb.as_ref())
 }
 
 /// Imports raw pack bytes into a bare repository object database.
@@ -590,14 +674,24 @@ fn ensure_materialized_index_matches_pack_proof(
 }
 
 /// Verifies payload PACK bytes and returns proof + entry ledger truth.
+#[allow(dead_code)]
 pub fn verify_pack_payload_with_ledger(
     pack_data: &[u8],
 ) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
-    verify_pack_payload_impl(pack_data)
+    verify_pack_payload_impl(pack_data, None)
+}
+
+/// Verifies payload PACK bytes and returns proof + entry ledger truth with optional baseline ODB resolution.
+pub fn verify_pack_payload_with_ledger_and_baseline_odb(
+    pack_data: &[u8],
+    baseline_odb: Option<&git2::Odb<'_>>,
+) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
+    verify_pack_payload_impl(pack_data, baseline_odb)
 }
 
 fn verify_pack_payload_impl(
     pack_data: &[u8],
+    baseline_odb: Option<&git2::Odb<'_>>,
 ) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
     if pack_data.len() < 32 {
         return Err(PayloadAuditError {
@@ -701,6 +795,7 @@ fn verify_pack_payload_impl(
         };
         offset = header_end;
 
+        let mut entry_resolved_via = ResolutionSource::InPack;
         let parsed = match entry_kind {
             PackEntryKind::Commit
             | PackEntryKind::Tree
@@ -841,7 +936,13 @@ fn verify_pack_payload_impl(
                 entry_record.base_ref = Some(PackEntryBaseRef::BaseOid(base_oid));
                 offset += 20;
 
-                let Some(base) = objects_by_oid.get(&base_oid) else {
+                let in_pack_base = objects_by_oid.get(&base_oid).cloned();
+                let baseline_base = if in_pack_base.is_none() {
+                    baseline_odb.and_then(|odb| load_parsed_object_from_odb(odb, base_oid).ok())
+                } else {
+                    None
+                };
+                let Some(base) = in_pack_base.or(baseline_base) else {
                     let reason = format!(
                         "ref-delta references unresolved base object {} (external dependency/thin pack)",
                         base_oid
@@ -854,6 +955,11 @@ fn verify_pack_payload_impl(
                         ledger_partial: Some(ledger),
                     });
                 };
+                if objects_by_oid.contains_key(&base_oid) {
+                    entry_resolved_via = ResolutionSource::InPack;
+                } else {
+                    entry_resolved_via = ResolutionSource::Baseline;
+                }
                 let (delta_consumed, delta_bytes) =
                     decompress_zlib_stream(&pack_data[offset..trailer_offset])
                         .map_err(|err| {
@@ -899,7 +1005,7 @@ fn verify_pack_payload_impl(
         entry_record.result_oid = Some(object_oid);
         entry_record.result_kind = Some(parsed.kind);
         entry_record.resolved = true;
-        entry_record.resolved_via = Some(ResolutionSource::InPack);
+        entry_record.resolved_via = Some(entry_resolved_via);
         ledger.entries.push(entry_record);
         objects_by_offset.insert(entry_offset, parsed.clone());
         objects_by_oid.insert(object_oid, parsed);
@@ -1175,6 +1281,19 @@ fn object_oid_for_content(kind: PayloadObjectKind, content: &[u8]) -> Result<git
     bytes.extend_from_slice(content);
     let digest_hex = sha1_hex(&bytes)?;
     Ok(git2::Oid::from_str(&digest_hex)?)
+}
+
+/// Loads one baseline object by OID for external ref-delta base resolution.
+fn load_parsed_object_from_odb(odb: &git2::Odb<'_>, oid: git2::Oid) -> Result<ParsedPackObject> {
+    let object = odb.read(oid)?;
+    let kind = payload_kind_from_git(object.kind());
+    if matches!(kind, PayloadObjectKind::Unknown) {
+        bail!("baseline base object has unsupported type for delta resolution: {oid}");
+    }
+    Ok(ParsedPackObject {
+        kind,
+        content: object.data().to_vec(),
+    })
 }
 
 /// Converts one pack entry kind into payload object kind.
