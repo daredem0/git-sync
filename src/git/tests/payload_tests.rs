@@ -279,6 +279,119 @@ fn pack_parse_failure_returns_partial_ledger_context() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that materialized object index rows are derived from ledger result OIDs (deduplicated) rather than repository ODB enumeration.
+#[test]
+fn materialized_index_is_built_from_ledger_result_oids() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("materialized-index-from-ledger", false);
+
+    let verification = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("pack verification should succeed for fixture bundle");
+    let expected_unique_oids = verification
+        .ledger
+        .entries
+        .iter()
+        .filter_map(|entry| entry.result_oid)
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual_unique_oids = verification
+        .materialized_index
+        .objects
+        .iter()
+        .map(|entry| entry.oid)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual_unique_oids, expected_unique_oids,
+        "materialized index should be built from unique ledger result OIDs"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that materialized object index derivation is deterministic across repeated verification runs.
+#[test]
+fn materialized_index_is_deterministic_across_runs() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("materialized-index-deterministic", false);
+
+    let first = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("first pack verification should succeed");
+    let second = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("second pack verification should succeed");
+    assert_eq!(
+        first.materialized_index, second.materialized_index,
+        "materialized index should be deterministic across repeated verification runs"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload object rows remain stable for existing bundle fixture after switching to ledger-derived materialized index.
+#[test]
+fn payload_objects_view_remains_stable_for_existing_fixture() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-objects-stable-after-phase2", false);
+
+    let first = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+        .expect("first payload collection should succeed");
+    let second = collect_payload_audit_for_bundle_input(&bundle_result.archive_path, &repo_dir)
+        .expect("second payload collection should succeed");
+    assert_eq!(
+        first.objects, second.objects,
+        "payload object rows should remain stable across repeated runs"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that proof/materialization counters are derived from entry ledger counts and not influenced by reachability enrichment.
+#[test]
+fn proof_counters_are_independent_of_reachability() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("proof-counters-independent-reachability", false);
+
+    let verification = verify_pack_payload_for_bundle_input(&bundle_result.bundle_path)
+        .expect("pack verification should succeed for fixture bundle");
+    assert_eq!(
+        verification.materialized_index.materialized_entry_count,
+        verification.proof.declared_object_count,
+        "materialized-entry count should come from ledger proof parsing, not reachability enrichment"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that duplicate-entry signal is reported deterministically from materialized ledger rows.
+#[test]
+fn duplicate_entry_count_materialized_is_reported_deterministically() {
+    let repo_dir = temp_repo_dir("materialized-index-duplicate-count");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = write_synthetic_duplicate_blob_bundle(&repo_dir, "duplicate-blob.bundle")
+        .expect("must write duplicate-blob synthetic bundle");
+    let first = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect("first verification should succeed for duplicate-entry pack");
+    let second = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect("second verification should succeed for duplicate-entry pack");
+    assert_eq!(
+        first.materialized_index.duplicate_entry_count_materialized,
+        1,
+        "duplicate-entry pack should report one duplicate materialized entry"
+    );
+    assert_eq!(
+        first.materialized_index.duplicate_entry_count_materialized,
+        second.materialized_index.duplicate_entry_count_materialized,
+        "duplicate materialized-entry count should be deterministic across runs"
+    );
+    assert_eq!(
+        first.materialized_index.unique_object_count,
+        1,
+        "duplicate-entry pack should collapse to one unique materialized object"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit collection includes transport entries and imported pack-object rows.
 #[test]
 fn collect_payload_audit_for_bundle_input_includes_transport_entries_and_objects() {
@@ -878,4 +991,34 @@ fn zlib_compress(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     encoder.write_all(bytes)?;
     let out = encoder.finish()?;
     Ok(out)
+}
+
+fn write_synthetic_duplicate_blob_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let blob = b"same-content\n";
+    let mut first = encode_pack_entry_header(PackEntryKind::Blob, blob.len());
+    first.extend_from_slice(&zlib_compress(blob)?);
+    let mut second = encode_pack_entry_header(PackEntryKind::Blob, blob.len());
+    second.extend_from_slice(&zlib_compress(blob)?);
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&first);
+    pack_prefix.extend_from_slice(&second);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
 }

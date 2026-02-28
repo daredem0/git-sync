@@ -281,6 +281,8 @@ pub struct PackEntryRecord {
     pub base_ref: Option<PackEntryBaseRef>,
     /// Canonical object id once materialized.
     pub result_oid: Option<git2::Oid>,
+    /// Canonical object kind once materialized.
+    pub result_kind: Option<PayloadObjectKind>,
     /// Whether entry materialization succeeded.
     pub resolved: bool,
     /// Materialization source, when resolved.
@@ -337,6 +339,34 @@ pub struct PayloadPackVerification {
     pub proof: PayloadPackProof,
     /// Authoritative parsed PACK entry ledger.
     pub ledger: PackEntryLedger,
+    /// Deduplicated materialized objects derived from ledger result rows.
+    pub materialized_index: MaterializedObjectIndex,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Deduplicated object index derived from materialized ledger entries.
+pub struct MaterializedObjectIndex {
+    /// Unique object rows in deterministic order.
+    pub objects: Vec<MaterializedObjectRecord>,
+    /// Number of materialized ledger entries (before deduplication).
+    pub materialized_entry_count: usize,
+    /// Number of unique materialized objects (after deduplication).
+    pub unique_object_count: usize,
+    /// Materialized duplicate-entry count (`materialized_entry_count - unique_object_count`).
+    pub duplicate_entry_count_materialized: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// One unique materialized object row derived from PACK ledger entries.
+pub struct MaterializedObjectRecord {
+    /// Canonical object id.
+    pub oid: git2::Oid,
+    /// Canonical object kind.
+    pub kind: PayloadObjectKind,
+    /// Uncompressed object size in bytes.
+    pub size_bytes: usize,
+    /// First ledger entry index where this object was observed.
+    pub first_entry_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

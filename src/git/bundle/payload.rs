@@ -3,7 +3,8 @@
 use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
-    BundleInspection, PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord,
+    BundleInspection, MaterializedObjectIndex, MaterializedObjectRecord, PackEntryBaseRef,
+    PackEntryKind, PackEntryLedger, PackEntryRecord,
     PayloadAudit, PayloadAuditDocument, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
     PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
     PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
@@ -110,8 +111,12 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
         import_pack_data_to_repo(&repo, pack_data, &inspection)?;
         let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
         let context_map = collect_object_context_map(&repo, &inspection.heads)?;
-        let objects = collect_payload_objects(&repo, &reachable, &context_map)?;
-        ensure_imported_odb_matches_pack_proof(&objects, &pack_proof)?;
+        let objects = collect_payload_objects_from_materialized_index(
+            &verification.materialized_index,
+            &reachable,
+            &context_map,
+        );
+        ensure_materialized_index_matches_pack_proof(&verification.materialized_index, &pack_proof)?;
         let payload = PayloadAudit {
             bundle_version: inspection.version,
             heads: inspection.heads.clone(),
@@ -144,8 +149,12 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
     import_pack_data_to_repo(&repo, pack_data, &inspection)?;
     let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
     let context_map = collect_object_context_map(&repo, &inspection.heads)?;
-    let objects = collect_payload_objects(&repo, &reachable, &context_map)?;
-    ensure_imported_odb_matches_pack_proof(&objects, &pack_proof)?;
+    let objects = collect_payload_objects_from_materialized_index(
+        &verification.materialized_index,
+        &reachable,
+        &context_map,
+    );
+    ensure_materialized_index_matches_pack_proof(&verification.materialized_index, &pack_proof)?;
     let payload = PayloadAudit {
         bundle_version: inspection.version,
         heads: inspection.heads.clone(),
@@ -447,15 +456,15 @@ fn import_pack_data_to_repo(
     Ok(())
 }
 
-/// Asserts that imported ODB object count matches validated PACK proof object count.
-fn ensure_imported_odb_matches_pack_proof(
-    imported_objects: &[PayloadObjectEntry],
+/// Asserts that ledger-derived materialization counts align with pack-proof counters.
+fn ensure_materialized_index_matches_pack_proof(
+    index: &MaterializedObjectIndex,
     pack_proof: &PayloadPackProof,
 ) -> Result<()> {
-    if imported_objects.len() != pack_proof.declared_object_count {
+    if index.materialized_entry_count != pack_proof.declared_object_count {
         bail!(
-            "imported ODB object count mismatch: imported={}, declared={}",
-            imported_objects.len(),
+            "materialized entry count mismatch: materialized={}, declared={}",
+            index.materialized_entry_count,
             pack_proof.declared_object_count
         );
     }
@@ -566,6 +575,7 @@ fn verify_pack_payload_impl(
             out_size: expected_size,
             base_ref: None,
             result_oid: None,
+            result_kind: None,
             resolved: false,
             resolved_via: None,
             note: None,
@@ -756,6 +766,7 @@ fn verify_pack_payload_impl(
             }
         })?;
         entry_record.result_oid = Some(object_oid);
+        entry_record.result_kind = Some(parsed.kind);
         entry_record.resolved = true;
         entry_record.resolved_via = Some(ResolutionSource::InPack);
         ledger.entries.push(entry_record);
@@ -794,7 +805,12 @@ fn verify_pack_payload_impl(
         computed_pack_checksum: computed_checksum,
         trailer_pack_checksum: trailer_checksum,
     };
-    Ok(PayloadPackVerification { proof, ledger })
+    let materialized_index = build_materialized_object_index_from_ledger(&ledger);
+    Ok(PayloadPackVerification {
+        proof,
+        ledger,
+        materialized_index,
+    })
 }
 
 /// Parses a PACK object header at `offset`.
@@ -1087,27 +1103,61 @@ fn sha1_hex(bytes: &[u8]) -> Result<String> {
     Ok(hex_encode(&digest))
 }
 
-/// Enumerates all payload objects currently stored in repository object database.
-fn collect_payload_objects(
-    repo: &git2::Repository,
+/// Builds deduplicated materialized object index directly from ledger result rows.
+fn build_materialized_object_index_from_ledger(
+    ledger: &PackEntryLedger,
+) -> MaterializedObjectIndex {
+    let mut by_oid = HashMap::<git2::Oid, MaterializedObjectRecord>::new();
+    let mut materialized_entry_count = 0usize;
+
+    for entry in &ledger.entries {
+        if !entry.resolved {
+            continue;
+        }
+        let (Some(oid), Some(kind)) = (entry.result_oid, entry.result_kind) else {
+            continue;
+        };
+        materialized_entry_count += 1;
+        by_oid.entry(oid).or_insert(MaterializedObjectRecord {
+            oid,
+            kind,
+            size_bytes: entry.out_size,
+            first_entry_idx: entry.idx,
+        });
+    }
+
+    let unique_object_count = by_oid.len();
+    let duplicate_entry_count_materialized =
+        materialized_entry_count.saturating_sub(unique_object_count);
+    let mut objects = by_oid.into_values().collect::<Vec<_>>();
+    objects.sort_by(|left, right| {
+        payload_kind_rank(left.kind)
+            .cmp(&payload_kind_rank(right.kind))
+            .then_with(|| left.oid.cmp(&right.oid))
+    });
+
+    MaterializedObjectIndex {
+        objects,
+        materialized_entry_count,
+        unique_object_count,
+        duplicate_entry_count_materialized,
+    }
+}
+
+/// Builds payload object rows from the deduplicated materialized index.
+fn collect_payload_objects_from_materialized_index(
+    materialized_index: &MaterializedObjectIndex,
     reachable: &HashSet<git2::Oid>,
     context_map: &HashMap<git2::Oid, PayloadObjectContext>,
-) -> Result<Vec<PayloadObjectEntry>> {
-    let odb = repo.odb()?;
-    let mut object_ids = Vec::<git2::Oid>::new();
-    odb.foreach(|oid| {
-        object_ids.push(*oid);
-        true
-    })?;
-
+) -> Vec<PayloadObjectEntry> {
     let mut objects = Vec::new();
-    for oid in object_ids {
-        let (size_bytes, kind) = odb.read_header(oid)?;
+    for row in &materialized_index.objects {
+        let oid = row.oid;
         let context = context_map.get(&oid);
         objects.push(PayloadObjectEntry {
             oid,
-            kind: payload_kind_from_git(kind),
-            size_bytes,
+            kind: row.kind,
+            size_bytes: row.size_bytes,
             reachable_from_heads: reachable.contains(&oid),
             context_head_index: context.map(|value| value.head_index),
             context_commit_order: context.map(|value| value.commit_order),
@@ -1120,7 +1170,7 @@ fn collect_payload_objects(
             .cmp(&payload_kind_rank(right.kind))
             .then_with(|| left.oid.cmp(&right.oid))
     });
-    Ok(objects)
+    objects
 }
 
 /// Collects first-seen context metadata for objects while traversing head commit trees.
