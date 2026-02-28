@@ -60,6 +60,10 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         payload_footer.contains("PgUp/PgDn jump 10"),
         "payload mode footer should include page jump key hints"
     );
+    assert!(
+        payload_footer.contains("s cycle sort"),
+        "payload mode footer should include sort-cycle key hint"
+    );
 }
 
 // Verifies that help text content changes between page mode and diff mode.
@@ -127,8 +131,8 @@ fn render_help_overlay_page_mode_renders_page_navigation_hints() {
         "page help overlay should label page-view help mode"
     );
     assert!(
-        output.contains("Enter: open selected head"),
-        "page help overlay should include diff open hint"
+        output.contains("s: in payload view"),
+        "page help overlay should include payload sort hint"
     );
 }
 

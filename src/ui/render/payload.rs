@@ -271,7 +271,8 @@ fn render_objects_table(
     state: &AppState,
     area: Rect,
 ) {
-    let rows: Vec<Row<'_>> = if payload.objects.is_empty() {
+    let sorted = state.payload_sorted_objects(payload);
+    let rows: Vec<Row<'_>> = if sorted.is_empty() {
         vec![Row::new(vec![
             Cell::from("(no objects)"),
             Cell::from("-"),
@@ -279,8 +280,7 @@ fn render_objects_table(
             Cell::from("-"),
         ])]
     } else {
-        payload
-            .objects
+        sorted
             .iter()
             .map(|entry| {
                 Row::new(vec![
@@ -298,9 +298,10 @@ fn render_objects_table(
     };
 
     let title = format!(
-        "Pack Objects ({} total, {} heads)",
+        "Pack Objects ({} total, {} heads, sort: {})",
         payload.objects.len(),
-        payload.heads.len()
+        payload.heads.len(),
+        state.payload_sort_mode_label()
     );
     let table = Table::new(
         rows,
@@ -320,10 +321,10 @@ fn render_objects_table(
     .column_spacing(1);
 
     let mut table_state = TableState::default();
-    if !payload.objects.is_empty() {
+    if !sorted.is_empty() {
         table_state.select(Some(std::cmp::min(
             state.payload_selected_index,
-            payload.objects.len() - 1,
+            sorted.len() - 1,
         )));
     }
     frame.render_stateful_widget(table, area, &mut table_state);

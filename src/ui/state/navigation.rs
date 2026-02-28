@@ -1,6 +1,8 @@
 //! TUI-layer navigation functionality.
 
-use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine, MainView};
+use crate::ui::types::{
+    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, PayloadSortMode,
+};
 
 impl AppState {
     /// Creates initial UI state for the provided audit model.
@@ -18,6 +20,7 @@ impl AppState {
             selected_head_index: 0,
             selected_file_indices,
             payload_selected_index: 0,
+            payload_sort_mode: PayloadSortMode::Canonical,
             show_help: false,
             action_message: None,
             payload_detail_cache: std::collections::HashMap::new(),

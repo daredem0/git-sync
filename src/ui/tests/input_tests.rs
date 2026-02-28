@@ -271,6 +271,81 @@ fn handle_page_keys_payload_pageup_pagedown_jump_by_ten_rows() {
     );
 }
 
+// Verifies that `s` in payload view cycles list sort mode while preserving selected object identity.
+#[test]
+fn handle_page_keys_payload_sort_cycle_preserves_selected_object() {
+    let mut model = sample_model(1, 1);
+    {
+        let PayloadModel::Ok(payload) = &mut model.payload else {
+            panic!("fixture model must include payload audit data");
+        };
+        payload.objects = vec![
+            crate::git::PayloadObjectEntry {
+                oid: git2::Oid::from_str("3000000000000000000000000000000000000000")
+                    .expect("valid oid"),
+                kind: PayloadObjectKind::Blob,
+                size_bytes: 12,
+                reachable_from_heads: true,
+                context_head_index: Some(1),
+                context_commit_order: Some(1),
+                context_path: Some("z.txt".to_string()),
+            },
+            crate::git::PayloadObjectEntry {
+                oid: git2::Oid::from_str("1000000000000000000000000000000000000000")
+                    .expect("valid oid"),
+                kind: PayloadObjectKind::Commit,
+                size_bytes: 120,
+                reachable_from_heads: true,
+                context_head_index: Some(0),
+                context_commit_order: Some(1),
+                context_path: None,
+            },
+            crate::git::PayloadObjectEntry {
+                oid: git2::Oid::from_str("2000000000000000000000000000000000000000")
+                    .expect("valid oid"),
+                kind: PayloadObjectKind::Blob,
+                size_bytes: 24,
+                reachable_from_heads: true,
+                context_head_index: Some(0),
+                context_commit_order: Some(1),
+                context_path: Some("a.txt".to_string()),
+            },
+        ];
+    }
+    let PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.payload_selected_index = 0;
+    let expected_selected_oid = payload.objects[0].oid;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('s'));
+    assert_eq!(
+        state.payload_sort_mode,
+        super::super::types::PayloadSortMode::Context,
+        "first sort cycle should switch to context sort"
+    );
+    let sorted = state.payload_sorted_objects(payload);
+    assert_eq!(
+        sorted[state.payload_selected_index].oid, expected_selected_oid,
+        "sort cycle should preserve selected object identity"
+    );
+    assert_eq!(
+        sorted.first().expect("sorted rows should exist").oid,
+        payload.objects[1].oid,
+        "context sort should move first-head commit-context object to the top"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('s'));
+    assert_eq!(
+        state.payload_sort_mode,
+        super::super::types::PayloadSortMode::Canonical,
+        "second sort cycle should return to canonical sort"
+    );
+}
+
 // Verifies that Esc closes payload object detail view without exiting the application.
 #[test]
 fn handle_key_press_esc_closes_payload_object_detail_view() {

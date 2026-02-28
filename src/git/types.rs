@@ -153,6 +153,12 @@ pub struct PayloadObjectEntry {
     pub size_bytes: usize,
     /// Whether object is reachable from advertised bundle heads.
     pub reachable_from_heads: bool,
+    /// Optional head index where this object is first encountered in context traversal.
+    pub context_head_index: Option<usize>,
+    /// Optional commit order within the associated head traversal.
+    pub context_commit_order: Option<usize>,
+    /// Optional tree path context where object is first encountered.
+    pub context_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

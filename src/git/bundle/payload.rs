@@ -8,7 +8,7 @@ use crate::git::types::{
 };
 use crate::git::util::sha256_hex;
 use anyhow::{Result, anyhow, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::io::Write;
@@ -76,7 +76,8 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
             Some(&source_odb),
         )?;
         let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
-        let objects = collect_payload_objects(&repo, &reachable)?;
+        let context_map = collect_object_context_map(&repo, &inspection.heads)?;
+        let objects = collect_payload_objects(&repo, &reachable, &context_map)?;
         let payload = PayloadAudit {
             bundle_version: inspection.version,
             heads: inspection.heads.clone(),
@@ -96,7 +97,8 @@ pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Resul
     let repo = git2::Repository::open_bare(&temp_repo.path)?;
     import_bundle_pack_to_repo(&repo, bundle_input_path, &inspection, Some(&source_odb))?;
     let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
-    let objects = collect_payload_objects(&repo, &reachable)?;
+    let context_map = collect_object_context_map(&repo, &inspection.heads)?;
+    let objects = collect_payload_objects(&repo, &reachable, &context_map)?;
     let payload = PayloadAudit {
         bundle_version: inspection.version,
         heads: inspection.heads.clone(),
@@ -255,6 +257,7 @@ fn import_bundle_pack_to_repo(
 fn collect_payload_objects(
     repo: &git2::Repository,
     reachable: &HashSet<git2::Oid>,
+    context_map: &HashMap<git2::Oid, PayloadObjectContext>,
 ) -> Result<Vec<PayloadObjectEntry>> {
     let odb = repo.odb()?;
     let mut object_ids = Vec::<git2::Oid>::new();
@@ -266,11 +269,15 @@ fn collect_payload_objects(
     let mut objects = Vec::new();
     for oid in object_ids {
         let (size_bytes, kind) = odb.read_header(oid)?;
+        let context = context_map.get(&oid);
         objects.push(PayloadObjectEntry {
             oid,
             kind: payload_kind_from_git(kind),
             size_bytes,
             reachable_from_heads: reachable.contains(&oid),
+            context_head_index: context.map(|value| value.head_index),
+            context_commit_order: context.map(|value| value.commit_order),
+            context_path: context.and_then(|value| value.path.clone()),
         });
     }
 
@@ -280,6 +287,116 @@ fn collect_payload_objects(
             .then_with(|| left.oid.cmp(&right.oid))
     });
     Ok(objects)
+}
+
+/// Collects first-seen context metadata for objects while traversing head commit trees.
+fn collect_object_context_map(
+    repo: &git2::Repository,
+    heads: &[crate::git::BundleHead],
+) -> Result<HashMap<git2::Oid, PayloadObjectContext>> {
+    let mut context = HashMap::<git2::Oid, PayloadObjectContext>::new();
+    let mut seen_commits = HashSet::<git2::Oid>::new();
+    let mut seen_trees = HashSet::<git2::Oid>::new();
+
+    for (head_index, head) in heads.iter().enumerate() {
+        let mut commit_order = 0usize;
+        let mut stack = vec![head.oid];
+        while let Some(commit_id) = stack.pop() {
+            if !seen_commits.insert(commit_id) {
+                continue;
+            }
+            let Ok(commit) = repo.find_commit(commit_id) else {
+                continue;
+            };
+            commit_order += 1;
+
+            context
+                .entry(commit.id())
+                .or_insert_with(|| PayloadObjectContext {
+                    head_index,
+                    commit_order,
+                    path: None,
+                });
+
+            collect_tree_context(
+                repo,
+                commit.tree_id(),
+                "",
+                head_index,
+                commit_order,
+                &mut context,
+                &mut seen_trees,
+            )?;
+
+            let parents = commit.parent_ids().collect::<Vec<_>>();
+            for parent_id in parents.into_iter().rev() {
+                if !seen_commits.contains(&parent_id) {
+                    stack.push(parent_id);
+                }
+            }
+        }
+    }
+
+    Ok(context)
+}
+
+/// Recursively records first-seen tree/blob context metadata.
+fn collect_tree_context(
+    repo: &git2::Repository,
+    tree_id: git2::Oid,
+    prefix: &str,
+    head_index: usize,
+    commit_order: usize,
+    context: &mut HashMap<git2::Oid, PayloadObjectContext>,
+    seen_trees: &mut HashSet<git2::Oid>,
+) -> Result<()> {
+    if !seen_trees.insert(tree_id) {
+        return Ok(());
+    }
+
+    context
+        .entry(tree_id)
+        .or_insert_with(|| PayloadObjectContext {
+            head_index,
+            commit_order,
+            path: if prefix.is_empty() {
+                None
+            } else {
+                Some(prefix.to_string())
+            },
+        });
+
+    let tree = repo.find_tree(tree_id)?;
+    for entry in &tree {
+        let name = entry.name().unwrap_or("<invalid-utf8>");
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+
+        context
+            .entry(entry.id())
+            .or_insert_with(|| PayloadObjectContext {
+                head_index,
+                commit_order,
+                path: Some(path.clone()),
+            });
+
+        if entry.kind() == Some(git2::ObjectType::Tree) {
+            collect_tree_context(
+                repo,
+                entry.id(),
+                &path,
+                head_index,
+                commit_order,
+                context,
+                seen_trees,
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Collects all objects reachable from bundle heads (commit/tree/blob closure).
@@ -609,6 +726,13 @@ struct ObjectDetailLines {
     lines: Vec<String>,
     is_text_blob: bool,
     text_line_count: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct PayloadObjectContext {
+    head_index: usize,
+    commit_order: usize,
+    path: Option<String>,
 }
 
 #[derive(Debug)]

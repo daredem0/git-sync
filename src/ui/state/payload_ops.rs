@@ -4,7 +4,7 @@ use crate::git;
 use crate::ui::format::single_line_error;
 use crate::ui::types::{
     AppState, AuditModel, PayloadModel, PayloadObjectViewState, PayloadPreviewState,
-    SyntaxHighlighter,
+    PayloadSortMode, SyntaxHighlighter,
 };
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -29,14 +29,15 @@ impl AppState {
             self.payload_preview = None;
             return;
         };
-        if payload.objects.is_empty() {
+        let sorted = self.payload_sorted_objects(payload);
+        if sorted.is_empty() {
             self.payload_preview = None;
             return;
         }
 
-        let index = std::cmp::min(self.payload_selected_index, payload.objects.len() - 1);
+        let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
         self.payload_selected_index = index;
-        let selected = &payload.objects[index];
+        let selected = sorted[index];
         if let Some(cached) = self.payload_preview_cache.get(&selected.oid).cloned() {
             self.payload_preview = Some(cached);
             return;
@@ -79,12 +80,13 @@ impl AppState {
         let PayloadModel::Ok(payload) = &model.payload else {
             return;
         };
-        if payload.objects.is_empty() {
+        let sorted_len = self.payload_sorted_objects(payload).len();
+        if sorted_len == 0 {
             return;
         }
         self.payload_selected_index = std::cmp::min(
             self.payload_selected_index.saturating_add(step),
-            payload.objects.len() - 1,
+            sorted_len - 1,
         );
         self.refresh_payload_preview(model);
     }
@@ -101,13 +103,14 @@ impl AppState {
             self.action_message = Some("payload audit data is unavailable".to_string());
             return;
         };
-        if payload.objects.is_empty() {
+        let sorted = self.payload_sorted_objects(payload);
+        if sorted.is_empty() {
             self.action_message = Some("payload contains no importable objects".to_string());
             return;
         }
 
-        let index = std::cmp::min(self.payload_selected_index, payload.objects.len() - 1);
-        let selected = &payload.objects[index];
+        let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
+        let selected = sorted[index];
         match self.load_payload_object_detail_cached(model, selected.oid) {
             Ok(detail) => {
                 let (lines, syntax_name) =
@@ -211,6 +214,65 @@ impl AppState {
             view.scroll_y = 0;
         }
     }
+
+    /// Returns sorted payload objects according to current payload sort mode.
+    pub(crate) fn payload_sorted_objects<'a>(
+        &self,
+        payload: &'a git::PayloadAudit,
+    ) -> Vec<&'a git::PayloadObjectEntry> {
+        let mut objects = payload.objects.iter().collect::<Vec<_>>();
+        if self.payload_sort_mode == PayloadSortMode::Canonical {
+            return objects;
+        }
+
+        objects.sort_by(|left, right| {
+            left.context_head_index
+                .is_none()
+                .cmp(&right.context_head_index.is_none())
+                .then_with(|| left.context_head_index.cmp(&right.context_head_index))
+                .then_with(|| left.context_commit_order.cmp(&right.context_commit_order))
+                .then_with(|| left.context_path.cmp(&right.context_path))
+                .then_with(|| {
+                    payload_sort_kind_rank(left.kind).cmp(&payload_sort_kind_rank(right.kind))
+                })
+                .then_with(|| left.oid.cmp(&right.oid))
+        });
+        objects
+    }
+
+    /// Cycles payload list sorting mode and preserves current object selection when possible.
+    pub(crate) fn cycle_payload_sort_mode(&mut self, model: &AuditModel) {
+        let PayloadModel::Ok(payload) = &model.payload else {
+            return;
+        };
+
+        let previous_sorted = self.payload_sorted_objects(payload);
+        let selected_oid = if previous_sorted.is_empty() {
+            None
+        } else {
+            let index = std::cmp::min(self.payload_selected_index, previous_sorted.len() - 1);
+            Some(previous_sorted[index].oid)
+        };
+
+        self.payload_sort_mode = match self.payload_sort_mode {
+            PayloadSortMode::Canonical => PayloadSortMode::Context,
+            PayloadSortMode::Context => PayloadSortMode::Canonical,
+        };
+
+        let next_sorted = self.payload_sorted_objects(payload);
+        self.payload_selected_index = selected_oid
+            .and_then(|oid| next_sorted.iter().position(|entry| entry.oid == oid))
+            .unwrap_or(0);
+        self.refresh_payload_preview(model);
+    }
+
+    /// Returns human-readable label for current payload sort mode.
+    pub(crate) fn payload_sort_mode_label(&self) -> &'static str {
+        match self.payload_sort_mode {
+            PayloadSortMode::Canonical => "canonical",
+            PayloadSortMode::Context => "context",
+        }
+    }
 }
 
 /// Computes the number of digits needed for line-number gutters.
@@ -222,6 +284,17 @@ fn line_number_width(total_lines: usize) -> usize {
         digits += 1;
     }
     digits
+}
+
+/// Stable kind rank for context-sort tie-breaking.
+fn payload_sort_kind_rank(kind: git::PayloadObjectKind) -> u8 {
+    match kind {
+        git::PayloadObjectKind::Commit => 0,
+        git::PayloadObjectKind::Tree => 1,
+        git::PayloadObjectKind::Blob => 2,
+        git::PayloadObjectKind::Tag => 3,
+        git::PayloadObjectKind::Unknown => 4,
+    }
 }
 
 /// Builds a compact preview payload for the selected object on the payload main page.

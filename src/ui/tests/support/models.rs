@@ -39,12 +39,18 @@ fn sample_payload_audit() -> git::PayloadAudit {
                 kind: git::PayloadObjectKind::Commit,
                 size_bytes: 180,
                 reachable_from_heads: true,
+                context_head_index: Some(0),
+                context_commit_order: Some(1),
+                context_path: None,
             },
             git::PayloadObjectEntry {
                 oid: oid_from_u64(1001),
                 kind: git::PayloadObjectKind::Blob,
                 size_bytes: 42,
                 reachable_from_heads: false,
+                context_head_index: None,
+                context_commit_order: None,
+                context_path: None,
             },
         ],
     }
