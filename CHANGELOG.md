@@ -7,6 +7,49 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-28
+
+### Added
+- New payload-audit JSON schema: `schemas/sync.bundle.paudit.schema.json`.
+- Non-interactive payload JSON document model with:
+  - package metadata fields aligned to `.caudit.json` style
+  - `transport_entries`
+  - `pack_summary`
+  - `pack_objects`
+  - `object_details`
+- PACK-proof hardening for payload audit:
+  - PACK header parsing (`pack_version`, `declared_object_count`)
+  - trailer checksum verification
+  - direct PACK entry iteration and reconstruction (including `ofs-delta` / `ref-delta`)
+  - canonical object OID verification from reconstructed bytes
+  - fail-closed handling on count/checksum/delta-base errors
+- Explicit `verification_status` field in payload `pack_proof` JSON output.
+- Additional payload/UI tests covering proof invariants, edge-case failures, and repo-name derivation behavior.
+
+### Changed
+- `audit` non-interactive mode now supports payload output only:
+  - `--format table`
+  - `--format json`
+- `audit --verify-metadata` was simplified to explicit pass/fail behavior (exit code + message), independent of `--format`.
+- Payload table output now includes PACK proof lines plus transport-entry hash table before pack object rows.
+- Interactive overview now surfaces a dedicated bundle-integrity summary:
+  - metadata verification
+  - dry-run applicability
+  - pack proof status
+  - processed/declared count
+  - checksum match status
+- Interactive payload page now shows full proof details (pack version/hash/checksums) and selected-object context metadata.
+- Overview repository label now renders as `repo: <path> (<repo_name>)` when remote-derived name is available.
+
+### Removed
+- Legacy manifest-based non-interactive audit path.
+- `audit --format tsv` support.
+- Legacy repo-range non-interactive audit flow under `audit`.
+
+### Documentation
+- README updated to reflect payload-only non-interactive audit usage and current verification flow.
+- SDD/SAD rewritten to current architecture and runtime behavior, including a dedicated PACK-proof model section.
+
 ## [0.4.0] - 2026-02-28
 
 ### Added
@@ -105,7 +148,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/daredem0/git-sync/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/daredem0/git-sync/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/daredem0/git-sync/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/daredem0/git-sync/compare/v0.3.0...v0.3.1
