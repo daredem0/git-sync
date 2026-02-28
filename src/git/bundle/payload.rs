@@ -1,10 +1,10 @@
 //! Git-layer payload audit functionality.
 
-use super::inspect::inspect_bundle;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
-    BundleInspection, MaterializedObjectIndex, MaterializedObjectRecord, PackEntryBaseRef,
-    PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAudit, PayloadAuditDocument,
+    BundleHead, BundleInspection, BundleVersion, MaterializedObjectData, MaterializedObjectIndex,
+    MaterializedObjectRecord, MaterializedObjectStore, PackEntryBaseRef, PackEntryKind,
+    PackEntryLedger, PackEntryRecord, PayloadAudit, PayloadAuditDocument,
     PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
     PayloadAuditDocumentPackEntry, PayloadAuditDocumentPackObject,
     PayloadAuditDocumentTransportEntry, PayloadAuditError, PayloadAuditLedgerMode,
@@ -21,20 +21,21 @@ use flate2::{Decompress, FlushDecompress, Status};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 use zip::ZipArchive;
 
 const BLOB_PATH_SCAN_LIMIT: usize = 12;
 const LEDGER_SUMMARY_EDGE_COUNT: usize = 20;
+const MAX_BLOB_STORE_BYTES: usize = 4 * 1024 * 1024;
+const LARGE_BLOB_PREVIEW_BYTES: usize = 8192;
 
-/// Reusable imported payload session for fast object-detail queries.
+/// Reusable payload session for fast object-detail queries.
 #[derive(Debug)]
 pub struct PayloadSession {
-    temp_repo: TempBareRepo,
     inspection: BundleInspection,
     payload: PayloadAudit,
+    materialized_store_by_oid: HashMap<git2::Oid, MaterializedObjectData>,
+    blob_paths_by_oid: HashMap<git2::Oid, Vec<String>>,
     bundle_path: String,
     bundle_size_bytes: u64,
     bundle_sha256: String,
@@ -44,6 +45,12 @@ pub struct PayloadSession {
 struct ParsedPackObject {
     kind: PayloadObjectKind,
     content: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct BundlePayload<'a> {
+    inspection: BundleInspection,
+    pack_data: &'a [u8],
 }
 
 /// Collects transport-entry and pack-object payload audit data for a bundle input with explicit resolve mode.
@@ -120,95 +127,82 @@ pub fn open_payload_session_with_resolve_mode(
     repo_path: &Path,
     resolve_mode: PayloadResolveMode,
 ) -> Result<PayloadSession> {
-    let source_repo = git2::Repository::open(repo_path)?;
-    let resolve_odb = if matches!(resolve_mode, PayloadResolveMode::Baseline) {
-        Some(source_repo.odb()?)
+    let baseline_repo = if matches!(resolve_mode, PayloadResolveMode::Baseline) {
+        Some(git2::Repository::open(repo_path)?)
     } else {
         None
     };
-    if is_zip_bundle_input_path(bundle_input_path) {
-        let transport_entries = collect_transport_entries_for_zip(bundle_input_path)?;
-        let extracted = extract_bundle_archive(bundle_input_path)?;
-        let bundle_bytes = fs::read(&extracted.bundle_path)?;
-        let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-        let verification =
-            verify_pack_payload_with_ledger_and_baseline_odb(pack_data, resolve_odb.as_ref())
-                .map_err(anyhow::Error::from)?;
-        let pack_proof = verification.proof;
-        let bundle_path = extracted
-            .bundle_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| extracted.bundle_path.display().to_string());
-        let inspection = inspect_bundle(&extracted.bundle_path)?;
-        let temp_repo = TempBareRepo::new()?;
-        let repo = git2::Repository::open_bare(&temp_repo.path)?;
-        import_pack_data_to_repo(&repo, pack_data, &inspection)?;
-        let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
-        let context_map = collect_object_context_map(&repo, &inspection.heads)?;
-        let objects = collect_payload_objects_from_materialized_index(
-            &verification.materialized_index,
-            &reachable,
-            &context_map,
-        );
-        ensure_materialized_index_matches_pack_proof(
-            &verification.materialized_index,
-            &pack_proof,
-        )?;
-        let payload = PayloadAudit {
-            bundle_version: inspection.version,
-            heads: inspection.heads.clone(),
-            transport_entries,
-            pack_proof,
-            entry_ledger: verification.ledger,
-            objects,
-        };
-        return Ok(PayloadSession {
-            temp_repo,
-            inspection,
-            payload,
-            bundle_path,
-            bundle_size_bytes: bundle_bytes.len() as u64,
-            bundle_sha256: sha256_hex(&bundle_bytes)?,
-        });
-    }
+    let resolve_odb = baseline_repo
+        .as_ref()
+        .map(git2::Repository::odb)
+        .transpose()?;
 
-    let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
-    let bundle_bytes = fs::read(bundle_input_path)?;
-    let pack_data = bundle_pack_bytes(&bundle_bytes)?;
-    let verification =
-        verify_pack_payload_with_ledger_and_baseline_odb(pack_data, resolve_odb.as_ref())
-            .map_err(anyhow::Error::from)?;
-    let pack_proof = verification.proof;
-    let bundle_path = bundle_input_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| bundle_input_path.display().to_string());
-    let inspection = inspect_bundle(bundle_input_path)?;
-    let temp_repo = TempBareRepo::new()?;
-    let repo = git2::Repository::open_bare(&temp_repo.path)?;
-    import_pack_data_to_repo(&repo, pack_data, &inspection)?;
-    let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
-    let context_map = collect_object_context_map(&repo, &inspection.heads)?;
+    let (bundle_path, bundle_bytes, transport_entries) =
+        if is_zip_bundle_input_path(bundle_input_path) {
+            let transport_entries = collect_transport_entries_for_zip(bundle_input_path)?;
+            let extracted = extract_bundle_archive(bundle_input_path)?;
+            let bundle_bytes = fs::read(&extracted.bundle_path)?;
+            let bundle_path = extracted
+                .bundle_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| extracted.bundle_path.display().to_string());
+            (bundle_path, bundle_bytes, transport_entries)
+        } else {
+            let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
+            let bundle_bytes = fs::read(bundle_input_path)?;
+            let bundle_path = bundle_input_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| bundle_input_path.display().to_string());
+            (bundle_path, bundle_bytes, transport_entries)
+        };
+
+    let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
+    let inspection = parsed_bundle.inspection.clone();
+    let verification = verify_pack_payload_with_ledger_and_baseline_odb(
+        parsed_bundle.pack_data,
+        resolve_odb.as_ref(),
+    )
+    .map_err(anyhow::Error::from)?;
+    ensure_materialized_index_matches_pack_proof(
+        &verification.materialized_index,
+        &verification.proof,
+    )?;
+
+    let materialized_store_by_oid = verification
+        .materialized_store
+        .objects
+        .iter()
+        .cloned()
+        .map(|entry| (entry.oid, entry))
+        .collect::<HashMap<_, _>>();
+
+    let (reachable, context_map, blob_paths_by_oid) =
+        collect_reachability_context_from_materialized(
+            &inspection.heads,
+            &materialized_store_by_oid,
+        );
     let objects = collect_payload_objects_from_materialized_index(
         &verification.materialized_index,
         &reachable,
         &context_map,
     );
-    ensure_materialized_index_matches_pack_proof(&verification.materialized_index, &pack_proof)?;
+
     let payload = PayloadAudit {
         bundle_version: inspection.version,
         heads: inspection.heads.clone(),
         transport_entries,
-        pack_proof,
+        pack_proof: verification.proof.clone(),
         entry_ledger: verification.ledger,
         objects,
     };
 
     Ok(PayloadSession {
-        temp_repo,
         inspection,
         payload,
+        materialized_store_by_oid,
+        blob_paths_by_oid,
         bundle_path,
         bundle_size_bytes: bundle_bytes.len() as u64,
         bundle_sha256: sha256_hex(&bundle_bytes)?,
@@ -405,23 +399,33 @@ pub fn collect_payload_object_detail_for_session(
     session: &PayloadSession,
     object_id: git2::Oid,
 ) -> Result<PayloadObjectDetail> {
-    let repo = git2::Repository::open_bare(&session.temp_repo.path)?;
-    collect_payload_object_detail_for_repo(&repo, &session.inspection, object_id)
+    collect_payload_object_detail_from_store(
+        &session.materialized_store_by_oid,
+        &session.blob_paths_by_oid,
+        object_id,
+    )
 }
 
-/// Collects payload detail lines from an already imported repository/inspection pair.
-fn collect_payload_object_detail_for_repo(
-    repo: &git2::Repository,
-    inspection: &BundleInspection,
+/// Collects payload detail lines from verifier-owned materialized object store.
+fn collect_payload_object_detail_from_store(
+    store: &HashMap<git2::Oid, MaterializedObjectData>,
+    blob_paths_by_oid: &HashMap<git2::Oid, Vec<String>>,
     object_id: git2::Oid,
 ) -> Result<PayloadObjectDetail> {
-    let odb = repo.odb()?;
-    let (size_bytes, kind) = odb.read_header(object_id)?;
-    let kind = payload_kind_from_git(kind);
-    let object = repo.find_object(object_id, None)?;
-    let detail_lines = object_detail_lines(&object)?;
+    let stored = store.get(&object_id).ok_or_else(|| {
+        anyhow!(
+            "payload object {} is not available in materialized store",
+            object_id
+        )
+    })?;
+    let kind = stored.kind;
+    let size_bytes = stored.size_bytes;
+    let detail_lines = object_detail_lines_from_materialized(stored)?;
     let blob_paths = if kind == PayloadObjectKind::Blob {
-        collect_blob_paths_with_limit(repo, &inspection.heads, object_id, BLOB_PATH_SCAN_LIMIT)?
+        blob_paths_by_oid
+            .get(&object_id)
+            .cloned()
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -497,13 +501,85 @@ fn collect_transport_entries_for_zip(archive_path: &Path) -> Result<Vec<PayloadT
     Ok(entries)
 }
 
-/// Returns the `PACK...` payload bytes from a raw bundle byte slice.
-fn bundle_pack_bytes(bundle_bytes: &[u8]) -> Result<&[u8]> {
-    let pack_offset = bundle_bytes
-        .windows(4)
-        .position(|window| window == b"PACK")
-        .ok_or_else(|| anyhow!("bundle does not contain PACK payload"))?;
-    Ok(&bundle_bytes[pack_offset..])
+/// Parses bundle header and returns structured inspection metadata plus exact PACK payload slice.
+fn parse_bundle_payload(bundle_bytes: &[u8]) -> Result<BundlePayload<'_>> {
+    let mut cursor = 0usize;
+    let version_line = read_bundle_header_line(bundle_bytes, &mut cursor)?
+        .ok_or_else(|| anyhow!("bundle payload is missing version line"))?;
+    let version = match version_line.as_str() {
+        "# v2 git bundle" => BundleVersion::V2,
+        "# v3 git bundle" => BundleVersion::V3,
+        _ => bail!("bundle file is not a valid git bundle header"),
+    };
+
+    let mut prerequisites = Vec::<git2::Oid>::new();
+    let mut heads = Vec::<BundleHead>::new();
+    loop {
+        let line = read_bundle_header_line(bundle_bytes, &mut cursor)?
+            .ok_or_else(|| anyhow!("bundle header terminated before PACK payload"))?;
+        if line.is_empty() {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix('-') {
+            let oid_token = rest
+                .split_whitespace()
+                .next()
+                .ok_or_else(|| anyhow!("invalid bundle prerequisite line: '{line}'"))?;
+            prerequisites.push(git2::Oid::from_str(oid_token)?);
+            continue;
+        }
+
+        let mut parts = line.splitn(2, ' ');
+        let oid_token = parts
+            .next()
+            .ok_or_else(|| anyhow!("invalid bundle head line: '{line}'"))?;
+        let reference = parts
+            .next()
+            .ok_or_else(|| anyhow!("bundle head line missing reference: '{line}'"))?;
+        heads.push(BundleHead {
+            oid: git2::Oid::from_str(oid_token)?,
+            reference: reference.to_string(),
+        });
+    }
+
+    if bundle_bytes.len().saturating_sub(cursor) < 4 {
+        bail!("bundle header is not followed by PACK payload");
+    }
+    if &bundle_bytes[cursor..cursor + 4] != b"PACK" {
+        bail!("bundle header terminator is not followed by PACK payload");
+    }
+
+    Ok(BundlePayload {
+        inspection: BundleInspection {
+            version,
+            prerequisites,
+            heads,
+        },
+        pack_data: &bundle_bytes[cursor..],
+    })
+}
+
+/// Reads one bundle-header line as UTF-8 and advances cursor.
+fn read_bundle_header_line(bundle_bytes: &[u8], cursor: &mut usize) -> Result<Option<String>> {
+    if *cursor >= bundle_bytes.len() {
+        return Ok(None);
+    }
+    let start = *cursor;
+    let rel_end = bundle_bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|value| start + value);
+    let end = rel_end.unwrap_or(bundle_bytes.len());
+    *cursor = if rel_end.is_some() { end + 1 } else { end };
+
+    let mut line = &bundle_bytes[start..end];
+    if line.ends_with(b"\r") {
+        line = &line[..line.len() - 1];
+    }
+    let text = std::str::from_utf8(line)
+        .map_err(|_| anyhow!("bundle header contains non-utf8 line bytes"))?
+        .to_string();
+    Ok(Some(text))
 }
 
 /// Verifies pack proof + ledger directly from a bundle or packaged zip input.
@@ -534,12 +610,16 @@ pub fn verify_pack_payload_for_bundle_input_with_resolve_mode(
             blocked_entry_idx: None,
             ledger_partial: None,
         })?;
-        let pack_data = bundle_pack_bytes(&bundle_bytes).map_err(|err| PayloadAuditError {
-            reason: err.to_string(),
-            blocked_entry_idx: None,
-            ledger_partial: None,
-        })?;
-        return verify_pack_payload_with_ledger_and_baseline_odb(pack_data, baseline_odb.as_ref());
+        let parsed_bundle =
+            parse_bundle_payload(&bundle_bytes).map_err(|err| PayloadAuditError {
+                reason: err.to_string(),
+                blocked_entry_idx: None,
+                ledger_partial: None,
+            })?;
+        return verify_pack_payload_with_ledger_and_baseline_odb(
+            parsed_bundle.pack_data,
+            baseline_odb.as_ref(),
+        );
     }
 
     let bundle_bytes = fs::read(bundle_input_path).map_err(|err| PayloadAuditError {
@@ -547,36 +627,12 @@ pub fn verify_pack_payload_for_bundle_input_with_resolve_mode(
         blocked_entry_idx: None,
         ledger_partial: None,
     })?;
-    let pack_data = bundle_pack_bytes(&bundle_bytes).map_err(|err| PayloadAuditError {
+    let parsed_bundle = parse_bundle_payload(&bundle_bytes).map_err(|err| PayloadAuditError {
         reason: err.to_string(),
         blocked_entry_idx: None,
         ledger_partial: None,
     })?;
-    verify_pack_payload_with_ledger_and_baseline_odb(pack_data, baseline_odb.as_ref())
-}
-
-/// Imports raw pack bytes into a bare repository object database.
-fn import_pack_data_to_repo(
-    repo: &git2::Repository,
-    pack_data: &[u8],
-    inspection: &BundleInspection,
-) -> Result<()> {
-    let pack_dir = repo.path().join("objects").join("pack");
-    fs::create_dir_all(&pack_dir)?;
-    let mut indexer = git2::Indexer::new(None, &pack_dir, 0o644, false)?;
-    indexer.write_all(pack_data)?;
-    indexer.commit()?;
-
-    for head in &inspection.heads {
-        repo.find_commit(head.oid).map_err(|err| {
-            anyhow!(
-                "bundle head commit '{}' is not available after import: {err}",
-                head.oid
-            )
-        })?;
-    }
-
-    Ok(())
+    verify_pack_payload_with_ledger_and_baseline_odb(parsed_bundle.pack_data, baseline_odb.as_ref())
 }
 
 /// Asserts that ledger-derived materialization counts align with pack-proof counters.
@@ -681,6 +737,8 @@ fn verify_pack_payload_impl(
     };
     let mut offset = 12usize;
     let mut processed_object_count = 0usize;
+    let mut thin_pack_detected = false;
+    let mut baseline_resolutions_count = 0usize;
     let mut objects_by_offset = HashMap::<usize, ParsedPackObject>::new();
     let mut objects_by_oid = HashMap::<git2::Oid, ParsedPackObject>::new();
 
@@ -824,6 +882,18 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
+                if delta_bytes.len() != expected_size {
+                    return Err(PayloadAuditError {
+                        reason: format!(
+                            "ofs-delta payload size mismatch at object {}: header={}, actual={}",
+                            processed_object_count + 1,
+                            expected_size,
+                            delta_bytes.len()
+                        ),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
+                }
                 let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| {
                     PayloadAuditError {
                         reason: err.to_string(),
@@ -880,6 +950,8 @@ fn verify_pack_payload_impl(
                 if objects_by_oid.contains_key(&base_oid) {
                     entry_resolved_via = ResolutionSource::InPack;
                 } else {
+                    thin_pack_detected = true;
+                    baseline_resolutions_count += 1;
                     entry_resolved_via = ResolutionSource::Baseline;
                 }
                 let (delta_consumed, delta_bytes) =
@@ -903,6 +975,18 @@ fn verify_pack_payload_impl(
                         blocked_entry_idx: Some(processed_object_count),
                         ledger_partial: Some(ledger.clone()),
                     })?;
+                if delta_bytes.len() != expected_size {
+                    return Err(PayloadAuditError {
+                        reason: format!(
+                            "ref-delta payload size mismatch at object {}: header={}, actual={}",
+                            processed_object_count + 1,
+                            expected_size,
+                            delta_bytes.len()
+                        ),
+                        blocked_entry_idx: Some(processed_object_count),
+                        ledger_partial: Some(ledger),
+                    });
+                }
                 let content = apply_git_delta(&base.content, &delta_bytes).map_err(|err| {
                     PayloadAuditError {
                         reason: err.to_string(),
@@ -956,6 +1040,7 @@ fn verify_pack_payload_impl(
     }
 
     let materialized_index = build_materialized_object_index_from_ledger(&ledger);
+    let materialized_store = build_materialized_object_store(&objects_by_oid);
     let proof = PayloadPackProof::from_entry_counters(
         pack_version,
         declared_object_count,
@@ -963,6 +1048,9 @@ fn verify_pack_payload_impl(
         materialized_index.materialized_entry_count,
         materialized_index.unique_object_count,
         materialized_index.duplicate_entry_count_materialized,
+        true,
+        thin_pack_detected,
+        baseline_resolutions_count,
         "sha1".to_string(),
         computed_checksum,
         trailer_checksum,
@@ -971,6 +1059,7 @@ fn verify_pack_payload_impl(
         proof,
         ledger,
         materialized_index,
+        materialized_store,
     })
 }
 
@@ -1318,6 +1407,39 @@ fn build_materialized_object_index_from_ledger(
     }
 }
 
+/// Builds verifier-owned materialized object store from parsed object map.
+fn build_materialized_object_store(
+    objects_by_oid: &HashMap<git2::Oid, ParsedPackObject>,
+) -> MaterializedObjectStore {
+    let mut objects = objects_by_oid
+        .iter()
+        .map(|(oid, parsed)| {
+            if parsed.kind == PayloadObjectKind::Blob && parsed.content.len() > MAX_BLOB_STORE_BYTES
+            {
+                MaterializedObjectData {
+                    oid: *oid,
+                    kind: parsed.kind,
+                    size_bytes: parsed.content.len(),
+                    content_bytes: parsed.content
+                        [..LARGE_BLOB_PREVIEW_BYTES.min(parsed.content.len())]
+                        .to_vec(),
+                    content_truncated: true,
+                }
+            } else {
+                MaterializedObjectData {
+                    oid: *oid,
+                    kind: parsed.kind,
+                    size_bytes: parsed.content.len(),
+                    content_bytes: parsed.content.clone(),
+                    content_truncated: false,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    objects.sort_by(|left, right| left.oid.cmp(&right.oid));
+    MaterializedObjectStore { objects }
+}
+
 /// Returns true when an entry is fully materialized and exportable as exact object bytes.
 fn is_materialized_entry(entry: &PackEntryRecord) -> bool {
     entry.resolved
@@ -1355,12 +1477,18 @@ fn collect_payload_objects_from_materialized_index(
     objects
 }
 
-/// Collects first-seen context metadata for objects while traversing head commit trees.
-fn collect_object_context_map(
-    repo: &git2::Repository,
-    heads: &[crate::git::BundleHead],
-) -> Result<HashMap<git2::Oid, PayloadObjectContext>> {
+/// Collects reachability/context/blob-path metadata directly from materialized object bytes.
+fn collect_reachability_context_from_materialized(
+    heads: &[BundleHead],
+    store_by_oid: &HashMap<git2::Oid, MaterializedObjectData>,
+) -> (
+    HashSet<git2::Oid>,
+    HashMap<git2::Oid, PayloadObjectContext>,
+    HashMap<git2::Oid, Vec<String>>,
+) {
+    let mut reachable = HashSet::<git2::Oid>::new();
     let mut context = HashMap::<git2::Oid, PayloadObjectContext>::new();
+    let mut blob_paths = HashMap::<git2::Oid, Vec<String>>::new();
     let mut seen_commits = HashSet::<git2::Oid>::new();
     let mut seen_trees = HashSet::<git2::Oid>::new();
 
@@ -1371,30 +1499,36 @@ fn collect_object_context_map(
             if !seen_commits.insert(commit_id) {
                 continue;
             }
-            let Ok(commit) = repo.find_commit(commit_id) else {
+            let Some(commit_data) = store_by_oid.get(&commit_id) else {
                 continue;
             };
+            if commit_data.kind != PayloadObjectKind::Commit {
+                continue;
+            }
             commit_order += 1;
-
+            reachable.insert(commit_id);
             context
-                .entry(commit.id())
+                .entry(commit_id)
                 .or_insert_with(|| PayloadObjectContext {
                     head_index,
                     commit_order,
                     path: None,
                 });
 
-            collect_tree_context(
-                repo,
-                commit.tree_id(),
-                "",
-                head_index,
-                commit_order,
-                &mut context,
-                &mut seen_trees,
-            )?;
-
-            let parents = commit.parent_ids().collect::<Vec<_>>();
+            let (tree_oid, parents) = parse_commit_tree_and_parents(&commit_data.content_bytes);
+            if let Some(tree_oid) = tree_oid {
+                walk_tree_from_materialized(
+                    store_by_oid,
+                    tree_oid,
+                    "",
+                    head_index,
+                    commit_order,
+                    &mut reachable,
+                    &mut context,
+                    &mut blob_paths,
+                    &mut seen_trees,
+                );
+            }
             for parent_id in parents.into_iter().rev() {
                 if !seen_commits.contains(&parent_id) {
                     stack.push(parent_id);
@@ -1403,25 +1537,39 @@ fn collect_object_context_map(
         }
     }
 
-    Ok(context)
+    for paths in blob_paths.values_mut() {
+        paths.sort();
+        paths.dedup();
+        paths.truncate(BLOB_PATH_SCAN_LIMIT);
+    }
+
+    (reachable, context, blob_paths)
 }
 
-/// Recursively records first-seen tree/blob context metadata.
-fn collect_tree_context(
-    repo: &git2::Repository,
-    tree_id: git2::Oid,
+/// Recursively traverses materialized tree bytes and records context/path metadata.
+fn walk_tree_from_materialized(
+    store_by_oid: &HashMap<git2::Oid, MaterializedObjectData>,
+    tree_oid: git2::Oid,
     prefix: &str,
     head_index: usize,
     commit_order: usize,
+    reachable: &mut HashSet<git2::Oid>,
     context: &mut HashMap<git2::Oid, PayloadObjectContext>,
+    blob_paths: &mut HashMap<git2::Oid, Vec<String>>,
     seen_trees: &mut HashSet<git2::Oid>,
-) -> Result<()> {
-    if !seen_trees.insert(tree_id) {
-        return Ok(());
+) {
+    if !seen_trees.insert(tree_oid) {
+        return;
     }
-
+    let Some(tree_data) = store_by_oid.get(&tree_oid) else {
+        return;
+    };
+    if tree_data.kind != PayloadObjectKind::Tree {
+        return;
+    }
+    reachable.insert(tree_oid);
     context
-        .entry(tree_id)
+        .entry(tree_oid)
         .or_insert_with(|| PayloadObjectContext {
             head_index,
             commit_order,
@@ -1432,106 +1580,42 @@ fn collect_tree_context(
             },
         });
 
-    let Ok(tree) = repo.find_tree(tree_id) else {
-        // Prerequisite-dependent bundles may reference trees not present in pack payload.
-        return Ok(());
+    let Ok(entries) = parse_tree_entries(&tree_data.content_bytes) else {
+        return;
     };
-    for entry in &tree {
-        let name = entry.name().unwrap_or("<invalid-utf8>");
+    for entry in entries {
         let path = if prefix.is_empty() {
-            name.to_string()
+            entry.name.clone()
         } else {
-            format!("{prefix}/{name}")
+            format!("{prefix}/{}", entry.name)
         };
-
+        reachable.insert(entry.oid);
         context
-            .entry(entry.id())
+            .entry(entry.oid)
             .or_insert_with(|| PayloadObjectContext {
                 head_index,
                 commit_order,
                 path: Some(path.clone()),
             });
-
-        if entry.kind() == Some(git2::ObjectType::Tree) {
-            collect_tree_context(
-                repo,
-                entry.id(),
+        if entry.kind == PayloadObjectKind::Tree {
+            walk_tree_from_materialized(
+                store_by_oid,
+                entry.oid,
                 &path,
                 head_index,
                 commit_order,
+                reachable,
                 context,
+                blob_paths,
                 seen_trees,
-            )?;
+            );
+        } else if entry.kind == PayloadObjectKind::Blob {
+            let paths = blob_paths.entry(entry.oid).or_default();
+            if paths.len() < BLOB_PATH_SCAN_LIMIT {
+                paths.push(path);
+            }
         }
     }
-
-    Ok(())
-}
-
-/// Collects all objects reachable from bundle heads (commit/tree/blob closure).
-fn collect_reachable_objects(
-    repo: &git2::Repository,
-    heads: &[crate::git::BundleHead],
-) -> Result<HashSet<git2::Oid>> {
-    let mut reachable = HashSet::new();
-    let mut seen_commits = HashSet::new();
-    let mut seen_trees = HashSet::new();
-    for head in heads {
-        mark_commit_reachable(
-            repo,
-            head.oid,
-            &mut reachable,
-            &mut seen_commits,
-            &mut seen_trees,
-        )?;
-    }
-    Ok(reachable)
-}
-
-/// Marks commit graph and associated trees/blobs reachable from a commit id.
-fn mark_commit_reachable(
-    repo: &git2::Repository,
-    commit_id: git2::Oid,
-    reachable: &mut HashSet<git2::Oid>,
-    seen_commits: &mut HashSet<git2::Oid>,
-    seen_trees: &mut HashSet<git2::Oid>,
-) -> Result<()> {
-    if !seen_commits.insert(commit_id) {
-        return Ok(());
-    }
-    let Ok(commit) = repo.find_commit(commit_id) else {
-        return Ok(());
-    };
-    reachable.insert(commit.id());
-    mark_tree_reachable(repo, commit.tree_id(), reachable, seen_trees)?;
-
-    for parent_id in commit.parent_ids() {
-        mark_commit_reachable(repo, parent_id, reachable, seen_commits, seen_trees)?;
-    }
-    Ok(())
-}
-
-/// Marks tree entries recursively (tree + blobs) as reachable.
-fn mark_tree_reachable(
-    repo: &git2::Repository,
-    tree_id: git2::Oid,
-    reachable: &mut HashSet<git2::Oid>,
-    seen_trees: &mut HashSet<git2::Oid>,
-) -> Result<()> {
-    if !seen_trees.insert(tree_id) {
-        return Ok(());
-    }
-    let Ok(tree) = repo.find_tree(tree_id) else {
-        return Ok(());
-    };
-    reachable.insert(tree.id());
-    for entry in &tree {
-        reachable.insert(entry.id());
-        if entry.kind() == Some(git2::ObjectType::Tree) {
-            mark_tree_reachable(repo, entry.id(), reachable, seen_trees)?;
-        }
-    }
-    Ok(())
 }
 
 /// Returns stable display rank for object-kind ordering.
@@ -1609,66 +1693,49 @@ fn resolution_source_code(source: ResolutionSource) -> &'static str {
     }
 }
 
-/// Renders object-specific detail lines for payload drill-down/preview view.
-fn object_detail_lines(object: &git2::Object<'_>) -> Result<ObjectDetailLines> {
-    match object.kind() {
-        Some(git2::ObjectType::Commit) => {
-            let commit = object.peel_to_commit()?;
-            let mut lines = Vec::new();
-            lines.push(format!("commit {}", commit.id()));
-            lines.push(format!("tree {}", commit.tree_id()));
-            for parent in commit.parent_ids() {
-                lines.push(format!("parent {parent}"));
+/// Renders object-specific detail lines for payload drill-down/preview view from materialized bytes.
+fn object_detail_lines_from_materialized(
+    object: &MaterializedObjectData,
+) -> Result<ObjectDetailLines> {
+    match object.kind {
+        PayloadObjectKind::Commit => {
+            let text = String::from_utf8_lossy(&object.content_bytes);
+            let mut lines = vec![format!("commit {}", object.oid)];
+            let mut in_message = false;
+            for line in text.lines() {
+                if !in_message {
+                    if line.is_empty() {
+                        in_message = true;
+                        lines.push(String::new());
+                        continue;
+                    }
+                    if line.starts_with("tree ")
+                        || line.starts_with("parent ")
+                        || line.starts_with("author ")
+                        || line.starts_with("committer ")
+                    {
+                        lines.push(line.to_string());
+                    }
+                } else {
+                    lines.push(line.to_string());
+                }
             }
-            let author = commit.author();
-            let committer = commit.committer();
-            lines.push(format!(
-                "author {} <{}> {} {}",
-                author.name().unwrap_or("<unknown>"),
-                author.email().unwrap_or("<unknown>"),
-                author.when().seconds(),
-                author.when().offset_minutes()
-            ));
-            lines.push(format!(
-                "committer {} <{}> {} {}",
-                committer.name().unwrap_or("<unknown>"),
-                committer.email().unwrap_or("<unknown>"),
-                committer.when().seconds(),
-                committer.when().offset_minutes()
-            ));
-            lines.push(String::new());
-            lines.extend(
-                commit
-                    .message()
-                    .unwrap_or("<no message>")
-                    .lines()
-                    .map(str::to_string),
-            );
             Ok(ObjectDetailLines {
                 lines,
                 is_text_blob: false,
                 text_line_count: None,
             })
         }
-        Some(git2::ObjectType::Tree) => {
-            let tree = object.peel_to_tree()?;
-            let mut lines = Vec::new();
-            lines.push(format!("tree {}", tree.id()));
-            lines.push(String::new());
-            for entry in &tree {
-                let kind = match entry.kind() {
-                    Some(git2::ObjectType::Blob) => "blob",
-                    Some(git2::ObjectType::Tree) => "tree",
-                    Some(git2::ObjectType::Commit) => "commit",
-                    Some(git2::ObjectType::Tag) => "tag",
-                    _ => "unknown",
-                };
+        PayloadObjectKind::Tree => {
+            let mut lines = vec![format!("tree {}", object.oid), String::new()];
+            let entries = parse_tree_entries(&object.content_bytes)?;
+            for entry in entries {
                 lines.push(format!(
-                    "{:06o} {:<7} {} {}",
-                    entry.filemode(),
-                    kind,
-                    entry.id(),
-                    entry.name().unwrap_or("<invalid-utf8>")
+                    "{:>6} {:<7} {} {}",
+                    entry.mode,
+                    payload_kind_code(entry.kind),
+                    entry.oid,
+                    entry.name
                 ));
             }
             Ok(ObjectDetailLines {
@@ -1677,69 +1744,20 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<ObjectDetailLines> {
                 text_line_count: None,
             })
         }
-        Some(git2::ObjectType::Blob) => {
-            let blob = object.peel_to_blob()?;
-            let bytes = blob.content();
-            if let Ok(text) = std::str::from_utf8(bytes) {
-                let text_line_count = text.lines().count();
-                let mut lines = vec![
-                    format!("text blob {}", object.id()),
-                    format!("size: {} bytes", bytes.len()),
-                    format!("text lines: {text_line_count}"),
-                    String::new(),
-                ];
-                lines.extend(text.lines().map(str::to_string));
-                return Ok(ObjectDetailLines {
-                    lines,
-                    is_text_blob: true,
-                    text_line_count: Some(text_line_count),
-                });
-            }
-
-            let preview_len = bytes.len().min(256);
-            let mut lines = vec![
-                format!("binary blob {}", object.id()),
-                format!("size: {} bytes", bytes.len()),
-                format!("hex preview (first {preview_len} bytes):"),
-                String::new(),
-            ];
-            for chunk in bytes[..preview_len].chunks(16) {
-                lines.push(
-                    chunk
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                );
-            }
+        PayloadObjectKind::Blob => render_blob_detail_lines(object),
+        PayloadObjectKind::Tag => {
+            let text = String::from_utf8_lossy(&object.content_bytes);
+            let mut lines = vec![format!("tag {}", object.oid), String::new()];
+            lines.extend(text.lines().map(str::to_string));
             Ok(ObjectDetailLines {
                 lines,
                 is_text_blob: false,
                 text_line_count: None,
             })
         }
-        Some(git2::ObjectType::Tag) => {
-            let tag = object.peel_to_tag()?;
-            let mut lines = Vec::new();
-            lines.push(format!("tag {}", tag.id()));
-            lines.push(format!("name: {}", tag.name().unwrap_or("<unnamed>")));
-            lines.push(format!("target: {}", tag.target_id()));
-            lines.push(String::new());
-            lines.extend(
-                tag.message()
-                    .unwrap_or("<no message>")
-                    .lines()
-                    .map(str::to_string),
-            );
-            Ok(ObjectDetailLines {
-                lines,
-                is_text_blob: false,
-                text_line_count: None,
-            })
-        }
-        _ => Ok(ObjectDetailLines {
+        PayloadObjectKind::Unknown => Ok(ObjectDetailLines {
             lines: vec![
-                format!("object {}", object.id()),
+                format!("object {}", object.oid),
                 "unsupported object type for detail rendering".to_string(),
             ],
             is_text_blob: false,
@@ -1748,103 +1766,142 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<ObjectDetailLines> {
     }
 }
 
-/// Collects reachable tree paths for a blob object id, capped at `max_paths`.
-fn collect_blob_paths_with_limit(
-    repo: &git2::Repository,
-    heads: &[crate::git::BundleHead],
-    blob_oid: git2::Oid,
-    max_paths: usize,
-) -> Result<Vec<String>> {
-    if max_paths == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut seen_trees = HashSet::new();
-    let mut seen_commits = HashSet::new();
-    let mut commit_stack = heads.iter().map(|head| head.oid).collect::<Vec<_>>();
-    let mut paths = Vec::new();
-
-    while let Some(commit_id) = commit_stack.pop() {
-        if paths.len() >= max_paths {
-            break;
-        }
-        if !seen_commits.insert(commit_id) {
-            continue;
-        }
-        let Ok(commit) = repo.find_commit(commit_id) else {
-            continue;
+/// Renders blob detail lines including preview policy when content is truncated.
+fn render_blob_detail_lines(object: &MaterializedObjectData) -> Result<ObjectDetailLines> {
+    if let Ok(text) = std::str::from_utf8(&object.content_bytes) {
+        let text_line_count = if object.content_truncated {
+            None
+        } else {
+            Some(text.lines().count())
         };
-
-        collect_blob_paths_in_tree(
-            repo,
-            commit.tree_id(),
-            "",
-            blob_oid,
-            &mut seen_trees,
-            &mut paths,
-            max_paths,
-        )?;
-
-        for parent_id in commit.parent_ids() {
-            if !seen_commits.contains(&parent_id) {
-                commit_stack.push(parent_id);
-            }
+        let mut lines = vec![
+            format!("text blob {}", object.oid),
+            format!("size: {} bytes", object.size_bytes),
+            if object.content_truncated {
+                format!(
+                    "preview only: {} / {} bytes",
+                    object.content_bytes.len(),
+                    object.size_bytes
+                )
+            } else {
+                format!("text lines: {}", text_line_count.unwrap_or(0))
+            },
+            String::new(),
+        ];
+        lines.extend(text.lines().map(str::to_string));
+        if object.content_truncated {
+            lines.push(String::new());
+            lines.push("full content not retained in-memory (large blob preview mode)".to_string());
         }
+        return Ok(ObjectDetailLines {
+            lines,
+            is_text_blob: true,
+            text_line_count,
+        });
     }
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+
+    let preview_len = object.content_bytes.len().min(256);
+    let mut lines = vec![
+        format!("binary blob {}", object.oid),
+        format!("size: {} bytes", object.size_bytes),
+        if object.content_truncated {
+            format!(
+                "preview only: {} / {} bytes",
+                object.content_bytes.len(),
+                object.size_bytes
+            )
+        } else {
+            format!("hex preview (first {preview_len} bytes):")
+        },
+        String::new(),
+    ];
+    for chunk in object.content_bytes[..preview_len].chunks(16) {
+        lines.push(
+            chunk
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    Ok(ObjectDetailLines {
+        lines,
+        is_text_blob: false,
+        text_line_count: None,
+    })
 }
 
-/// Recursively searches a tree for all paths that reference a blob object id.
-fn collect_blob_paths_in_tree(
-    repo: &git2::Repository,
-    tree_id: git2::Oid,
-    prefix: &str,
-    blob_oid: git2::Oid,
-    seen_trees: &mut HashSet<git2::Oid>,
-    paths: &mut Vec<String>,
-    max_paths: usize,
-) -> Result<()> {
-    if paths.len() >= max_paths {
-        return Ok(());
-    }
-    if !seen_trees.insert(tree_id) {
-        return Ok(());
-    }
-    let Ok(tree) = repo.find_tree(tree_id) else {
-        // Skip missing prerequisite trees instead of failing payload/detail rendering.
-        return Ok(());
-    };
+#[derive(Debug, Clone)]
+struct ParsedTreeEntry {
+    mode: String,
+    name: String,
+    oid: git2::Oid,
+    kind: PayloadObjectKind,
+}
 
-    for entry in &tree {
-        if paths.len() >= max_paths {
+/// Parses commit bytes for tree and parent object ids.
+fn parse_commit_tree_and_parents(content: &[u8]) -> (Option<git2::Oid>, Vec<git2::Oid>) {
+    let mut tree = None;
+    let mut parents = Vec::new();
+    let text = String::from_utf8_lossy(content);
+    for line in text.lines() {
+        if line.is_empty() {
             break;
         }
-        let name = entry.name().unwrap_or("<invalid-utf8>");
-        let path = if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        match entry.kind() {
-            Some(git2::ObjectType::Blob) if entry.id() == blob_oid => paths.push(path),
-            Some(git2::ObjectType::Tree) => {
-                collect_blob_paths_in_tree(
-                    repo,
-                    entry.id(),
-                    &path,
-                    blob_oid,
-                    seen_trees,
-                    paths,
-                    max_paths,
-                )?;
-            }
-            _ => {}
+        if let Some(value) = line.strip_prefix("tree ") {
+            tree = git2::Oid::from_str(value.trim()).ok();
+        } else if let Some(value) = line.strip_prefix("parent ")
+            && let Ok(parent) = git2::Oid::from_str(value.trim())
+        {
+            parents.push(parent);
         }
     }
+    (tree, parents)
+}
 
-    Ok(())
+/// Parses raw tree object bytes into structured entries.
+fn parse_tree_entries(content: &[u8]) -> Result<Vec<ParsedTreeEntry>> {
+    let mut entries = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < content.len() {
+        let mode_end = content[cursor..]
+            .iter()
+            .position(|byte| *byte == b' ')
+            .map(|value| cursor + value)
+            .ok_or_else(|| anyhow!("tree entry mode is truncated"))?;
+        let mode = std::str::from_utf8(&content[cursor..mode_end])
+            .map_err(|_| anyhow!("tree entry mode is non-utf8"))?
+            .to_string();
+        cursor = mode_end + 1;
+
+        let name_end = content[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|value| cursor + value)
+            .ok_or_else(|| anyhow!("tree entry name is truncated"))?;
+        let name = String::from_utf8_lossy(&content[cursor..name_end]).to_string();
+        cursor = name_end + 1;
+        ensure_remaining(content, cursor, 20, "tree entry object id")?;
+        let oid = git2::Oid::from_bytes(&content[cursor..cursor + 20])?;
+        cursor += 20;
+
+        entries.push(ParsedTreeEntry {
+            mode: mode.clone(),
+            name,
+            oid,
+            kind: tree_entry_kind_from_mode(&mode),
+        });
+    }
+    Ok(entries)
+}
+
+/// Maps tree-entry mode to payload object kind.
+fn tree_entry_kind_from_mode(mode: &str) -> PayloadObjectKind {
+    match mode {
+        "40000" | "040000" => PayloadObjectKind::Tree,
+        "160000" => PayloadObjectKind::Commit,
+        _ => PayloadObjectKind::Blob,
+    }
 }
 
 struct ObjectDetailLines {
@@ -1858,32 +1915,4 @@ struct PayloadObjectContext {
     head_index: usize,
     commit_order: usize,
     path: Option<String>,
-}
-
-#[derive(Debug)]
-struct TempBareRepo {
-    path: PathBuf,
-}
-
-impl TempBareRepo {
-    /// Creates a temporary empty bare repository for payload inspection.
-    fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!(
-            "git-sync-payload-audit-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| anyhow!("system clock is before unix epoch"))?
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path)?;
-        let _repo = git2::Repository::init_bare(&path)?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for TempBareRepo {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
 }

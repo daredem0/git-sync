@@ -314,9 +314,6 @@ fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
     );
 
     let mut out = String::new();
-    let proof_ok = payload.pack_proof.entries_declared == payload.pack_proof.entries_parsed
-        && payload.pack_proof.entries_materialized == payload.pack_proof.entries_declared
-        && payload.pack_proof.computed_pack_checksum == payload.pack_proof.trailer_pack_checksum;
     let transfer_status = if payload.pack_proof.transfer_allowed {
         "allowed".to_string()
     } else {
@@ -330,15 +327,26 @@ fn render_payload_audit_table(payload: &git::PayloadAudit) -> String {
         )
     };
     out.push_str(&format!(
-        "PACK PROOF status={} version={} entries={}/{} materialized={}/{} transfer={} hash={}\n",
-        if proof_ok { "ok" } else { "failed" },
+        "PACK PROOF status={} version={} entries={}/{} materialized={}/{} transfer={} hash={} checksum_verified={} thin_pack={} baseline_resolutions={}\n",
+        payload.pack_proof.verification_status,
         payload.pack_proof.pack_version,
         payload.pack_proof.entries_parsed,
         payload.pack_proof.entries_declared,
         payload.pack_proof.entries_materialized,
         payload.pack_proof.entries_declared,
         transfer_status,
-        payload.pack_proof.hash_algorithm
+        payload.pack_proof.hash_algorithm,
+        if payload.pack_proof.checksum_verified {
+            "yes"
+        } else {
+            "no"
+        },
+        if payload.pack_proof.thin_pack_detected {
+            "yes"
+        } else {
+            "no"
+        },
+        payload.pack_proof.baseline_resolutions_count
     ));
     out.push_str(&format!(
         "PACK CHECKSUM computed={} trailer={}\n",
@@ -450,6 +458,9 @@ mod tests {
                 4,
                 3,
                 1,
+                true,
+                false,
+                0,
                 "sha1".to_string(),
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
@@ -535,6 +546,18 @@ mod tests {
         assert!(
             table.contains("LEDGER summary declared=4 parsed=4 unresolved=0"),
             "table should include concise ledger summary line"
+        );
+        assert!(
+            table.contains("checksum_verified=yes"),
+            "table proof header should include checksum verification status"
+        );
+        assert!(
+            table.contains("thin_pack=no"),
+            "table proof header should include thin-pack detection status"
+        );
+        assert!(
+            table.contains("baseline_resolutions=0"),
+            "table proof header should include baseline resolution counter"
         );
     }
 }

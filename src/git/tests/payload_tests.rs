@@ -112,6 +112,112 @@ fn verify_pack_payload_validates_trailer_checksum() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that payload parsing reads PACK offset from parsed bundle header rather than scanning for first PACK bytes.
+#[test]
+fn bundle_pack_offset_is_read_from_header_not_scanned() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("payload-pack-offset-from-header", false);
+    let original =
+        std::fs::read(&bundle_result.bundle_path).expect("must read fixture bundle bytes");
+    let marker_pos = original
+        .windows(6)
+        .position(|window| window == b"\n\nPACK")
+        .expect("fixture bundle should contain header terminator followed by PACK")
+        + 2;
+    let pack_data = &original[marker_pos..];
+
+    let mut rewritten = Vec::new();
+    rewritten.extend_from_slice(b"# v2 git bundle\n");
+    rewritten.extend_from_slice(format!("{tip_commit_id} refs/heads/PACK-main\n\n").as_bytes());
+    rewritten.extend_from_slice(pack_data);
+    let rewritten_path = repo_dir.join("header-pack-word.bundle");
+    std::fs::write(&rewritten_path, rewritten).expect("must write rewritten bundle header fixture");
+
+    let payload = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &rewritten_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect(
+        "payload parser should use pack offset after header terminator, not first PACK occurrence",
+    );
+    assert!(
+        payload.pack_proof.entries_declared > 0,
+        "rewritten bundle must still parse as valid payload pack"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload session and detail lookup do not require importing pack into a temporary bare repository.
+#[test]
+fn payload_session_does_not_require_temp_repo_for_detail_after_refactor() {
+    let repo_dir = temp_repo_dir("payload-session-no-temp-import-required");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let base_bytes = b"base\n";
+    let target_bytes = b"target\n";
+    let base_oid = repo
+        .blob(base_bytes)
+        .expect("must write baseline base blob");
+    let bundle_path = write_synthetic_external_ref_delta_bundle(
+        &repo_dir,
+        "external-ref-delta-no-temp-import.bundle",
+        base_oid,
+        base_bytes,
+        target_bytes,
+    )
+    .expect("must write synthetic external ref-delta bundle");
+
+    let session = open_payload_session_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::Baseline,
+    )
+    .expect(
+        "payload session should open with baseline resolution without requiring temp-repo import",
+    );
+    let payload = payload_audit_from_session(&session);
+    let target = payload
+        .objects
+        .first()
+        .expect("payload should contain at least one materialized object");
+    let detail = collect_payload_object_detail_for_session(&session, target.oid)
+        .expect("session detail lookup should resolve from verifier-owned materialized store");
+    assert!(
+        !detail.lines.is_empty(),
+        "materialized-store-backed detail lookup should render readable lines"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that delta materialization validates decompressed delta payload size against PACK header size.
+#[test]
+fn delta_entry_size_mismatch_blocks_with_entry_context() {
+    let repo_dir = temp_repo_dir("payload-delta-size-mismatch");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path =
+        write_synthetic_ofs_delta_size_mismatch_bundle(&repo_dir, "ofs-delta-size-mismatch.bundle")
+            .expect("must write synthetic ofs-delta mismatch bundle");
+    let error = verify_pack_payload_for_bundle_input(&bundle_path)
+        .expect_err("ofs-delta size mismatch should fail verification");
+    assert_eq!(
+        error.blocked_entry_idx,
+        Some(1),
+        "size mismatch should block on second entry (ofs-delta row)"
+    );
+    assert!(
+        error.reason.contains("ofs-delta payload size mismatch"),
+        "error should explicitly report ofs-delta payload size mismatch"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that pack-entry ledger length matches declared entry count and uses deterministic index ordering.
 #[test]
 fn pack_ledger_contains_exactly_declared_entry_count() {
@@ -417,6 +523,9 @@ fn transfer_allowed_false_when_materialized_less_than_declared() {
         2,
         1,
         1,
+        0,
+        true,
+        false,
         0,
         "sha1".to_string(),
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
@@ -761,6 +870,9 @@ fn paudit_schema_requires_transfer_gate_and_entry_counters() {
         "entries_materialized",
         "unique_objects_materialized",
         "duplicate_entry_count_materialized",
+        "checksum_verified",
+        "thin_pack_detected",
+        "baseline_resolutions_count",
         "transfer_allowed",
         "blocked_reason",
     ] {
@@ -849,6 +961,18 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
     assert_eq!(
         document.pack_proof.verification_status, "ok",
         "pack proof should emit explicit verification status"
+    );
+    assert!(
+        document.pack_proof.checksum_verified,
+        "pack proof should mark checksum verification as true for valid fixture"
+    );
+    assert!(
+        !document.pack_proof.thin_pack_detected,
+        "regular generated fixture should not require external baseline resolution"
+    );
+    assert_eq!(
+        document.pack_proof.baseline_resolutions_count, 0,
+        "regular generated fixture should report zero baseline resolutions"
     );
     assert_eq!(
         document.object_details.len(),
@@ -1125,6 +1249,14 @@ fn baseline_resolution_materializes_external_ref_delta_when_base_exists() {
         verification.proof.entries_materialized, verification.proof.entries_declared,
         "baseline-assisted resolution should materialize all declared entries"
     );
+    assert!(
+        verification.proof.thin_pack_detected,
+        "external baseline-resolved ref-delta should mark thin-pack dependency detection"
+    );
+    assert_eq!(
+        verification.proof.baseline_resolutions_count, 1,
+        "baseline-assisted resolution should count one baseline-resolved entry"
+    );
     assert_eq!(
         verification.ledger.entries[0].resolved_via,
         Some(ResolutionSource::Baseline),
@@ -1215,6 +1347,40 @@ fn strict_mode_blocks_when_unresolved_entries_remain() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that pack-only mode rejects external delta bases even when baseline repository contains the required base object.
+#[test]
+fn pack_only_mode_rejects_external_base_even_if_baseline_exists() {
+    let repo_dir = temp_repo_dir("payload-pack-only-rejects-baseline-available");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let base_bytes = b"base\n";
+    let target_bytes = b"target\n";
+    let base_oid = repo
+        .blob(base_bytes)
+        .expect("must write baseline base blob");
+    let bundle_path = write_synthetic_external_ref_delta_bundle(
+        &repo_dir,
+        "external-ref-delta-pack-only-reject.bundle",
+        base_oid,
+        base_bytes,
+        target_bytes,
+    )
+    .expect("must write synthetic external ref-delta bundle");
+
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
+    assert!(
+        result.is_err(),
+        "pack-only mode must reject external-base dependency even if baseline has matching object"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit remains robust when commit trees are omitted from pack and only available via prerequisites.
 #[test]
 fn collect_payload_audit_for_bundle_input_skips_missing_prerequisite_tree_context() {
@@ -1298,9 +1464,9 @@ fn write_synthetic_external_ref_delta_bundle(
     target_bytes: &[u8],
 ) -> anyhow::Result<std::path::PathBuf> {
     let mut pack_body = Vec::new();
-    let mut entry = encode_pack_entry_header(PackEntryKind::RefDelta, target_bytes.len());
-    entry.extend_from_slice(base_oid.as_bytes());
     let delta_bytes = encode_literal_delta(base_bytes.len(), target_bytes)?;
+    let mut entry = encode_pack_entry_header(PackEntryKind::RefDelta, delta_bytes.len());
+    entry.extend_from_slice(base_oid.as_bytes());
     entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
     pack_body.extend_from_slice(&entry);
 
@@ -1340,9 +1506,53 @@ fn write_synthetic_ofs_delta_bundle(
     let distance = second_entry_offset
         .checked_sub(base_entry_offset)
         .ok_or_else(|| anyhow::anyhow!("ofs-delta distance underflow"))?;
-    let mut second_entry = encode_pack_entry_header(PackEntryKind::OfsDelta, target_blob.len());
-    second_entry.extend_from_slice(&encode_ofs_delta_distance(distance));
     let delta_bytes = encode_literal_delta(base_blob.len(), target_blob)?;
+    let mut second_entry = encode_pack_entry_header(PackEntryKind::OfsDelta, delta_bytes.len());
+    second_entry.extend_from_slice(&encode_ofs_delta_distance(distance));
+    second_entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
+    pack_body.extend_from_slice(&second_entry);
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&pack_body);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+
+    let bundle_path = repo_dir.join(file_name);
+    std::fs::write(&bundle_path, bundle_bytes)?;
+    Ok(bundle_path)
+}
+
+fn write_synthetic_ofs_delta_size_mismatch_bundle(
+    repo_dir: &std::path::Path,
+    file_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let base_blob = b"base\n";
+    let target_blob = b"x\n";
+
+    let mut pack_body = Vec::new();
+    let mut first_entry = encode_pack_entry_header(PackEntryKind::Blob, base_blob.len());
+    first_entry.extend_from_slice(&zlib_compress(base_blob)?);
+    pack_body.extend_from_slice(&first_entry);
+
+    let second_entry_offset = 12 + pack_body.len();
+    let base_entry_offset = 12usize;
+    let distance = second_entry_offset
+        .checked_sub(base_entry_offset)
+        .ok_or_else(|| anyhow::anyhow!("ofs-delta distance underflow"))?;
+    let delta_bytes = encode_literal_delta(base_blob.len(), target_blob)?;
+    // Intentionally advertise wrong delta payload size (+1) to verify explicit PACK-header size validation.
+    let mut second_entry =
+        encode_pack_entry_header(PackEntryKind::OfsDelta, delta_bytes.len() + 1);
+    second_entry.extend_from_slice(&encode_ofs_delta_distance(distance));
     second_entry.extend_from_slice(&zlib_compress(&delta_bytes)?);
     pack_body.extend_from_slice(&second_entry);
 

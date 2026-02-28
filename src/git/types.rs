@@ -326,6 +326,12 @@ pub struct PayloadPackProof {
     pub unique_objects_materialized: usize,
     /// Duplicate count among materialized entries (`entries_materialized - unique_objects_materialized`).
     pub duplicate_entry_count_materialized: usize,
+    /// Whether computed checksum and trailer checksum matched.
+    pub checksum_verified: bool,
+    /// Whether external delta-base dependencies were detected while parsing.
+    pub thin_pack_detected: bool,
+    /// Number of entries resolved via baseline repository ODB.
+    pub baseline_resolutions_count: usize,
     /// Whether transfer is allowed by entry-materialization gate.
     pub transfer_allowed: bool,
     /// Optional blocked-transfer reason when gate is closed.
@@ -348,6 +354,9 @@ impl PayloadPackProof {
         entries_materialized: usize,
         unique_objects_materialized: usize,
         duplicate_entry_count_materialized: usize,
+        checksum_verified: bool,
+        thin_pack_detected: bool,
+        baseline_resolutions_count: usize,
         hash_algorithm: String,
         computed_pack_checksum: String,
         trailer_pack_checksum: String,
@@ -363,7 +372,9 @@ impl PayloadPackProof {
         };
 
         Self {
-            verification_status: if transfer_allowed {
+            verification_status: if !checksum_verified {
+                "failed".to_string()
+            } else if transfer_allowed {
                 "ok".to_string()
             } else {
                 "blocked".to_string()
@@ -376,6 +387,9 @@ impl PayloadPackProof {
             entries_materialized,
             unique_objects_materialized,
             duplicate_entry_count_materialized,
+            checksum_verified,
+            thin_pack_detected,
+            baseline_resolutions_count,
             transfer_allowed,
             blocked_reason,
             hash_algorithm,
@@ -470,6 +484,8 @@ pub struct PayloadPackVerification {
     pub ledger: PackEntryLedger,
     /// Deduplicated materialized objects derived from ledger result rows.
     pub materialized_index: MaterializedObjectIndex,
+    /// Verifier-owned materialized object content store keyed by object id.
+    pub materialized_store: MaterializedObjectStore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,6 +512,28 @@ pub struct MaterializedObjectRecord {
     pub size_bytes: usize,
     /// First ledger entry index where this object was observed.
     pub first_entry_idx: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Verifier-owned materialized object store for payload detail rendering.
+pub struct MaterializedObjectStore {
+    /// Materialized objects in deterministic OID order.
+    pub objects: Vec<MaterializedObjectData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// One materialized object payload entry retained by verifier.
+pub struct MaterializedObjectData {
+    /// Canonical object id.
+    pub oid: git2::Oid,
+    /// Canonical object kind.
+    pub kind: PayloadObjectKind,
+    /// Canonical uncompressed object size in bytes.
+    pub size_bytes: usize,
+    /// Stored bytes (full content or bounded preview when truncated).
+    pub content_bytes: Vec<u8>,
+    /// Whether `content_bytes` is truncated preview instead of full bytes.
+    pub content_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

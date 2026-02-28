@@ -22,7 +22,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(9),
+            Constraint::Length(11),
             Constraint::Min(8),
             Constraint::Length(2),
         ])
@@ -98,7 +98,8 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
                  status: {proof_status} | pack version: {}\n\
                  entries: {}/{} | materialized: {}/{}\n\
                  unique objects: {} | duplicates: {}\n\
-                 {transfer_line} | hash: {}\n\
+                 {transfer_line} | hash: {} | checksum: {}\n\
+                 thin pack: {} | baseline resolutions: {}\n\
                  computed checksum: {}\n\
                  trailer checksum: {}\n\
                  subview: {} (toggle: e)",
@@ -110,6 +111,17 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
                 proof.unique_objects_materialized,
                 proof.duplicate_entry_count_materialized,
                 proof.hash_algorithm,
+                if proof.checksum_verified {
+                    "ok"
+                } else {
+                    "failed"
+                },
+                if proof.thin_pack_detected {
+                    "yes"
+                } else {
+                    "no"
+                },
+                proof.baseline_resolutions_count,
                 proof.computed_pack_checksum,
                 proof.trailer_pack_checksum,
                 state.payload_sub_view_label()

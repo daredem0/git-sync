@@ -39,6 +39,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         pack_entries_materialized,
         pack_transfer_status,
         pack_checksum_status,
+        pack_thin_status,
+        pack_baseline_resolutions,
     ) = render_pack_proof_summary(&model.payload);
     let general_left_lines = vec![
         format!("tool version: {}", overview.app_version),
@@ -63,6 +65,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         format!("pack entries materialized: {pack_entries_materialized}"),
         format!("transfer gate: {pack_transfer_status}"),
         format!("pack checksum: {pack_checksum_status}"),
+        format!("thin pack detected: {pack_thin_status}"),
+        format!("baseline resolutions: {pack_baseline_resolutions}"),
     ];
     let general_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -135,7 +139,9 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
 }
 
 /// Returns concise pack-proof status lines for overview's general section.
-fn render_pack_proof_summary(payload: &PayloadModel) -> (String, String, String, String, String) {
+fn render_pack_proof_summary(
+    payload: &PayloadModel,
+) -> (String, String, String, String, String, String, String) {
     match payload {
         PayloadModel::Ok(audit) => {
             let proof = &audit.pack_proof;
@@ -162,14 +168,36 @@ fn render_pack_proof_summary(payload: &PayloadModel) -> (String, String, String,
                         .unwrap_or("entries not fully materialized")
                 )
             };
-            let checksum = if checksums_match { "match" } else { "mismatch" }.to_string();
-            (status, parsed, materialized, transfer, checksum)
+            let checksum = if proof.checksum_verified && checksums_match {
+                "match"
+            } else {
+                "mismatch"
+            }
+            .to_string();
+            let thin = if proof.thin_pack_detected {
+                "yes"
+            } else {
+                "no"
+            }
+            .to_string();
+            let baseline_resolutions = proof.baseline_resolutions_count.to_string();
+            (
+                status,
+                parsed,
+                materialized,
+                transfer,
+                checksum,
+                thin,
+                baseline_resolutions,
+            )
         }
         PayloadModel::Failed(err) => (
             format!("FAILED (payload unavailable: {err})"),
             "-".to_string(),
             "-".to_string(),
             "blocked".to_string(),
+            "-".to_string(),
+            "-".to_string(),
             "-".to_string(),
         ),
     }

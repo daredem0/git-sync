@@ -128,6 +128,9 @@
         "entries_materialized",
         "unique_objects_materialized",
         "duplicate_entry_count_materialized",
+        "checksum_verified",
+        "thin_pack_detected",
+        "baseline_resolutions_count",
         "transfer_allowed",
         "blocked_reason",
         "hash_algorithm",
@@ -172,6 +175,16 @@
           "minimum": 0
         },
         "duplicate_entry_count_materialized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checksum_verified": {
+          "type": "boolean"
+        },
+        "thin_pack_detected": {
+          "type": "boolean"
+        },
+        "baseline_resolutions_count": {
           "type": "integer",
           "minimum": 0
         },
