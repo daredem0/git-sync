@@ -12,12 +12,14 @@ mod util;
 pub use bundle::PayloadSession;
 #[allow(unused_imports)]
 pub use bundle::{
-    build_payload_audit_document_for_bundle_input, collect_commit_file_patch_for_bundle_input,
-    collect_head_audit_entries_for_bundle_input, collect_payload_audit_for_bundle_input,
-    collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
-    create_bundle, create_bundle_with_options, inspect_bundle, open_payload_session,
-    payload_audit_document_from_session, payload_audit_from_session, receive_bundle_input,
-    receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
+    build_payload_audit_document_for_bundle_input,
+    build_payload_audit_document_for_bundle_input_with_ledger_mode,
+    collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
+    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
+    collect_payload_object_detail_for_session, create_bundle, create_bundle_with_options,
+    inspect_bundle, open_payload_session, payload_audit_document_from_session,
+    payload_audit_document_from_session_with_ledger_mode, payload_audit_from_session,
+    receive_bundle_input, receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
     verify_pack_payload_with_ledger,
 };
 #[allow(unused_imports)]
@@ -31,11 +33,12 @@ pub use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
     OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAudit,
-    PayloadAuditDocument, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
+    PayloadAuditDocument, PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead,
+    PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackEntry,
     PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditError,
-    PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ReceiveBundleOptions,
-    ReceiveBundleResult, ResolutionSource,
+    PayloadAuditLedgerMode, PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry,
+    PayloadObjectKind, PayloadPackProof, PayloadPackVerification, PayloadTransportEntry,
+    ReceiveBundleOptions, ReceiveBundleResult, ResolutionSource,
 };
 
 #[cfg(test)]

@@ -43,6 +43,8 @@ pub enum Command {
         verify_metadata: bool,
         #[arg(long, value_enum)]
         format: Option<OutputFormat>,
+        #[arg(long, value_enum, default_value_t = PayloadLedgerMode::Summary)]
+        payload_ledger: PayloadLedgerMode,
     },
     /// Opens the interactive terminal UI audit view.
     Ui {
@@ -75,6 +77,15 @@ pub enum OutputFormat {
     Table,
     /// Pretty-printed JSON payload-audit document.
     Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+/// Entry-ledger export mode used by `audit --format json`.
+pub enum PayloadLedgerMode {
+    /// Emit bounded first/last/unresolved ledger subsets.
+    Summary,
+    /// Emit full parsed entry-ledger rows.
+    Full,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

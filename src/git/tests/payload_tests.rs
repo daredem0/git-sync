@@ -670,9 +670,9 @@ fn open_payload_session_allows_detail_lookup_without_bundle_file() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
-// Verifies that payload-audit schema file exists and declares phase-2 required top-level fields.
+// Verifies that payload-audit schema requires phase-5 transfer-gate counters and entry-ledger section.
 #[test]
-fn payload_audit_schema_declares_phase2_required_fields() {
+fn paudit_schema_requires_transfer_gate_and_entry_counters() {
     let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("schemas")
         .join("sync.bundle.paudit.schema.json");
@@ -699,6 +699,7 @@ fn payload_audit_schema_declares_phase2_required_fields() {
         "heads",
         "transport_entries",
         "pack_proof",
+        "entry_ledger",
         "pack_summary",
         "pack_objects",
         "object_details",
@@ -718,6 +719,43 @@ fn payload_audit_schema_declares_phase2_required_fields() {
             .any(|value| value.as_str() == Some("verification_status")),
         "pack_proof required field list must include verification_status"
     );
+    for field in [
+        "entries_declared",
+        "entries_parsed",
+        "entries_materialized",
+        "unique_objects_materialized",
+        "duplicate_entry_count_materialized",
+        "transfer_allowed",
+        "blocked_reason",
+    ] {
+        assert!(
+            pack_proof_required
+                .iter()
+                .any(|value| value.as_str() == Some(field)),
+            "pack_proof required field list must include '{field}'"
+        );
+    }
+
+    let entry_ledger_required = schema_json["properties"]["entry_ledger"]["required"]
+        .as_array()
+        .expect("entry_ledger schema must define required field list");
+    for field in [
+        "mode",
+        "declared_entries",
+        "parsed_entries",
+        "unresolved_entries",
+        "first_entries",
+        "last_entries",
+        "unresolved_entry_rows",
+        "entries",
+    ] {
+        assert!(
+            entry_ledger_required
+                .iter()
+                .any(|value| value.as_str() == Some(field)),
+            "entry_ledger required field list must include '{field}'"
+        );
+    }
 }
 
 // Verifies that payload-audit JSON document builder emits required metadata and consistent summary counters.
@@ -776,6 +814,81 @@ fn build_payload_audit_document_for_bundle_input_emits_phase2_shape() {
         document.object_details.len(),
         document.pack_objects.len(),
         "payload-audit object_details should be available for all pack objects"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that summary-mode payload JSON emits only ledger subset rows and omits full entry list.
+#[test]
+fn audit_json_summary_mode_includes_required_ledger_subset() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-summary-ledger", false);
+
+    let document = build_payload_audit_document_for_bundle_input_with_ledger_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Summary,
+    )
+    .expect("must build payload-audit summary-ledger document");
+
+    assert_eq!(
+        document.entry_ledger.mode, "summary",
+        "summary mode should encode entry_ledger.mode as 'summary'"
+    );
+    assert!(
+        document.entry_ledger.entries.is_empty(),
+        "summary mode should not emit full ledger entries array"
+    );
+    assert!(
+        !document.entry_ledger.first_entries.is_empty()
+            || !document.entry_ledger.last_entries.is_empty(),
+        "summary mode should emit at least one first/last ledger subset row"
+    );
+    assert_eq!(
+        document.entry_ledger.parsed_entries, document.pack_proof.entries_parsed,
+        "entry ledger parsed counter should match pack proof parsed counter"
+    );
+    assert_eq!(
+        document.entry_ledger.declared_entries, document.pack_proof.entries_declared,
+        "entry ledger declared counter should match pack proof declared counter"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that full-mode payload JSON emits all parsed ledger rows in deterministic index order.
+#[test]
+fn audit_json_full_mode_includes_all_entry_rows() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-full-ledger", false);
+
+    let document = build_payload_audit_document_for_bundle_input_with_ledger_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::Full,
+    )
+    .expect("must build payload-audit full-ledger document");
+
+    assert_eq!(
+        document.entry_ledger.mode, "full",
+        "full mode should encode entry_ledger.mode as 'full'"
+    );
+    assert_eq!(
+        document.entry_ledger.entries.len(),
+        document.pack_proof.entries_parsed,
+        "full mode should include all parsed ledger rows"
+    );
+    let expected_indices = (0..document.entry_ledger.entries.len()).collect::<Vec<_>>();
+    let actual_indices = document
+        .entry_ledger
+        .entries
+        .iter()
+        .map(|entry| entry.idx)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_indices, expected_indices,
+        "full-mode ledger rows should retain deterministic stream index ordering"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

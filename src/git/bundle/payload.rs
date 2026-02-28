@@ -5,10 +5,11 @@ use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::types::{
     BundleInspection, MaterializedObjectIndex, MaterializedObjectRecord, PackEntryBaseRef,
     PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAudit, PayloadAuditDocument,
-    PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackObject,
-    PayloadAuditDocumentTransportEntry, PayloadAuditError, PayloadAuditPackSummary,
-    PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind, PayloadPackProof,
-    PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
+    PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
+    PayloadAuditDocumentPackEntry, PayloadAuditDocumentPackObject,
+    PayloadAuditDocumentTransportEntry, PayloadAuditError, PayloadAuditLedgerMode,
+    PayloadAuditPackSummary, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
+    PayloadPackProof, PayloadPackVerification, PayloadTransportEntry, ResolutionSource,
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
@@ -25,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
 const BLOB_PATH_SCAN_LIMIT: usize = 12;
+const LEDGER_SUMMARY_EDGE_COUNT: usize = 20;
 
 /// Reusable imported payload session for fast object-detail queries.
 #[derive(Debug)]
@@ -64,12 +66,31 @@ pub fn collect_payload_audit_for_bundle_input(
 ///
 /// Returns an error when bundle import/inspection fails or object-detail
 /// materialization fails.
+#[allow(dead_code)]
 pub fn build_payload_audit_document_for_bundle_input(
     bundle_input_path: &Path,
     repo_path: &Path,
 ) -> Result<PayloadAuditDocument> {
+    build_payload_audit_document_for_bundle_input_with_ledger_mode(
+        bundle_input_path,
+        repo_path,
+        PayloadAuditLedgerMode::Summary,
+    )
+}
+
+/// Builds a serialized payload-audit JSON document with explicit entry-ledger mode.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails or object-detail
+/// materialization fails.
+pub fn build_payload_audit_document_for_bundle_input_with_ledger_mode(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+    ledger_mode: PayloadAuditLedgerMode,
+) -> Result<PayloadAuditDocument> {
     let session = open_payload_session(bundle_input_path, repo_path)?;
-    payload_audit_document_from_session(&session)
+    payload_audit_document_from_session_with_ledger_mode(&session, ledger_mode)
 }
 
 /// Collects detail lines for one selected payload object.
@@ -189,8 +210,21 @@ pub fn payload_audit_from_session(session: &PayloadSession) -> PayloadAudit {
 /// # Errors
 ///
 /// Returns an error when object detail collection fails for any payload object.
+#[allow(dead_code)]
 pub fn payload_audit_document_from_session(
     session: &PayloadSession,
+) -> Result<PayloadAuditDocument> {
+    payload_audit_document_from_session_with_ledger_mode(session, PayloadAuditLedgerMode::Summary)
+}
+
+/// Builds a serialized payload-audit JSON document from a reusable session using a selected ledger mode.
+///
+/// # Errors
+///
+/// Returns an error when object detail collection fails for any payload object.
+pub fn payload_audit_document_from_session_with_ledger_mode(
+    session: &PayloadSession,
+    ledger_mode: PayloadAuditLedgerMode,
 ) -> Result<PayloadAuditDocument> {
     let mut pack_objects = Vec::<PayloadAuditDocumentPackObject>::new();
     let mut object_details = Vec::<PayloadAuditDocumentObjectDetail>::new();
@@ -285,10 +319,78 @@ pub fn payload_audit_document_from_session(
             })
             .collect(),
         pack_proof: session.payload.pack_proof.clone(),
+        entry_ledger: build_document_entry_ledger(&session.payload.entry_ledger, ledger_mode),
         pack_summary: summary,
         pack_objects,
         object_details,
     })
+}
+
+/// Builds serialized entry-ledger export section according to requested mode.
+fn build_document_entry_ledger(
+    ledger: &PackEntryLedger,
+    mode: PayloadAuditLedgerMode,
+) -> PayloadAuditDocumentEntryLedger {
+    let unresolved_entry_rows = ledger
+        .entries
+        .iter()
+        .filter(|entry| !entry.resolved)
+        .map(document_pack_entry_row)
+        .collect::<Vec<_>>();
+    let parsed_entries = ledger.entries.len();
+    let declared_entries = ledger.declared_entry_count;
+    let unresolved_entries = unresolved_entry_rows.len();
+    let first_entries = ledger
+        .entries
+        .iter()
+        .take(LEDGER_SUMMARY_EDGE_COUNT)
+        .map(document_pack_entry_row)
+        .collect::<Vec<_>>();
+    let last_entries = ledger
+        .entries
+        .iter()
+        .skip(parsed_entries.saturating_sub(LEDGER_SUMMARY_EDGE_COUNT))
+        .map(document_pack_entry_row)
+        .collect::<Vec<_>>();
+    let entries = match mode {
+        PayloadAuditLedgerMode::Summary => Vec::new(),
+        PayloadAuditLedgerMode::Full => ledger
+            .entries
+            .iter()
+            .map(document_pack_entry_row)
+            .collect::<Vec<_>>(),
+    };
+
+    PayloadAuditDocumentEntryLedger {
+        mode: payload_ledger_mode_code(mode).to_string(),
+        declared_entries,
+        parsed_entries,
+        unresolved_entries,
+        first_entries,
+        last_entries,
+        unresolved_entry_rows,
+        entries,
+    }
+}
+
+/// Converts one in-memory ledger row into serialized payload-audit document row.
+fn document_pack_entry_row(entry: &PackEntryRecord) -> PayloadAuditDocumentPackEntry {
+    PayloadAuditDocumentPackEntry {
+        idx: entry.idx,
+        offset: entry.offset,
+        kind: payload_entry_kind_code(entry.kind).to_string(),
+        out_size: entry.out_size,
+        base: entry.base_ref.as_ref().map(payload_entry_base_ref_code),
+        result_oid: entry.result_oid.map(|oid| oid.to_string()),
+        result_kind: entry
+            .result_kind
+            .map(|kind| payload_kind_code(kind).to_string()),
+        resolved: entry.resolved,
+        resolved_via: entry
+            .resolved_via
+            .map(|value| resolution_source_code(value).to_string()),
+        note: entry.note.clone(),
+    }
 }
 
 /// Collects detail lines for one selected payload object from a reusable session.
@@ -1418,6 +1520,48 @@ fn payload_kind_code(kind: PayloadObjectKind) -> &'static str {
         PayloadObjectKind::Blob => "blob",
         PayloadObjectKind::Tag => "tag",
         PayloadObjectKind::Unknown => "unknown",
+    }
+}
+
+/// Returns stable string code for payload ledger export mode.
+fn payload_ledger_mode_code(mode: PayloadAuditLedgerMode) -> &'static str {
+    match mode {
+        PayloadAuditLedgerMode::Summary => "summary",
+        PayloadAuditLedgerMode::Full => "full",
+    }
+}
+
+/// Returns stable string code for pack entry kinds.
+fn payload_entry_kind_code(kind: PackEntryKind) -> &'static str {
+    match kind {
+        PackEntryKind::Commit => "commit",
+        PackEntryKind::Tree => "tree",
+        PackEntryKind::Blob => "blob",
+        PackEntryKind::Tag => "tag",
+        PackEntryKind::OfsDelta => "ofs-delta",
+        PackEntryKind::RefDelta => "ref-delta",
+    }
+}
+
+/// Returns a compact code for pack entry base references.
+fn payload_entry_base_ref_code(base_ref: &PackEntryBaseRef) -> String {
+    match base_ref {
+        PackEntryBaseRef::BaseOffset {
+            distance,
+            base_offset,
+        } => match base_offset {
+            Some(offset) => format!("ofs:{distance}@{offset}"),
+            None => format!("ofs:{distance}"),
+        },
+        PackEntryBaseRef::BaseOid(oid) => format!("oid:{oid}"),
+    }
+}
+
+/// Returns stable string code for pack-entry resolution source.
+fn resolution_source_code(source: ResolutionSource) -> &'static str {
+    match source {
+        ResolutionSource::InPack => "in-pack",
+        ResolutionSource::Baseline => "baseline",
     }
 }
 

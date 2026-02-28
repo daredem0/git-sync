@@ -18,6 +18,7 @@
     "heads",
     "transport_entries",
     "pack_proof",
+    "entry_ledger",
     "pack_summary",
     "pack_objects",
     "object_details"
@@ -122,6 +123,13 @@
         "pack_version",
         "declared_object_count",
         "processed_object_count",
+        "entries_declared",
+        "entries_parsed",
+        "entries_materialized",
+        "unique_objects_materialized",
+        "duplicate_entry_count_materialized",
+        "transfer_allowed",
+        "blocked_reason",
         "hash_algorithm",
         "computed_pack_checksum",
         "trailer_pack_checksum"
@@ -131,6 +139,7 @@
           "type": "string",
           "enum": [
             "ok",
+            "blocked",
             "failed"
           ]
         },
@@ -146,6 +155,35 @@
           "type": "integer",
           "minimum": 0
         },
+        "entries_declared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries_parsed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries_materialized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_objects_materialized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duplicate_entry_count_materialized": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transfer_allowed": {
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "hash_algorithm": {
           "type": "string",
           "enum": [
@@ -159,6 +197,65 @@
         "trailer_pack_checksum": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "entry_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "declared_entries",
+        "parsed_entries",
+        "unresolved_entries",
+        "first_entries",
+        "last_entries",
+        "unresolved_entry_rows",
+        "entries"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "full"
+          ]
+        },
+        "declared_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parsed_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pack_entry"
+          }
+        },
+        "last_entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pack_entry"
+          }
+        },
+        "unresolved_entry_rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pack_entry"
+          }
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pack_entry"
+          }
         }
       }
     },
@@ -329,6 +426,94 @@
         "tag",
         "unknown"
       ]
+    },
+    "pack_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "idx",
+        "offset",
+        "kind",
+        "out_size",
+        "base",
+        "result_oid",
+        "result_kind",
+        "resolved",
+        "resolved_via",
+        "note"
+      ],
+      "properties": {
+        "idx": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "commit",
+            "tree",
+            "blob",
+            "tag",
+            "ofs-delta",
+            "ref-delta"
+          ]
+        },
+        "out_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_oid": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "result_kind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "commit",
+            "tree",
+            "blob",
+            "tag",
+            "unknown",
+            null
+          ]
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "resolved_via": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "in-pack",
+            "baseline",
+            null
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     }
   }
 }
