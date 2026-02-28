@@ -74,6 +74,22 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include pack checksum match status in general section"
     );
     assert!(
+        output.contains("bundle version: v2"),
+        "overview render should include payload bundle version in general section"
+    );
+    assert!(
+        output.contains("advertised heads: 1"),
+        "overview render should include advertised head count in general section"
+    );
+    assert!(
+        output.contains("transport entries: 2"),
+        "overview render should include transport-entry count in general section"
+    );
+    assert!(
+        output.contains("payload objects: 2"),
+        "overview render should include payload-object count in general section"
+    );
+    assert!(
         output.contains("bundle fully reachable from heads: no"),
         "overview render should include bundle-to-history reachability status"
     );

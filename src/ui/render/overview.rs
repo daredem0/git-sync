@@ -46,6 +46,12 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         pack_baseline_resolutions,
         bundle_reachability_status,
     ) = render_pack_proof_summary(&model.payload);
+    let (
+        payload_bundle_version,
+        payload_heads_count,
+        payload_transport_entry_count,
+        payload_object_count,
+    ) = render_general_payload_summary(&model.payload);
     let general_left_lines = vec![
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
@@ -54,6 +60,10 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
             "base_ref: {} | tip_ref: {}",
             overview.base_ref, overview.tip_ref
         ),
+        format!("bundle version: {payload_bundle_version}"),
+        format!("advertised heads: {payload_heads_count}"),
+        format!("transport entries: {payload_transport_entry_count}"),
+        format!("payload objects: {payload_object_count}"),
     ];
     let general_right_lines = vec![
         format!(
@@ -222,6 +232,33 @@ fn render_pack_proof_summary(
             "-".to_string(),
             "-".to_string(),
             "blocked".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+        ),
+    }
+}
+
+/// Returns general payload context lines for the overview's left-side General panel.
+fn render_general_payload_summary(
+    payload: &PayloadModel,
+) -> (String, String, String, String) {
+    match payload {
+        PayloadModel::Ok(audit) => {
+            let version = match audit.bundle_version {
+                crate::git::BundleVersion::V2 => "v2",
+                crate::git::BundleVersion::V3 => "v3",
+            }
+            .to_string();
+            (
+                version,
+                audit.heads.len().to_string(),
+                audit.transport_entries.len().to_string(),
+                audit.objects.len().to_string(),
+            )
+        }
+        PayloadModel::Failed(_) => (
             "-".to_string(),
             "-".to_string(),
             "-".to_string(),
