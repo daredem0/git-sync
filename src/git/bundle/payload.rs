@@ -55,17 +55,24 @@ pub fn collect_payload_object_detail_for_bundle_input(
     with_imported_payload_repo(
         bundle_input_path,
         repo_path,
-        |repo, _inspection, _transport_entries| {
+        |repo, inspection, _transport_entries| {
             let odb = repo.odb()?;
             let (size_bytes, kind) = odb.read_header(object_id)?;
             let kind = payload_kind_from_git(kind);
             let object = repo.find_object(object_id, None)?;
-            let lines = object_detail_lines(&object)?;
+            let (lines, is_text_blob) = object_detail_lines(&object)?;
+            let syntax_path_hint = if is_text_blob {
+                find_blob_path_hint(repo, &inspection.heads, object_id)?
+                    .or_else(|| Some("blob.txt".to_string()))
+            } else {
+                None
+            };
 
             Ok(PayloadObjectDetail {
                 oid: object_id,
                 kind,
                 size_bytes,
+                syntax_path_hint,
                 lines,
             })
         },
@@ -309,7 +316,10 @@ fn payload_kind_from_git(kind: git2::ObjectType) -> PayloadObjectKind {
 }
 
 /// Renders object-specific detail lines for payload drill-down view.
-fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
+///
+/// Returns `(lines, is_text_blob)` where `is_text_blob` is `true` only for
+/// UTF-8 blob content that can be syntax highlighted.
+fn object_detail_lines(object: &git2::Object<'_>) -> Result<(Vec<String>, bool)> {
     match object.kind() {
         Some(git2::ObjectType::Commit) => {
             let commit = object.peel_to_commit()?;
@@ -343,7 +353,7 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
                     .lines()
                     .map(str::to_string),
             );
-            Ok(lines)
+            Ok((lines, false))
         }
         Some(git2::ObjectType::Tree) => {
             let tree = object.peel_to_tree()?;
@@ -366,7 +376,7 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
                     entry.name().unwrap_or("<invalid-utf8>")
                 ));
             }
-            Ok(lines)
+            Ok((lines, false))
         }
         Some(git2::ObjectType::Blob) => {
             let blob = object.peel_to_blob()?;
@@ -378,7 +388,7 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
                     String::new(),
                 ];
                 lines.extend(text.lines().map(str::to_string));
-                return Ok(lines);
+                return Ok((lines, true));
             }
 
             let preview_len = bytes.len().min(256);
@@ -397,7 +407,7 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
                         .join(" "),
                 );
             }
-            Ok(lines)
+            Ok((lines, false))
         }
         Some(git2::ObjectType::Tag) => {
             let tag = object.peel_to_tag()?;
@@ -412,13 +422,72 @@ fn object_detail_lines(object: &git2::Object<'_>) -> Result<Vec<String>> {
                     .lines()
                     .map(str::to_string),
             );
-            Ok(lines)
+            Ok((lines, false))
         }
-        _ => Ok(vec![
-            format!("object {}", object.id()),
-            "unsupported object type for detail rendering".to_string(),
-        ]),
+        _ => Ok((
+            vec![
+                format!("object {}", object.id()),
+                "unsupported object type for detail rendering".to_string(),
+            ],
+            false,
+        )),
     }
+}
+
+/// Finds one reachable tree path for a blob object id to use as syntax hint.
+fn find_blob_path_hint(
+    repo: &git2::Repository,
+    heads: &[crate::git::BundleHead],
+    blob_oid: git2::Oid,
+) -> Result<Option<String>> {
+    let mut seen_trees = HashSet::new();
+    for head in heads {
+        let Ok(commit) = repo.find_commit(head.oid) else {
+            continue;
+        };
+        if let Some(path) =
+            find_blob_in_tree(repo, commit.tree_id(), "", blob_oid, &mut seen_trees)?
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// Recursively searches a tree for a blob object id and returns first matching path.
+fn find_blob_in_tree(
+    repo: &git2::Repository,
+    tree_id: git2::Oid,
+    prefix: &str,
+    blob_oid: git2::Oid,
+    seen_trees: &mut HashSet<git2::Oid>,
+) -> Result<Option<String>> {
+    if !seen_trees.insert(tree_id) {
+        return Ok(None);
+    }
+    let tree = repo.find_tree(tree_id)?;
+
+    for entry in &tree {
+        let name = entry.name().unwrap_or("<invalid-utf8>");
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        match entry.kind() {
+            Some(git2::ObjectType::Blob) if entry.id() == blob_oid => return Ok(Some(path)),
+            Some(git2::ObjectType::Tree) => {
+                if let Some(found) =
+                    find_blob_in_tree(repo, entry.id(), &path, blob_oid, seen_trees)?
+                {
+                    return Ok(Some(found));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(None)
 }
 
 struct TempBareRepo {

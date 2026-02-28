@@ -164,6 +164,8 @@ pub struct PayloadObjectDetail {
     pub kind: PayloadObjectKind,
     /// Object size in bytes.
     pub size_bytes: usize,
+    /// Optional path-like hint used for syntax selection of textual blob content.
+    pub syntax_path_hint: Option<String>,
     /// Pre-rendered textual lines for the object detail view.
     pub lines: Vec<String>,
 }

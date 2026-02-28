@@ -3,8 +3,9 @@
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
 use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};
-use super::super::types::{DiffViewState, MainView};
+use super::super::types::{DiffViewState, MainView, PayloadModel};
 use super::support::*;
+use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
 use ratatui::text::Line;
 
@@ -242,6 +243,35 @@ fn handle_key_press_esc_closes_payload_object_detail_view() {
     assert!(
         state.payload_object_view.is_none(),
         "Esc should close payload object detail view"
+    );
+}
+
+// Verifies that payload object detail uses syntax-highlighted rendering for textual blob objects.
+#[test]
+fn open_selected_payload_object_for_text_blob_sets_syntax_name() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    let PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    let blob_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("fixture payload should include at least one blob object");
+    state.payload_selected_index = blob_index;
+
+    state.open_selected_payload_object(&model);
+    let detail = state
+        .payload_object_view
+        .as_ref()
+        .expect("payload object detail should open for selected blob object");
+    assert!(
+        !detail.syntax_name.is_empty(),
+        "payload text blob detail should record selected syntax name"
     );
 }
 

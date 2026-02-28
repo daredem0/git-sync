@@ -89,6 +89,7 @@ pub(crate) struct DiffViewState {
 pub(crate) struct PayloadObjectViewState {
     pub(crate) oid: git2::Oid,
     pub(crate) kind: git::PayloadObjectKind,
+    pub(crate) syntax_name: String,
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) max_line_width: usize,
     pub(crate) scroll_y: usize,

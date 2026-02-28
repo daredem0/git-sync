@@ -2,8 +2,13 @@
 
 use crate::git;
 use crate::ui::format::single_line_error;
-use crate::ui::types::{AppState, AuditModel, PayloadModel, PayloadObjectViewState};
-use ratatui::text::Line;
+use crate::ui::types::{
+    AppState, AuditModel, PayloadModel, PayloadObjectViewState, SyntaxHighlighter,
+};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::FontStyle;
 
 impl AppState {
     /// Returns `true` when payload object detail view is open.
@@ -53,15 +58,28 @@ impl AppState {
             selected.oid,
         ) {
             Ok(detail) => {
-                let lines = detail
-                    .lines
-                    .into_iter()
-                    .map(Line::from)
-                    .collect::<Vec<Line<'static>>>();
+                let (lines, syntax_name) =
+                    if let Some(path_hint) = detail.syntax_path_hint.as_deref() {
+                        render_payload_text_with_syntax(
+                            &detail.lines,
+                            path_hint,
+                            &model.syntax_highlighter,
+                        )
+                    } else {
+                        (
+                            detail
+                                .lines
+                                .iter()
+                                .map(|line| Line::from(line.to_string()))
+                                .collect::<Vec<Line<'static>>>(),
+                            "none".to_string(),
+                        )
+                    };
                 let max_line_width = lines.iter().map(|line| line.width()).max().unwrap_or(0);
                 self.payload_object_view = Some(PayloadObjectViewState {
                     oid: detail.oid,
                     kind: detail.kind,
+                    syntax_name,
                     lines,
                     max_line_width,
                     scroll_y: 0,
@@ -115,4 +133,71 @@ impl AppState {
             view.scroll_y = 0;
         }
     }
+}
+
+/// Renders plain text lines with syntax highlighting based on a path hint.
+fn render_payload_text_with_syntax(
+    lines: &[String],
+    path_hint: &str,
+    highlighter: &SyntaxHighlighter,
+) -> (Vec<Line<'static>>, String) {
+    let (syntax, syntax_name) = highlighter.resolve_syntax_for_path(path_hint);
+    let mut syntax_state = HighlightLines::new(syntax, &highlighter.theme);
+    let mut rendered = Vec::new();
+
+    for raw_line in lines {
+        let mut highlight_input = String::with_capacity(raw_line.len() + 1);
+        highlight_input.push_str(raw_line);
+        highlight_input.push('\n');
+        let spans = match syntax_state.highlight_line(&highlight_input, &highlighter.syntax_set) {
+            Ok(regions) if !regions.is_empty() => {
+                let last = regions.len() - 1;
+                let mut spans = Vec::new();
+                for (index, (style, segment)) in regions.into_iter().enumerate() {
+                    let text = if index == last {
+                        segment.strip_suffix('\n').unwrap_or(segment)
+                    } else {
+                        segment
+                    };
+                    if text.is_empty() {
+                        continue;
+                    }
+                    spans.push(Span::styled(
+                        text.to_string(),
+                        syntect_style_to_ratatui(style),
+                    ));
+                }
+                if spans.is_empty() {
+                    vec![Span::raw(String::new())]
+                } else {
+                    spans
+                }
+            }
+            _ => vec![Span::raw(raw_line.to_string())],
+        };
+        rendered.push(Line::from(spans));
+    }
+
+    (rendered, syntax_name)
+}
+
+/// Converts a syntect style span into an equivalent ratatui style.
+fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> Style {
+    let mut result = Style::default().fg(Color::Rgb(
+        style.foreground.r,
+        style.foreground.g,
+        style.foreground.b,
+    ));
+
+    if style.font_style.contains(FontStyle::BOLD) {
+        result = result.add_modifier(Modifier::BOLD);
+    }
+    if style.font_style.contains(FontStyle::ITALIC) {
+        result = result.add_modifier(Modifier::ITALIC);
+    }
+    if style.font_style.contains(FontStyle::UNDERLINE) {
+        result = result.add_modifier(Modifier::UNDERLINED);
+    }
+
+    result
 }

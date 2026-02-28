@@ -188,9 +188,11 @@ fn render_payload_object_detail(frame: &mut Frame<'_>, state: &AppState) {
     let header = Paragraph::new(format!(
         "Payload Object Detail\n\
          oid: {}\n\
-         type: {}",
+         type: {}\n\
+         syntax: {}",
         view.oid,
-        payload_kind_label(view.kind)
+        payload_kind_label(view.kind),
+        view.syntax_name
     ))
     .block(Block::default().borders(Borders::ALL).title("git-sync"));
     frame.render_widget(header, chunks[0]);
