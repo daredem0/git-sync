@@ -119,7 +119,8 @@ Table output:
 git-sync audit \
   --repo /path/to/repo \
   --bundle /path/to/sync.bundle.zip \
-  --format table
+  --format table \
+  --resolve pack-only
 ```
 
 JSON output:
@@ -128,13 +129,27 @@ JSON output:
 git-sync audit \
   --repo /path/to/repo \
   --bundle /path/to/sync.bundle.zip \
-  --format json
+  --format json \
+  --payload-ledger summary \
+  --resolve pack-only
+```
+
+Full ledger JSON output:
+
+```bash
+git-sync audit \
+  --repo /path/to/repo \
+  --bundle /path/to/sync.bundle.zip \
+  --format json \
+  --payload-ledger full \
+  --resolve baseline
 ```
 
 What this reports:
 - transport entries (`name`, `size_bytes`, `sha256`)
-- PACK proof metrics (`verification_status`, declared/processed counts, checksum fields)
-- pack object inventory and per-object details
+- PACK proof metrics (`entries_declared`, `entries_parsed`, `entries_materialized`, transfer gate status, checksum fields)
+- entry-ledger truth section (`entry_ledger`) in summary or full mode
+- materialized object inventory and per-object details
 
 ### 6) Receive into target repository
 
@@ -184,7 +199,7 @@ Preview:
 │repo: . (git-sync)                              ││dry-run applicability: bundle can be applied without │
 │bundle:                                         ││conflicts                                            │
 │../git-sync-examples/sync_local.bundle.zip      ││pack proof: OK                                       │
-│base_ref: sync/last | tip_ref: -                ││pack objects processed: 153/153                      │
+│base_ref: sync/last | tip_ref: -                ││pack entries parsed: 153/153                         │
 │                                                ││pack checksum: match                                 │
 └────────────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
 ┌Heads To Import (bundle v2)──────────────────┐┌Would Change (selected head: refs/heads/main)───────────┐
@@ -282,22 +297,27 @@ j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | H
 Esc back | ? help | q quit                                                                                                                     
 ```
 
-### Payload view: transport entries + pack-object inventory
+### Payload view: transport entries + payload proof/data views
 
 This is the authoritative payload-oriented page. It shows:
 - all non-pack transport entries in the `.zip` (name, size, SHA256)
-- all imported pack objects (OID, type, size, reachable flag)
+- `Objects` subview: materialized objects (derived convenience view)
+- `Entries` subview: raw PACK entry ledger rows (authoritative proof view)
+- entry/materialization counters and transfer gate status
 - a right-side preview of the currently selected object
-- sorting modes (`canonical`, `context`) toggled with `s`
+- sorting modes (`canonical`, `context`) toggled with `s` in `Objects`
+- subview toggle with `e` (`Objects` <-> `Entries`)
 
 ```text
 ┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
 │Payload View                                                                                           │
 │status: ok | pack version: 2                                                                           │
-│objects: 153/153 | hash: sha1                                                                          │
+│entries: 153/153 | materialized: 153/153                                                               │
+│unique objects: 150 | duplicates: 3                                                                    │
+│transfer: allowed | hash: sha1                                                                         │
 │computed checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                            │
 │trailer checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                             │
-│Use j/k to select object rows and Enter to open object detail                                          │
+│subview: Objects (toggle: e)                                                                           │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌Transport Entries─────────────────────────────┐┌Pack Preview───────────────────────────────────────────┐
 │ENTRY                  SIZE       SHA256      ││selected: 05b1f9a42fd3831e72f1487e760b635461956bae (com│
@@ -321,7 +341,7 @@ This is the authoritative payload-oriented page. It shows:
 │b12de2c7d85f commit   681        yes          ││- add tests for commit audit identity propagation and U│
 │c48aebb7fe29 commit   238        yes          ││- restructure README and document interactive audit UI │
 └──────────────────────────────────────────────┘└───────────────────────────────────────────────────────┘
-j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | Enter open object detail               
+j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail
 Tab/v toggle history/payload | ? help | q quit
 ```
 
@@ -334,10 +354,12 @@ Long previews are clipped to the panel height and end with a `... (N more lines)
 ┌git-sync───────────────────────────────────────────────────────────────────────────────────────────────┐
 │Payload View                                                                                           │
 │status: ok | pack version: 2                                                                           │
-│objects: 153/153 | hash: sha1                                                                          │
+│entries: 153/153 | materialized: 153/153                                                               │
+│unique objects: 150 | duplicates: 3                                                                    │
+│transfer: allowed | hash: sha1                                                                         │
 │computed checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                            │
 │trailer checksum: a428eff5a39ca27b828a5542fe66326d91cbad15                                             │
-│Use j/k to select object rows and Enter to open object detail                                          │
+│subview: Objects (toggle: e)                                                                           │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌Transport Entries─────────────────────────────┐┌Pack Preview───────────────────────────────────────────┐
 │ENTRY                  SIZE       SHA256      ││selected: a5a80f9b34c559b03a136a3f49ed54afd04b6071 (blo│
@@ -361,7 +383,7 @@ Long previews are clipped to the panel height and end with a `... (N more lines)
 │a496df290932 blob     64520      yes          ││5 │ #[command(                                         │
 │a5a80f9b34c5 blob     1173       yes          ││... (50 more lines)                                    │
 └──────────────────────────────────────────────┘└───────────────────────────────────────────────────────┘
-j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | Enter open object detail               
+j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries | Enter open object detail
 Tab/v toggle history/payload | ? help | q quit                                                           
 ```
 
@@ -412,7 +434,8 @@ Overview page (page 1):
 - `1`: switch to History view
 - `2`: switch to Payload view
 - In History view: `j` / `k` selects head, `Enter` opens commit pages for selected head
-- In Payload view: `j` / `k` selects object, `PgUp` / `PgDn` jumps by 10 objects, `s` cycles sort mode, `Enter` opens object detail
+- In Payload `Objects` view: `j` / `k` selects object, `PgUp` / `PgDn` jumps by 10 objects, `s` cycles sort mode, `e` toggles subview, `Enter` opens object detail
+- In Payload `Entries` view: `j` / `k` selects entry, `PgUp` / `PgDn` jumps by 10 entries, `e` toggles subview
 
 History commit pages:
 - `h` / `Left`: previous commit page
@@ -451,11 +474,18 @@ Global:
 
 - `create --from ... --to ...` requires `to` to be equal to or a descendant of `from`.
 - `audit` without `--format` is interactive TUI mode and requires `--repo` and `--bundle`.
+- Interactive `audit` currently supports only `--resolve pack-only`.
 - Interactive `audit` includes metadata verification against the provided `--repo`.
 - Interactive `audit` shows two top-level views: History (head/commit/file diffs) and Payload (transport + pack objects).
 - History pages are head-scoped for multi-head bundles: select a head on overview, then `Enter` to inspect that head's commit chain.
-- Payload view includes all imported pack objects; `REACHABLE=no` marks objects not reachable from advertised heads.
-- Non-interactive payload audit requires both `--repo` and `--bundle`, and supports `--format table|json`.
+- Payload view includes both:
+  - `Entries` = authoritative PACK-entry proof ledger
+  - `Objects` = derived materialized-object convenience view
+- `REACHABLE=no` on object rows means not reachable from advertised heads (informational, not proof completeness).
+- Non-interactive payload audit requires both `--repo` and `--bundle`, and supports:
+  - `--format table|json`
+  - `--payload-ledger summary|full` (JSON mode)
+  - `--resolve pack-only|baseline` (non-interactive modes)
 - `audit --verify-metadata` is the explicit non-interactive verification path and requires `--bundle` and `--repo`.
 - `receive` requires prerequisite history to already exist in the receiver repository.
 - `receive --verify-metadata` validates bundle/sidecar integrity before import.

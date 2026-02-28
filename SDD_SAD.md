@@ -18,6 +18,8 @@ Primary command surfaces:
 - `create`: produce a transport package from a linear commit range
 - `audit` (interactive default): TUI review of history and payload
 - `audit --format table|json`: non-interactive payload audit output
+  - `--payload-ledger summary|full` (JSON)
+  - `--resolve pack-only|baseline` (non-interactive)
 - `audit --verify-metadata`: explicit metadata-to-repo verification check
 - `receive` (`--dry-run` optional): import package into receiver repo
 
@@ -64,11 +66,15 @@ Interactive mode:
 
 Non-interactive payload mode:
 - `git-sync audit --repo --bundle --format table`
-- `git-sync audit --repo --bundle --format json`
+- `git-sync audit --repo --bundle --format json [--payload-ledger summary|full]`
+- optional resolve strategy: `--resolve pack-only|baseline`
 
 Explicit metadata verify mode:
 - `git-sync audit --repo --bundle --verify-metadata`
 - returns success/failure via exit code and message
+
+Interactive-mode note:
+- interactive `audit` currently permits `--resolve pack-only` only
 
 ### 4.3 `ui`
 `git-sync ui --repo --bundle [--base sync/last] [--tip ...]`
@@ -94,7 +100,7 @@ Behavior:
 ### 5.2 Git Domain (`src/git`)
 - `bundle/create.rs`: bundle/package creation and cleanup
 - `bundle/inspect.rs`: bundle header parsing (`v2`/`v3`, prerequisites, heads)
-- `bundle/payload.rs`: payload session, PACK proofing, object inventory/detail, JSON document build
+- `bundle/payload.rs`: payload session, raw PACK-entry ledger proofing, materialized object index, optional baseline-assisted delta resolution, JSON document build
 - `bundle/receive.rs`: receive, dry-run, history commit extraction, commit-file patch extraction
 - `metadata/collect.rs`: metadata commit-chain/changed-files collection
 - `metadata/load.rs`: metadata loading from sidecar
@@ -166,13 +172,20 @@ Contains:
 - `pack_proof`
   - `verification_status`
   - `pack_version`
-  - `declared_object_count`
-  - `processed_object_count`
+  - compatibility counters: `declared_object_count`, `processed_object_count`
+  - entry-truth counters: `entries_declared`, `entries_parsed`, `entries_materialized`
+  - materialization counters: `unique_objects_materialized`, `duplicate_entry_count_materialized`
+  - transfer gate: `transfer_allowed`, `blocked_reason`
   - `hash_algorithm`
   - `computed_pack_checksum`
   - `trailer_pack_checksum`
+- `entry_ledger`
+  - `mode`: `summary` or `full`
+  - counters: `declared_entries`, `parsed_entries`, `unresolved_entries`
+  - subsets: `first_entries`, `last_entries`, `unresolved_entry_rows`
+  - optional full rows: `entries` (when mode = `full`)
 - `pack_summary`
-- `pack_objects` (including reachability + context fields)
+- `pack_objects` (materialized-object rows, including reachability + context fields)
 - `object_details` (renderable content/metadata)
 
 ## 7. Runtime Workflows
@@ -200,16 +213,22 @@ Contains:
   - per-head commit list (oldest-first), per-commit file stats
 - Payload:
   - `open_payload_session`
-  - transport entry hashes + full payload object inventory
+  - transport entry hashes + PACK-entry ledger + materialized object inventory
+  - payload subviews: `Objects` (derived) and `Entries` (authoritative)
   - preview/detail loading with cache
 
 ### 7.3 Non-Interactive Payload Audit (`audit --format ...`)
 - `--format table`: human-readable payload table
-  - PACK proof line
+  - PACK proof line (entries/materialized/transfer gate)
   - PACK checksum line
+  - ledger summary line (`declared`, `parsed`, `unresolved`)
   - transport entries table
-  - pack object table
+  - materialized object table
 - `--format json`: serialized payload audit document (`PayloadAuditDocument`)
+  - `--payload-ledger summary|full` controls `entry_ledger` size/content
+- `--resolve pack-only|baseline` controls external delta-base resolution policy
+  - `pack-only`: strict fail-closed if an external base is required
+  - `baseline`: may resolve ref-delta bases from the provided repo ODB
 
 ### 7.4 Explicit Metadata Verification (`audit --verify-metadata`)
 - verifies metadata integrity against bundle + optional patch sidecar
@@ -230,69 +249,86 @@ Idempotency behavior:
 
 ## 8. PACK Proofing Model (Critical)
 
-Proofing implementation lives in `src/git/bundle/payload.rs` (`verify_pack_payload`).
+Proofing implementation lives in `src/git/bundle/payload.rs` (`verify_pack_payload_with_ledger_and_baseline_odb`).
 
-### 8.1 What Is Proved
+### 8.1 Authoritative Truth Model
+The payload proof model has two layers:
+1. **PackEntryLedger (authoritative)**:
+   - one row per parsed PACK entry in stream order
+   - includes `idx`, `offset`, `kind`, `out_size`, base refs, resolution state/source
+2. **MaterializedObjectIndex (derived convenience)**:
+   - deduplicated object list for browsing (`Objects` view)
+   - derived from resolved ledger rows only
+
+Completeness proof is based on entry counts (`entries_declared`, `entries_parsed`, `entries_materialized`), not ODB enumeration.
+
+### 8.2 What Is Proved
 For bundle payload bytes starting at `PACK`:
-1. header is valid (`PACK`, version 2/3, declared object count)
+1. header is valid (`PACK`, version 2/3, declared entry count)
 2. trailer checksum matches recomputed checksum
-3. exactly `declared_object_count` entries are processed
+3. exactly `entries_declared` entries are parsed into ledger rows
 4. each entry is decoded/decompressed
 5. deltas are reconstructed (`ofs-delta` and `ref-delta`)
-6. object OID is recomputed from canonical object bytes (`type size\0content`)
-7. any mismatch/truncation/unresolved base fails immediately
+6. object OID is recomputed from canonical object bytes (`type size\0content`) for materialized entries
+7. transfer gate is computed as `entries_materialized == entries_declared`
 
-### 8.2 Fail-Closed Conditions
+### 8.3 Resolve Modes
+Non-interactive payload audit supports explicit resolve policy:
+- `pack-only` (default strict):
+  - only in-pack bases may satisfy delta reconstruction
+  - unresolved external base => fail-closed
+- `baseline`:
+  - allows ref-delta base lookup from provided repository ODB
+  - resolved entries are marked `resolved_via=baseline`
+
+### 8.4 Fail-Closed Conditions
 Audit aborts on:
 - invalid/truncated PACK structure
 - unsupported entry/header encoding
 - zlib stream failures
 - delta decode/apply errors
-- unresolved delta base references (external/thin dependency behavior)
+- unresolved delta base references in strict mode
 - object size mismatch
 - trailer checksum mismatch
-- declared/processed count mismatch
+- declared/parsed count mismatch
+- transfer gate blocked (`entries_materialized < entries_declared`)
 
-### 8.3 Additional Runtime Consistency Check
-After import into temporary bare repo, object inventory is enumerated from ODB and checked:
-- imported object count must equal `declared_object_count`
+Failure output includes actionable partial proof context:
+- `PayloadAuditError { reason, blocked_entry_idx, ledger_partial }`
 
-This is an additional guard between parser proof metrics and imported session state.
-
-### 8.4 Proof Exposure in Outputs
+### 8.5 Proof Exposure in Outputs
 - TUI overview (`Bundle Integrity`) shows:
   - pack proof status
-  - processed/declared counts
-  - checksum match/mismatch
+  - entries parsed and entries materialized counters
+  - transfer gate status
+  - checksum status
 - TUI payload header shows:
-  - status, pack version
-  - processed/declared
-  - hash algorithm
-  - full computed and trailer checksums
-- non-interactive table/json outputs include the same proof data
+  - `entries parsed`, `materialized`, `unique objects`, `duplicates`
+  - transfer status
+  - pack version/hash/checksums
+- Non-interactive table/json outputs expose equivalent entry-truth metrics.
+- JSON `entry_ledger` section supports bounded `summary` mode and full export `full` mode.
 
-### 8.5 Current Boundaries
+### 8.6 Current Boundaries
 - Hash algorithm currently fixed to SHA-1 for PACK/object verification path.
-- `verification_status` in JSON is currently emitted as `"ok"` for successful proof results.
-  (Proof failures exit with error; no failed payload document is emitted.)
-- Object inventory rows are derived from imported ODB after proof and count parity check.
-  (A strict OID-set equality check between parsed entries and imported ODB is not yet emitted.)
+- Proof failures return errors (no synthetic “failed payload document” is emitted).
+- Interactive audit path currently uses pack-only resolve policy.
 
 ```mermaid
 flowchart TD
-    A[Locate PACK bytes] --> B[Parse header version + declared count]
+    A[Locate PACK bytes] --> B[Parse PACK header and declared entry count]
     B --> C[Verify trailer checksum]
-    C --> D[Iterate entries]
-    D --> E[Inflate/Decode object or delta]
-    E --> F[Reconstruct canonical object bytes]
-    F --> G[Recompute object OID]
-    G --> H{processed == declared?}
-    H -- no --> X[Fail closed]
-    H -- yes --> I[Import pack into temp bare repo]
-    I --> J[Enumerate ODB objects]
-    J --> K{odb_count == declared?}
+    C --> D[Iterate PACK entries]
+    D --> E[Decode/decompress entry]
+    E --> F[Resolve base: in-pack or optional baseline ODB]
+    F --> G[Reconstruct canonical bytes and OID]
+    G --> H[Append ledger row]
+    H --> I{parsed == declared?}
+    I -- no --> X[Fail closed with ledger_partial]
+    I -- yes --> J[Build materialized object index from resolved ledger rows]
+    J --> K{materialized == declared?}
     K -- no --> X
-    K -- yes --> L[Emit payload audit models/output]
+    K -- yes --> L[Emit payload models/output]
 ```
 
 ## 9. UI Interaction Model
@@ -318,8 +354,9 @@ Key behavior highlights:
 
 Payload view specifics:
 - left-top: transport entries
-- left-bottom: full pack objects table
+- left-bottom: subview table (`Objects` or `Entries`)
 - right: live preview of selected object
+- `e` toggles `Objects` (derived) and `Entries` (proof ledger)
 - preview includes object context fields (reachability/head/order/path)
 - textual blob preview/detail use syntax highlighting and line numbers
 
@@ -330,13 +367,16 @@ Payload view specifics:
 - Metadata integrity binding (bundle/patch hash+size checks).
 - Metadata vs repository truth verification (`audit --verify-metadata`).
 - Dry-run isolation from receiver mutation.
-- PACK proofing with fail-closed parsing/reconstruction/checksum/count checks.
-- Visibility of unreachable objects via payload inventory (`reachable_from_heads=false`).
+- PACK proofing with fail-closed parsing/reconstruction/checksum/entry-count checks.
+- Authoritative entry-ledger truth surfaced in TUI (`Entries`) and JSON (`entry_ledger`).
+- Transfer gate semantics exposed explicitly (`transfer_allowed`, `blocked_reason`).
+- Visibility of unreachable objects via derived materialized-object inventory (`reachable_from_heads=false`).
 
 ### 10.2 Limits
 - No detached package signature verification yet (authenticity remains out of scope).
 - Receive-time `--verify-metadata` validates metadata integrity, not full metadata-vs-repo truth.
 - PACK proof path currently SHA-1-centric.
+- Interactive audit currently runs with pack-only resolve mode.
 
 ## 11. Build and Versioning
 - `build.rs` sets `GIT_SYNC_VERSION` with priority:

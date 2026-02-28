@@ -7,6 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+- Explicit payload resolve policy for non-interactive audit:
+  - `--resolve pack-only` (strict default)
+  - `--resolve baseline` (baseline ODB-assisted external ref-delta resolution)
+- Entry-ledger JSON export controls:
+  - `--payload-ledger summary` (default bounded ledger subsets)
+  - `--payload-ledger full` (full parsed entry rows)
+- Additional payload tests for resolve-mode behavior and strict unresolved-entry blocking.
+
+### Changed
+- Payload proof/output semantics now center on entry-truth counters and transfer gate:
+  - `entries_declared`, `entries_parsed`, `entries_materialized`
+  - `unique_objects_materialized`, `duplicate_entry_count_materialized`
+  - `transfer_allowed`, `blocked_reason`
+- Non-interactive table output now includes concise ledger summary and transfer-gate evidence.
+- Payload audit robustness improved for prerequisite-dependent tree context (missing prerequisite trees no longer abort payload rendering/context scan).
+
+### Documentation
+- README updated for:
+  - `Objects` vs `Entries` payload semantics
+  - transfer-gate and entry counter meaning
+  - non-interactive `--payload-ledger` and `--resolve` usage
+- SDD/SAD synchronized to current architecture:
+  - pack-entry ledger as authoritative proof source
+  - materialized object index as derived convenience layer
+  - resolve-mode boundaries and fail-closed behavior
+
 ## [0.5.0] - 2026-02-28
 
 ### Added
