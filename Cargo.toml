@@ -1,6 +1,6 @@
 [package]
 name = "git-sync"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 build = "build.rs"
 license = "Apache-2.0"
