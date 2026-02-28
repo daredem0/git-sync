@@ -499,6 +499,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "flate2",
  "git2",
  "openssl-sys",
  "ratatui",

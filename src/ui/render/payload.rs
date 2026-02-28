@@ -18,21 +18,17 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
         return;
     }
 
+    let title_text = payload_title_text(model);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
+            Constraint::Length(8),
             Constraint::Min(8),
             Constraint::Length(2),
         ])
         .split(frame.area());
 
-    let title = Paragraph::new(
-        "Payload View\n\
-         Transport package entries, selected-object preview, and full pack object listing\n\
-         Use j/k to select object rows and Enter to open object detail",
-    )
-    .block(Block::default().borders(Borders::ALL).title("git-sync"));
+    let title = Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("git-sync"));
     frame.render_widget(title, chunks[0]);
 
     match &model.payload {
@@ -64,6 +60,40 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[2]);
+}
+
+/// Builds payload-page top summary including pack-proof invariants.
+fn payload_title_text(model: &AuditModel) -> String {
+    match &model.payload {
+        PayloadModel::Ok(payload) => {
+            let proof = &payload.pack_proof;
+            let counts_match = proof.declared_object_count == proof.processed_object_count;
+            let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
+            let proof_status = if counts_match && checksums_match {
+                "ok"
+            } else {
+                "failed"
+            };
+            format!(
+                "Payload View\n\
+                 status: {proof_status} | pack version: {}\n\
+                 objects: {}/{} | hash: {}\n\
+                 computed checksum: {}\n\
+                 trailer checksum: {}\n\
+                 Use j/k to select object rows and Enter to open object detail",
+                proof.pack_version,
+                proof.processed_object_count,
+                proof.declared_object_count,
+                proof.hash_algorithm,
+                proof.computed_pack_checksum,
+                proof.trailer_pack_checksum
+            )
+        }
+        PayloadModel::Failed(_) => "Payload View\n\
+            Transport package entries, selected-object preview, and full pack object listing\n\
+            Use j/k to select object rows and Enter to open object detail"
+            .to_string(),
+    }
 }
 
 /// Renders payload transport entry table.
@@ -115,6 +145,18 @@ fn render_transport_entries_table(
 
 /// Renders selected pack object preview (commit/tree/blob/tag) on payload page.
 fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState, area: Rect) {
+    let selected_object = match &model.payload {
+        PayloadModel::Ok(payload) => {
+            let sorted = state.payload_sorted_objects(payload);
+            sorted
+                .get(std::cmp::min(
+                    state.payload_selected_index,
+                    sorted.len().saturating_sub(1),
+                ))
+                .copied()
+        }
+        PayloadModel::Failed(_) => None,
+    };
     let lines: Vec<Line<'_>> = match &state.payload_preview {
         Some(preview) => {
             let mut raw_lines = vec![format!(
@@ -122,9 +164,34 @@ fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppSta
                 preview.oid,
                 payload_kind_label(preview.kind)
             )];
+            if let Some(entry) = selected_object {
+                raw_lines.push(format!(
+                    "reachable from heads: {}",
+                    if entry.reachable_from_heads { "yes" } else { "no" }
+                ));
+                raw_lines.push(format!(
+                    "context head: {}",
+                    entry
+                        .context_head_index
+                        .map(|index| format!("#{}", index + 1))
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                raw_lines.push(format!(
+                    "context commit order: {}",
+                    entry
+                        .context_commit_order
+                        .map(|order| order.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                raw_lines.push(format!(
+                    "context path: {}",
+                    entry.context_path.as_deref().unwrap_or("-")
+                ));
+            }
             raw_lines.push(String::new());
+            let prefix_len = raw_lines.len();
             raw_lines.extend(preview.lines.iter().cloned());
-            let syntax_start = preview.syntax_start_index.map(|index| index + 2);
+            let syntax_start = preview.syntax_start_index.map(|index| index + prefix_len);
             render_preview_lines_to_area(
                 raw_lines,
                 area,

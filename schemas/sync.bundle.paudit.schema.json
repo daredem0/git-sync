@@ -17,6 +17,7 @@
     "prerequisites",
     "heads",
     "transport_entries",
+    "pack_proof",
     "pack_summary",
     "pack_objects",
     "object_details"
@@ -110,6 +111,46 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           }
+        }
+      }
+    },
+    "pack_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pack_version",
+        "declared_object_count",
+        "processed_object_count",
+        "hash_algorithm",
+        "computed_pack_checksum",
+        "trailer_pack_checksum"
+      ],
+      "properties": {
+        "pack_version": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "declared_object_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "processed_object_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hash_algorithm": {
+          "type": "string",
+          "enum": [
+            "sha1"
+          ]
+        },
+        "computed_pack_checksum": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "trailer_pack_checksum": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
         }
       }
     },

@@ -3,7 +3,7 @@
 use super::overview_tables::{render_changes_table, render_heads_table};
 use super::render_footer_text;
 use crate::ui::format::{render_dry_run_status, render_status_line};
-use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine};
+use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine, PayloadModel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
@@ -17,7 +17,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6),
-            Constraint::Length(8),
+            Constraint::Length(11),
             Constraint::Min(10),
             Constraint::Length(2),
         ])
@@ -33,6 +33,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     .wrap(Wrap { trim: false });
     frame.render_widget(title, chunks[0]);
 
+    let (pack_proof_status, pack_objects_processed, pack_checksum_status) =
+        render_pack_proof_summary(&model.payload);
     let general_lines = vec![
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
@@ -49,6 +51,9 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
             "dry-run applicability: {}",
             render_dry_run_status(&overview.dry_run)
         ),
+        format!("pack proof: {pack_proof_status}"),
+        format!("pack objects processed: {pack_objects_processed}"),
+        format!("pack checksum: {pack_checksum_status}"),
     ];
     let general = Paragraph::new(general_lines.join("\n"))
         .block(Block::default().borders(Borders::ALL).title("General"));
@@ -105,4 +110,31 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[3]);
+}
+
+/// Returns concise pack-proof status lines for overview's general section.
+fn render_pack_proof_summary(payload: &PayloadModel) -> (String, String, String) {
+    match payload {
+        PayloadModel::Ok(audit) => {
+            let proof = &audit.pack_proof;
+            let counts_match = proof.declared_object_count == proof.processed_object_count;
+            let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
+            let status = if counts_match && checksums_match {
+                "OK".to_string()
+            } else {
+                "FAILED".to_string()
+            };
+            let processed = format!(
+                "{}/{}",
+                proof.processed_object_count, proof.declared_object_count
+            );
+            let checksum = if checksums_match { "match" } else { "mismatch" }.to_string();
+            (status, processed, checksum)
+        }
+        PayloadModel::Failed(err) => (
+            format!("FAILED (payload unavailable: {err})"),
+            "-".to_string(),
+            "-".to_string(),
+        ),
+    }
 }

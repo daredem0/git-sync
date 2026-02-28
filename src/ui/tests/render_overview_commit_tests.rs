@@ -3,7 +3,7 @@
 // Focus: rendering behavior for overview and commit pages, including unavailable and out-of-range commit states.
 
 use super::super::render::{render_commit_page, render_overview_page, render_page};
-use super::super::types::CommitPagesModel;
+use super::super::types::{CommitPagesModel, PayloadModel};
 use super::support::*;
 use crate::git::{self, BundleVersion};
 use std::path::PathBuf;
@@ -54,8 +54,52 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include dry-run applicability status in general section"
     );
     assert!(
+        output.contains("pack proof: OK"),
+        "overview render should include pack-proof status in general section"
+    );
+    assert!(
+        output.contains("pack objects processed: 2/2"),
+        "overview render should include processed/declared object counts in general section"
+    );
+    assert!(
+        output.contains("pack checksum: match"),
+        "overview render should include pack checksum match status in general section"
+    );
+    assert!(
         output.contains("file.txt"),
         "overview render should include rendered file stats rows"
+    );
+}
+
+// Verifies that overview page surfaces pack-proof failures when processed counts or checksums mismatch.
+#[test]
+fn render_overview_page_shows_pack_proof_failure_summary() {
+    let mut model = sample_overview_model(super::super::types::DryRunLine::Failed(
+        "dry-run failed".to_string(),
+    ));
+    let PayloadModel::Ok(payload) = &mut model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    payload.pack_proof.processed_object_count = 1;
+    payload.pack_proof.trailer_pack_checksum =
+        "dddddddddddddddddddddddddddddddddddddddd".to_string();
+    let state = super::super::types::AppState::new(&model);
+
+    let output = render_and_capture_text(140, 44, |frame| {
+        render_overview_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("pack proof: FAILED"),
+        "overview render should mark pack proof as failed when object counts/checksums mismatch"
+    );
+    assert!(
+        output.contains("pack objects processed: 1/2"),
+        "overview render should show mismatched processed/declared object counts"
+    );
+    assert!(
+        output.contains("pack checksum: mismatch"),
+        "overview render should flag checksum mismatch in general section"
     );
 }
 
@@ -126,6 +170,18 @@ fn render_page_in_payload_view_shows_payload_screen() {
         output.contains("Pack Objects"),
         "payload page should render object listing section"
     );
+    assert!(
+        output.contains("pack version:"),
+        "payload page should render pack version in top summary"
+    );
+    assert!(
+        output.contains("computed checksum: cccccccccccccccccccccccccccccccccccccccc"),
+        "payload page should render full computed pack checksum"
+    );
+    assert!(
+        output.contains("trailer checksum: cccccccccccccccccccccccccccccccccccccccc"),
+        "payload page should render full trailer pack checksum"
+    );
 }
 
 // Verifies that payload blob selection renders blob-specific preview metadata.
@@ -164,6 +220,18 @@ fn render_page_in_payload_view_shows_blob_preview_metadata() {
     assert!(
         output.contains("1 │ fn value()"),
         "preview should line-number actual text content lines"
+    );
+    assert!(
+        output.contains("reachable from heads:"),
+        "payload preview should include selected object reachability context"
+    );
+    assert!(
+        output.contains("context head:"),
+        "payload preview should include selected object head context"
+    );
+    assert!(
+        output.contains("context commit order:"),
+        "payload preview should include selected object commit-order context"
     );
 }
 
