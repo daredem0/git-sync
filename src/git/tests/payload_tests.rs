@@ -3,6 +3,101 @@
 use super::support::*;
 use super::*;
 
+// Verifies that PACK proof parsing succeeds for a normal generated bundle and reports a non-zero declared count.
+#[test]
+fn verify_pack_payload_parses_declared_count_for_normal_bundle() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-proof-normal-count", false);
+
+    let payload = collect_payload_audit_for_bundle_input(&bundle_result.bundle_path, &repo_dir)
+        .expect("must collect payload audit for plain bundle input");
+    assert!(
+        payload.pack_proof.declared_object_count > 0,
+        "pack proof should report a non-zero declared object count for generated bundle"
+    );
+    assert_eq!(
+        payload.pack_proof.declared_object_count, payload.pack_proof.processed_object_count,
+        "pack proof should process exactly the declared number of objects"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that PACK proof parsing accepts a syntactic ref-delta entry and reaches unresolved-base fail-closed semantics.
+#[test]
+fn verify_pack_payload_parses_declared_count_for_delta_bundle() {
+    let repo_dir = temp_repo_dir("payload-proof-delta-count");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let mut pack_prefix = Vec::new();
+    pack_prefix.extend_from_slice(b"PACK");
+    pack_prefix.extend_from_slice(&2u32.to_be_bytes());
+    pack_prefix.extend_from_slice(&1u32.to_be_bytes());
+    // Entry header: type=REF_DELTA (7), size=0, no continuation.
+    pack_prefix.push(0x70);
+    // Missing base OID triggers unresolved-external-base fail-closed path after parsing.
+    pack_prefix.extend_from_slice(&[0x11; 20]);
+    let trailer = sha1_bytes(&pack_prefix);
+    let mut pack_bytes = pack_prefix;
+    pack_bytes.extend_from_slice(&trailer);
+
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(b"1111111111111111111111111111111111111111 refs/heads/main\n\n");
+    bundle_bytes.extend_from_slice(&pack_bytes);
+    let bundle_path = repo_dir.join("delta.bundle");
+    std::fs::write(&bundle_path, bundle_bytes).expect("must write synthetic delta bundle");
+
+    let result = collect_payload_audit_for_bundle_input(&bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "synthetic delta bundle with unresolved external base must fail closed"
+    );
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("synthetic delta bundle should fail payload audit")
+    );
+    assert!(
+        error_text.contains("unresolved base") || error_text.contains("thin pack"),
+        "error should indicate unresolved external delta dependency after declared-count parse"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that PACK proof validation rejects bundles with tampered trailer checksums.
+#[test]
+fn verify_pack_payload_validates_trailer_checksum() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-proof-checksum", false);
+
+    let mut bytes = std::fs::read(&bundle_result.bundle_path).expect("must read fixture bundle");
+    let last = bytes
+        .len()
+        .checked_sub(1)
+        .expect("fixture bundle must contain at least one byte");
+    bytes[last] ^= 0x01;
+    let tampered_bundle_path = repo_dir.join("tampered-trailer.bundle");
+    std::fs::write(&tampered_bundle_path, bytes).expect("must write tampered bundle");
+
+    let result = collect_payload_audit_for_bundle_input(&tampered_bundle_path, &repo_dir);
+    assert!(
+        result.is_err(),
+        "payload audit should fail when pack trailer checksum is tampered"
+    );
+    let error_text = format!(
+        "{:#}",
+        result.expect_err("tampered trailer bundle should fail payload audit")
+    );
+    assert!(
+        error_text.contains("pack trailer checksum mismatch"),
+        "error should explicitly report pack trailer checksum mismatch"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit collection includes transport entries and imported pack-object rows.
 #[test]
 fn collect_payload_audit_for_bundle_input_includes_transport_entries_and_objects() {

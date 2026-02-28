@@ -2,7 +2,11 @@
 //!
 //! Focus: overview-model repository display helpers and remote-name derivation.
 
+use super::super::model::build_audit_model;
+use super::support::create_diff_fixture;
 use super::super::model::{derive_repo_name_from_remote_url, format_repo_display};
+use crate::app::AppConfig;
+use crate::ui::types::PayloadModel;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,4 +73,31 @@ fn format_repo_display_falls_back_to_path_for_repo_without_remotes() {
     assert_eq!(formatted, dir.display().to_string());
 
     fs::remove_dir_all(&dir).expect("must clean temp directory");
+}
+
+// Verifies that full audit-model construction still loads payload data for an existing bundle fixture.
+#[test]
+fn payload_model_build_still_loads_with_existing_bundle_fixture() {
+    let fixture = create_diff_fixture();
+    let config = AppConfig {
+        repo_path: fixture.receiver_dir.clone(),
+        bundle_path: fixture.bundle_archive_path.clone(),
+        base_ref: "refs/heads/base".to_string(),
+        tip_ref: None,
+    };
+
+    let model = build_audit_model(&config);
+    match model.payload {
+        PayloadModel::Ok(payload) => {
+            assert!(
+                !payload.objects.is_empty(),
+                "payload model should contain imported object rows for fixture bundle"
+            );
+            assert_eq!(
+                payload.pack_proof.declared_object_count, payload.pack_proof.processed_object_count,
+                "fixture payload model should preserve pack proof declared/processed invariants"
+            );
+        }
+        PayloadModel::Failed(err) => panic!("payload model build should succeed for fixture: {err}"),
+    }
 }
