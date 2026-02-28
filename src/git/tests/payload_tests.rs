@@ -171,6 +171,42 @@ fn verify_pack_payload_rejects_trailing_bytes_before_trailer() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that payload audit fails closed when bundle header contains non-UTF8 line bytes.
+#[test]
+fn payload_audit_rejects_non_utf8_bundle_header_line() {
+    let repo_dir = temp_repo_dir("payload-non-utf8-header-line");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo directory");
+    let _repo = git2::Repository::init(&repo_dir).expect("must init git repository");
+
+    let bundle_path = repo_dir.join("non-utf8-header.bundle");
+    let mut bundle_bytes = Vec::new();
+    bundle_bytes.extend_from_slice(b"# v2 git bundle\n");
+    bundle_bytes.extend_from_slice(&[0xff, 0xfe, b'\n']);
+    bundle_bytes.extend_from_slice(b"\nPACK");
+    bundle_bytes.extend_from_slice(&2u32.to_be_bytes());
+    bundle_bytes.extend_from_slice(&0u32.to_be_bytes());
+    let trailer = sha1_bytes(&bundle_bytes[bundle_bytes.len() - 12..]);
+    bundle_bytes.extend_from_slice(&trailer);
+    std::fs::write(&bundle_path, bundle_bytes).expect("must write non-utf8 header fixture bundle");
+
+    let result = collect_payload_audit_for_bundle_input_with_resolve_mode(
+        &bundle_path,
+        &repo_dir,
+        PayloadResolveMode::PackOnly,
+    );
+    assert!(
+        result.is_err(),
+        "payload audit should fail for non-utf8 bundle header lines"
+    );
+    let error_text = format!("{:#}", result.expect_err("non-utf8 header should fail"));
+    assert!(
+        error_text.contains("bundle header contains non-utf8 line bytes"),
+        "error should explicitly report non-utf8 bundle header line bytes"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that payload audit accepts repositories with explicit sha1 object format configuration.
 #[test]
 fn payload_audit_accepts_explicit_sha1_repo_object_format() {
@@ -263,6 +299,32 @@ fn bundle_pack_offset_is_read_from_header_not_scanned() {
     assert!(
         payload.pack_proof.entries_declared > 0,
         "rewritten bundle must still parse as valid payload pack"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that payload object-detail lookup fails with a clear error when the requested object id is absent.
+#[test]
+fn collect_payload_object_detail_for_missing_oid_returns_error() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-missing-object-detail", false);
+    let missing_oid =
+        git2::Oid::from_str("ffffffffffffffffffffffffffffffffffffffff").expect("must parse oid");
+
+    let result = collect_payload_object_detail_for_bundle_input(
+        &bundle_result.archive_path,
+        &repo_dir,
+        missing_oid,
+    );
+    assert!(
+        result.is_err(),
+        "missing payload object detail lookup should fail with explicit error"
+    );
+    let error_text = format!("{:#}", result.expect_err("missing oid should return an error"));
+    assert!(
+        error_text.contains("is not available in materialized store"),
+        "error should explain that requested payload object is absent in materialized store"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);
