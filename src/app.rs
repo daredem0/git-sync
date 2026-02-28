@@ -2,6 +2,9 @@
 
 use std::path::PathBuf;
 
+pub mod commands;
+pub mod output;
+
 #[derive(Debug, Clone)]
 /// Runtime configuration shared across CLI and TUI flows.
 pub struct AppConfig {
