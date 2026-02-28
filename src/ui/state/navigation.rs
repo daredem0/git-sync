@@ -20,6 +20,8 @@ impl AppState {
             payload_selected_index: 0,
             show_help: false,
             action_message: None,
+            payload_detail_cache: std::collections::HashMap::new(),
+            payload_preview_cache: std::collections::HashMap::new(),
             payload_preview: None,
             payload_object_view: None,
             diff_view: None,

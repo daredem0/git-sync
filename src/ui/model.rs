@@ -21,16 +21,20 @@ pub(crate) fn build_audit_model(config: &AppConfig) -> AuditModel {
         Ok(entries) => CommitPagesModel::Ok(entries),
         Err(err) => CommitPagesModel::Failed(single_line_error(&err)),
     };
-    let payload =
-        match git::collect_payload_audit_for_bundle_input(&config.bundle_path, &config.repo_path) {
-            Ok(payload) => PayloadModel::Ok(payload),
-            Err(err) => PayloadModel::Failed(single_line_error(&err)),
+    let (payload, payload_session) =
+        match git::open_payload_session(&config.bundle_path, &config.repo_path) {
+            Ok(session) => {
+                let payload = PayloadModel::Ok(git::payload_audit_from_session(&session));
+                (payload, Some(session))
+            }
+            Err(err) => (PayloadModel::Failed(single_line_error(&err)), None),
         };
 
     AuditModel {
         overview,
         commit_pages,
         payload,
+        payload_session,
         repo_path: config.repo_path.clone(),
         bundle_path: config.bundle_path.clone(),
         syntax_highlighter: super::types::SyntaxHighlighter::load(),

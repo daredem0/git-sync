@@ -16,30 +16,29 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zip::ZipArchive;
 
+const BLOB_PATH_SCAN_LIMIT: usize = 12;
+
+/// Reusable imported payload session for fast object-detail queries.
+#[derive(Debug)]
+pub struct PayloadSession {
+    temp_repo: TempBareRepo,
+    inspection: BundleInspection,
+    payload: PayloadAudit,
+}
+
 /// Collects transport-entry and pack-object payload audit data for a bundle input.
 ///
 /// # Errors
 ///
 /// Returns an error when the bundle input cannot be parsed/imported or objects
 /// cannot be enumerated.
+#[allow(dead_code)]
 pub fn collect_payload_audit_for_bundle_input(
     bundle_input_path: &Path,
     repo_path: &Path,
 ) -> Result<PayloadAudit> {
-    with_imported_payload_repo(
-        bundle_input_path,
-        repo_path,
-        |repo, inspection, transport_entries| {
-            let reachable = collect_reachable_objects(repo, &inspection.heads)?;
-            let objects = collect_payload_objects(repo, &reachable)?;
-            Ok(PayloadAudit {
-                bundle_version: inspection.version,
-                heads: inspection.heads.clone(),
-                transport_entries: transport_entries.to_vec(),
-                objects,
-            })
-        },
-    )
+    let session = open_payload_session(bundle_input_path, repo_path)?;
+    Ok(payload_audit_from_session(&session))
 }
 
 /// Collects detail lines for one selected payload object.
@@ -52,48 +51,16 @@ pub fn collect_payload_object_detail_for_bundle_input(
     repo_path: &Path,
     object_id: git2::Oid,
 ) -> Result<PayloadObjectDetail> {
-    with_imported_payload_repo(
-        bundle_input_path,
-        repo_path,
-        |repo, inspection, _transport_entries| {
-            let odb = repo.odb()?;
-            let (size_bytes, kind) = odb.read_header(object_id)?;
-            let kind = payload_kind_from_git(kind);
-            let object = repo.find_object(object_id, None)?;
-            let detail_lines = object_detail_lines(&object)?;
-            let blob_paths = if kind == PayloadObjectKind::Blob {
-                collect_blob_paths_with_limit(repo, &inspection.heads, object_id, 32)?
-            } else {
-                Vec::new()
-            };
-            let syntax_path_hint = if detail_lines.is_text_blob {
-                blob_paths
-                    .first()
-                    .cloned()
-                    .or_else(|| Some("blob.txt".to_string()))
-            } else {
-                None
-            };
-
-            Ok(PayloadObjectDetail {
-                oid: object_id,
-                kind,
-                size_bytes,
-                syntax_path_hint,
-                blob_paths,
-                text_line_count: detail_lines.text_line_count,
-                lines: detail_lines.lines,
-            })
-        },
-    )
+    let session = open_payload_session(bundle_input_path, repo_path)?;
+    collect_payload_object_detail_for_session(&session, object_id)
 }
 
-/// Executes a callback against a temporary bare repository containing only imported bundle payload objects.
-fn with_imported_payload_repo<T>(
-    bundle_input_path: &Path,
-    repo_path: &Path,
-    func: impl FnOnce(&git2::Repository, &BundleInspection, &[PayloadTransportEntry]) -> Result<T>,
-) -> Result<T> {
+/// Opens an imported payload session that can be reused across many detail lookups.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails.
+pub fn open_payload_session(bundle_input_path: &Path, repo_path: &Path) -> Result<PayloadSession> {
     let source_repo = git2::Repository::open(repo_path)?;
     let source_odb = source_repo.odb()?;
     if is_zip_bundle_input_path(bundle_input_path) {
@@ -108,7 +75,19 @@ fn with_imported_payload_repo<T>(
             &inspection,
             Some(&source_odb),
         )?;
-        return func(&repo, &inspection, &transport_entries);
+        let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
+        let objects = collect_payload_objects(&repo, &reachable)?;
+        let payload = PayloadAudit {
+            bundle_version: inspection.version,
+            heads: inspection.heads.clone(),
+            transport_entries,
+            objects,
+        };
+        return Ok(PayloadSession {
+            temp_repo,
+            inspection,
+            payload,
+        });
     }
 
     let transport_entries = collect_transport_entries_for_plain_bundle(bundle_input_path)?;
@@ -116,7 +95,74 @@ fn with_imported_payload_repo<T>(
     let temp_repo = TempBareRepo::new()?;
     let repo = git2::Repository::open_bare(&temp_repo.path)?;
     import_bundle_pack_to_repo(&repo, bundle_input_path, &inspection, Some(&source_odb))?;
-    func(&repo, &inspection, &transport_entries)
+    let reachable = collect_reachable_objects(&repo, &inspection.heads)?;
+    let objects = collect_payload_objects(&repo, &reachable)?;
+    let payload = PayloadAudit {
+        bundle_version: inspection.version,
+        heads: inspection.heads.clone(),
+        transport_entries,
+        objects,
+    };
+
+    Ok(PayloadSession {
+        temp_repo,
+        inspection,
+        payload,
+    })
+}
+
+/// Returns a payload-audit snapshot captured in the provided session.
+pub fn payload_audit_from_session(session: &PayloadSession) -> PayloadAudit {
+    session.payload.clone()
+}
+
+/// Collects detail lines for one selected payload object from a reusable session.
+///
+/// # Errors
+///
+/// Returns an error when the object is unavailable in session object storage.
+pub fn collect_payload_object_detail_for_session(
+    session: &PayloadSession,
+    object_id: git2::Oid,
+) -> Result<PayloadObjectDetail> {
+    let repo = git2::Repository::open_bare(&session.temp_repo.path)?;
+    collect_payload_object_detail_for_repo(&repo, &session.inspection, object_id)
+}
+
+/// Collects payload detail lines from an already imported repository/inspection pair.
+fn collect_payload_object_detail_for_repo(
+    repo: &git2::Repository,
+    inspection: &BundleInspection,
+    object_id: git2::Oid,
+) -> Result<PayloadObjectDetail> {
+    let odb = repo.odb()?;
+    let (size_bytes, kind) = odb.read_header(object_id)?;
+    let kind = payload_kind_from_git(kind);
+    let object = repo.find_object(object_id, None)?;
+    let detail_lines = object_detail_lines(&object)?;
+    let blob_paths = if kind == PayloadObjectKind::Blob {
+        collect_blob_paths_with_limit(repo, &inspection.heads, object_id, BLOB_PATH_SCAN_LIMIT)?
+    } else {
+        Vec::new()
+    };
+    let syntax_path_hint = if detail_lines.is_text_blob {
+        blob_paths
+            .first()
+            .cloned()
+            .or_else(|| Some("blob.txt".to_string()))
+    } else {
+        None
+    };
+
+    Ok(PayloadObjectDetail {
+        oid: object_id,
+        kind,
+        size_bytes,
+        syntax_path_hint,
+        blob_paths,
+        text_line_count: detail_lines.text_line_count,
+        lines: detail_lines.lines,
+    })
 }
 
 /// Collects transport-entry metadata for a plain `.bundle` input.
@@ -565,6 +611,7 @@ struct ObjectDetailLines {
     text_line_count: Option<usize>,
 }
 
+#[derive(Debug)]
 struct TempBareRepo {
     path: PathBuf,
 }

@@ -101,3 +101,72 @@ fn collect_payload_object_detail_for_text_blob_includes_paths_and_line_count() {
 
     let _ = std::fs::remove_dir_all(repo_dir);
 }
+
+// Verifies that blob path scanning is capped to a bounded number of discovered paths.
+#[test]
+fn collect_payload_object_detail_caps_blob_path_scan() {
+    let repo_dir = temp_repo_dir("payload-blob-path-limit");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let base_commit_id = commit_from_files(&repo, "base", &[("base.txt", "base")], &[]);
+    let mut tip_files: Vec<(String, String)> = Vec::new();
+    tip_files.push(("base.txt".to_string(), "base".to_string()));
+    for index in 0..32usize {
+        tip_files.push((format!("path-{index}.txt"), "shared-content\n".to_string()));
+    }
+    let tip_file_refs: Vec<(&str, &str)> = tip_files
+        .iter()
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+    let tip_commit_id = commit_from_files(&repo, "tip", &tip_file_refs, &[base_commit_id]);
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle(&repo_dir, "refs/heads/base", "refs/heads/tip", &bundle_path)
+        .expect("create_bundle should succeed");
+    let shared_blob_oid = repo
+        .blob(b"shared-content\n")
+        .expect("must create shared blob oid");
+
+    let detail = collect_payload_object_detail_for_bundle_input(
+        &result.archive_path,
+        &repo_dir,
+        shared_blob_oid,
+    )
+    .expect("must collect payload detail for shared blob");
+    assert!(
+        detail.blob_paths.len() <= 12,
+        "blob path scan should be capped for preview/detail responsiveness"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that an opened payload session can serve detail queries after the input bundle is removed.
+#[test]
+fn open_payload_session_allows_detail_lookup_without_bundle_file() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-session-reuse", false);
+    let session = open_payload_session(&bundle_result.archive_path, &repo_dir)
+        .expect("must open payload session from bundle input");
+    let payload = payload_audit_from_session(&session);
+    let target = payload
+        .objects
+        .iter()
+        .find(|entry| matches!(entry.kind, PayloadObjectKind::Commit))
+        .expect("fixture payload should contain commit object");
+
+    std::fs::remove_file(&bundle_result.archive_path).expect("must remove bundle archive input");
+    let detail = collect_payload_object_detail_for_session(&session, target.oid)
+        .expect("session-backed detail lookup should not require bundle input path");
+    assert_eq!(
+        detail.oid, target.oid,
+        "session-backed detail lookup should return requested object detail"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}

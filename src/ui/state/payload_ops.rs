@@ -37,31 +37,28 @@ impl AppState {
         let index = std::cmp::min(self.payload_selected_index, payload.objects.len() - 1);
         self.payload_selected_index = index;
         let selected = &payload.objects[index];
-        match git::collect_payload_object_detail_for_bundle_input(
-            &model.bundle_path,
-            &model.repo_path,
-            selected.oid,
-        ) {
+        if let Some(cached) = self.payload_preview_cache.get(&selected.oid).cloned() {
+            self.payload_preview = Some(cached);
+            return;
+        }
+
+        match self.load_payload_object_detail_cached(model, selected.oid) {
             Ok(detail) => {
-                let lines = build_payload_preview_lines(
-                    &detail,
-                    selected.reachable_from_heads,
-                    &model.syntax_highlighter,
-                );
-                self.payload_preview = Some(PayloadPreviewState {
-                    oid: detail.oid,
-                    kind: detail.kind,
-                    lines,
-                });
+                let preview = build_payload_preview_state(&detail, selected.reachable_from_heads);
+                self.payload_preview_cache
+                    .insert(selected.oid, preview.clone());
+                self.payload_preview = Some(preview);
             }
             Err(err) => {
                 self.payload_preview = Some(PayloadPreviewState {
                     oid: selected.oid,
                     kind: selected.kind,
                     lines: vec![
-                        Line::from(format!("preview unavailable for object {}", selected.oid)),
-                        Line::from(format!("error: {}", single_line_error(&err))),
+                        format!("preview unavailable for object {}", selected.oid),
+                        format!("error: {}", single_line_error(&err)),
                     ],
+                    syntax_path_hint: None,
+                    syntax_start_index: None,
                 });
             }
         }
@@ -111,11 +108,7 @@ impl AppState {
 
         let index = std::cmp::min(self.payload_selected_index, payload.objects.len() - 1);
         let selected = &payload.objects[index];
-        match git::collect_payload_object_detail_for_bundle_input(
-            &model.bundle_path,
-            &model.repo_path,
-            selected.oid,
-        ) {
+        match self.load_payload_object_detail_cached(model, selected.oid) {
             Ok(detail) => {
                 let (lines, syntax_name) =
                     if let Some(path_hint) = detail.syntax_path_hint.as_deref() {
@@ -153,6 +146,29 @@ impl AppState {
                 ));
             }
         }
+    }
+
+    /// Loads one payload object detail using cached data or reusable payload session.
+    fn load_payload_object_detail_cached(
+        &mut self,
+        model: &AuditModel,
+        object_id: git2::Oid,
+    ) -> anyhow::Result<git::PayloadObjectDetail> {
+        if let Some(cached) = self.payload_detail_cache.get(&object_id).cloned() {
+            return Ok(cached);
+        }
+
+        let detail = if let Some(session) = model.payload_session.as_ref() {
+            git::collect_payload_object_detail_for_session(session, object_id)?
+        } else {
+            git::collect_payload_object_detail_for_bundle_input(
+                &model.bundle_path,
+                &model.repo_path,
+                object_id,
+            )?
+        };
+        self.payload_detail_cache.insert(object_id, detail.clone());
+        Ok(detail)
     }
 
     /// Scrolls payload object detail down by `step` lines.
@@ -194,63 +210,56 @@ impl AppState {
     }
 }
 
-/// Builds a compact preview for the selected payload object on the payload main page.
-fn build_payload_preview_lines(
+/// Builds a compact preview payload for the selected object on the payload main page.
+fn build_payload_preview_state(
     detail: &git::PayloadObjectDetail,
     reachable_from_heads: bool,
-    highlighter: &SyntaxHighlighter,
-) -> Vec<Line<'static>> {
+) -> PayloadPreviewState {
     if detail.kind != git::PayloadObjectKind::Blob {
-        return detail
-            .lines
-            .iter()
-            .map(|line| Line::from(line.to_string()))
-            .collect();
+        return PayloadPreviewState {
+            oid: detail.oid,
+            kind: detail.kind,
+            lines: detail.lines.clone(),
+            syntax_path_hint: None,
+            syntax_start_index: None,
+        };
     }
 
     let mut lines = vec![
-        Line::from(format!("blob {}", detail.oid)),
-        Line::from(format!("size: {} bytes", detail.size_bytes)),
-        Line::from(format!(
+        format!("blob {}", detail.oid),
+        format!("size: {} bytes", detail.size_bytes),
+        format!(
             "content: {}",
             if detail.text_line_count.is_some() {
                 "text"
             } else {
                 "binary"
             }
-        )),
-        Line::from(format!(
+        ),
+        format!(
             "text lines: {}",
             detail
                 .text_line_count
                 .map(|count| count.to_string())
                 .unwrap_or_else(|| "-".to_string())
-        )),
+        ),
     ];
 
     if detail.blob_paths.is_empty() {
         if reachable_from_heads {
-            lines.push(Line::from(
-                "blob paths: (none found in advertised-head trees)",
-            ));
+            lines.push("blob paths: (none found in advertised-head trees)".to_string());
         } else {
-            lines.push(Line::from(
-                "blob paths: (none; object is unreachable from advertised heads)",
-            ));
+            lines.push(
+                "blob paths: (none; object is unreachable from advertised heads)".to_string(),
+            );
         }
     } else {
-        lines.push(Line::from(format!(
-            "blob paths: {}",
-            detail.blob_paths.len()
-        )));
+        lines.push(format!("blob paths: {}", detail.blob_paths.len()));
         for path in detail.blob_paths.iter().take(8) {
-            lines.push(Line::from(format!("  - {path}")));
+            lines.push(format!("  - {path}"));
         }
         if detail.blob_paths.len() > 8 {
-            lines.push(Line::from(format!(
-                "  ... and {} more",
-                detail.blob_paths.len() - 8
-            )));
+            lines.push(format!("  ... and {} more", detail.blob_paths.len() - 8));
         }
     }
 
@@ -260,25 +269,21 @@ fn build_payload_preview_lines(
         .position(|line| line.is_empty())
         .map_or(0, |index| index + 1);
     let preview_body = &detail.lines[content_start..];
+    let mut syntax_start_index = None;
     if !preview_body.is_empty() {
-        lines.push(Line::from(String::new()));
-        lines.push(Line::from("content preview:"));
-        if let Some(path_hint) = detail.syntax_path_hint.as_deref() {
-            let (highlighted, syntax_name) =
-                render_payload_text_with_syntax(preview_body, path_hint, highlighter);
-            lines.push(Line::from(format!("syntax: {syntax_name}")));
-            lines.extend(highlighted);
-        } else {
-            lines.extend(
-                preview_body
-                    .iter()
-                    .map(|line| Line::from(line.to_string()))
-                    .collect::<Vec<Line<'static>>>(),
-            );
-        }
+        lines.push(String::new());
+        lines.push("content preview:".to_string());
+        syntax_start_index = detail.syntax_path_hint.as_ref().map(|_| lines.len());
+        lines.extend(preview_body.iter().cloned());
     }
 
-    lines
+    PayloadPreviewState {
+        oid: detail.oid,
+        kind: detail.kind,
+        lines,
+        syntax_path_hint: detail.syntax_path_hint.clone(),
+        syntax_start_index,
+    }
 }
 
 /// Renders plain text lines with syntax highlighting based on a path hint.

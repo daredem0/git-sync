@@ -7,7 +7,6 @@ use super::super::types::{DiffViewState, MainView, PayloadModel};
 use super::support::*;
 use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
-use ratatui::style::Style;
 use ratatui::text::Line;
 
 // Verifies that Esc closes diff view without requesting app exit, and Esc exits when no diff is open.
@@ -325,9 +324,9 @@ fn open_selected_payload_object_for_text_blob_sets_syntax_name() {
     );
 }
 
-// Verifies that payload preview applies syntax-highlighted spans for textual blob content.
+// Verifies that payload preview retains syntax hint metadata for textual blob rendering.
 #[test]
-fn refresh_payload_preview_for_text_blob_applies_syntax_highlighting() {
+fn refresh_payload_preview_for_text_blob_sets_syntax_hint() {
     let fixture = create_diff_fixture();
     let model = build_model_from_fixture(&fixture);
     let mut state = super::super::types::AppState::new(&model);
@@ -348,13 +347,86 @@ fn refresh_payload_preview_for_text_blob_applies_syntax_highlighting() {
         .payload_preview
         .as_ref()
         .expect("payload preview should exist for selected blob object");
-    let has_styled_span = preview
-        .lines
-        .iter()
-        .any(|line| line.spans.iter().any(|span| span.style != Style::default()));
     assert!(
-        has_styled_span,
-        "payload text blob preview should include syntax-highlighted spans"
+        preview.syntax_path_hint.is_some(),
+        "payload text blob preview should preserve syntax hint for render-time highlighting"
+    );
+}
+
+// Verifies that cached payload preview can be reused even when bundle path becomes unavailable.
+#[test]
+fn refresh_payload_preview_reuses_cached_data_without_bundle_file() {
+    let fixture = create_diff_fixture();
+    let mut model = build_model_from_fixture(&fixture);
+    model.payload_session = None;
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    let PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    let blob_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("fixture payload should include at least one blob object");
+    state.payload_selected_index = blob_index;
+
+    state.refresh_payload_preview(&model);
+    assert!(
+        state.payload_preview.is_some(),
+        "precondition: preview should load from bundle path once"
+    );
+
+    std::fs::remove_file(&model.bundle_path).expect("must remove fixture bundle archive");
+    state.refresh_payload_preview(&model);
+    let preview = state
+        .payload_preview
+        .as_ref()
+        .expect("cached preview should remain available after bundle removal");
+    assert!(
+        !preview
+            .lines
+            .iter()
+            .any(|line| line.contains("preview unavailable")),
+        "cached preview should avoid reloading unavailable bundle input"
+    );
+}
+
+// Verifies that cached object detail can be reopened without bundle file when payload session is absent.
+#[test]
+fn open_selected_payload_object_reuses_cached_detail_without_bundle_file() {
+    let fixture = create_diff_fixture();
+    let mut model = build_model_from_fixture(&fixture);
+    model.payload_session = None;
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    let PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit data");
+    };
+    let blob_index = payload
+        .objects
+        .iter()
+        .position(|entry| matches!(entry.kind, PayloadObjectKind::Blob))
+        .expect("fixture payload should include at least one blob object");
+    state.payload_selected_index = blob_index;
+
+    state.open_selected_payload_object(&model);
+    assert!(
+        state.payload_object_view.is_some(),
+        "precondition: detail should load while bundle archive exists"
+    );
+
+    std::fs::remove_file(&model.bundle_path).expect("must remove fixture bundle archive");
+    state.open_selected_payload_object(&model);
+    assert!(
+        state.payload_object_view.is_some(),
+        "cached detail should allow reopening object view after bundle removal"
+    );
+    assert!(
+        state.action_message.is_none(),
+        "cached detail path should not emit load error after bundle removal"
     );
 }
 

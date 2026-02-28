@@ -11,10 +11,13 @@ mod types;
 mod util;
 
 #[allow(unused_imports)]
+pub use bundle::PayloadSession;
+#[allow(unused_imports)]
 pub use bundle::{
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
     collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
-    create_bundle, create_bundle_with_options, inspect_bundle, receive_bundle_input,
+    collect_payload_object_detail_for_session, create_bundle, create_bundle_with_options,
+    inspect_bundle, open_payload_session, payload_audit_from_session, receive_bundle_input,
     receive_bundle_input_with_options, remove_unarchived_bundle_artifacts,
 };
 #[allow(unused_imports)]

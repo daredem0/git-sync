@@ -8,7 +8,9 @@ mod receive;
 pub use create::{create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts};
 pub use inspect::inspect_bundle;
 pub use payload::{
-    collect_payload_audit_for_bundle_input, collect_payload_object_detail_for_bundle_input,
+    PayloadSession, collect_payload_audit_for_bundle_input,
+    collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
+    open_payload_session, payload_audit_from_session,
 };
 pub use receive::{
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,

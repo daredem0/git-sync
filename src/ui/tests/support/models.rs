@@ -107,6 +107,7 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
         },
         commit_pages,
         payload: PayloadModel::Ok(sample_payload_audit()),
+        payload_session: None,
         repo_path: PathBuf::from("."),
         bundle_path: PathBuf::from("sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -188,6 +189,7 @@ pub(crate) fn sample_multi_head_model(commit_counts: &[usize]) -> AuditModel {
         },
         commit_pages: CommitPagesModel::Ok(head_entries),
         payload: PayloadModel::Ok(sample_payload_audit()),
+        payload_session: None,
         repo_path: PathBuf::from("/tmp/repo"),
         bundle_path: PathBuf::from("/tmp/sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -239,6 +241,7 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
             }],
         }]),
         payload: PayloadModel::Ok(sample_payload_audit()),
+        payload_session: None,
         repo_path: PathBuf::from("/tmp/repo"),
         bundle_path: PathBuf::from("/tmp/sync.bundle.zip"),
         syntax_highlighter: SyntaxHighlighter::load(),
@@ -257,11 +260,10 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
         .first()
         .map(|entry| entry.files.clone())
         .unwrap_or_default();
-    let payload = git::collect_payload_audit_for_bundle_input(
-        &fixture.bundle_archive_path,
-        &fixture.receiver_dir,
-    )
-    .expect("must collect payload audit for fixture bundle");
+    let payload_session =
+        git::open_payload_session(&fixture.bundle_archive_path, &fixture.receiver_dir)
+            .expect("must open payload session for fixture bundle");
+    let payload = git::payload_audit_from_session(&payload_session);
 
     AuditModel {
         overview: OverviewModel {
@@ -282,6 +284,7 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
             commits: fixture.entries.clone(),
         }]),
         payload: PayloadModel::Ok(payload),
+        payload_session: Some(payload_session),
         repo_path: fixture.receiver_dir.clone(),
         bundle_path: fixture.bundle_archive_path.clone(),
         syntax_highlighter: SyntaxHighlighter::load(),

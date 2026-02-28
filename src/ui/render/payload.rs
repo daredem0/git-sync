@@ -8,6 +8,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::FontStyle;
 
 /// Renders payload page tables or selected payload-object detail view.
 pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
@@ -55,7 +57,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
                 .split(body_chunks[0]);
             render_transport_entries_table(frame, payload, left_chunks[0]);
             render_objects_table(frame, payload, state, left_chunks[1]);
-            render_pack_preview(frame, state, body_chunks[1]);
+            render_pack_preview(frame, model, state, body_chunks[1]);
         }
     }
 
@@ -112,17 +114,24 @@ fn render_transport_entries_table(
 }
 
 /// Renders selected pack object preview (commit/tree/blob/tag) on payload page.
-fn render_pack_preview(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
+fn render_pack_preview(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState, area: Rect) {
     let lines: Vec<Line<'_>> = match &state.payload_preview {
         Some(preview) => {
-            let mut lines = vec![Line::from(format!(
+            let mut raw_lines = vec![format!(
                 "selected: {} ({})",
                 preview.oid,
                 payload_kind_label(preview.kind)
-            ))];
-            lines.push(Line::from(String::new()));
-            lines.extend(preview.lines.iter().cloned());
-            lines
+            )];
+            raw_lines.push(String::new());
+            raw_lines.extend(preview.lines.iter().cloned());
+            let syntax_start = preview.syntax_start_index.map(|index| index + 2);
+            render_preview_lines_to_area(
+                raw_lines,
+                area,
+                preview.syntax_path_hint.as_deref(),
+                syntax_start,
+                &model.syntax_highlighter,
+            )
         }
         None => vec![
             Line::from("No preview loaded."),
@@ -130,31 +139,127 @@ fn render_pack_preview(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
             Line::from("Enter opens full object detail."),
         ],
     };
-    let lines = clip_preview_lines_to_area(lines, area);
 
     let preview = Paragraph::new(ratatui::text::Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title("Pack Preview"));
     frame.render_widget(preview, area);
 }
 
-/// Clips preview lines to panel height and keeps truncation marker at the last visible row.
-fn clip_preview_lines_to_area(lines: Vec<Line<'static>>, area: Rect) -> Vec<Line<'static>> {
+/// Clips plain preview lines to panel height and highlights only visible lines.
+fn render_preview_lines_to_area(
+    lines: Vec<String>,
+    area: Rect,
+    syntax_path_hint: Option<&str>,
+    syntax_start_index: Option<usize>,
+    highlighter: &crate::ui::types::SyntaxHighlighter,
+) -> Vec<Line<'static>> {
     let max_rows = usize::from(area.height.saturating_sub(2));
-    if max_rows == 0 || lines.len() <= max_rows {
-        return lines;
+    if max_rows == 0 {
+        return Vec::new();
+    }
+
+    if lines.len() <= max_rows {
+        return render_visible_plain_lines(
+            &lines,
+            syntax_path_hint,
+            syntax_start_index,
+            highlighter,
+        );
     }
     if max_rows == 1 {
-        return vec![Line::from(format!("... ({} more lines)", lines.len() - 1))];
+        return vec![Line::from(format!("... ({} more lines)", lines.len()))];
     }
 
     let shown = max_rows - 1;
     let hidden = lines.len().saturating_sub(shown);
-    let mut clipped = lines
-        .into_iter()
-        .take(shown)
-        .collect::<Vec<Line<'static>>>();
+    let mut clipped = render_visible_plain_lines(
+        &lines[..shown],
+        syntax_path_hint,
+        syntax_start_index,
+        highlighter,
+    );
     clipped.push(Line::from(format!("... ({} more lines)", hidden)));
     clipped
+}
+
+/// Renders visible plain preview lines with optional syntax highlighting.
+fn render_visible_plain_lines(
+    lines: &[String],
+    syntax_path_hint: Option<&str>,
+    syntax_start_index: Option<usize>,
+    highlighter: &crate::ui::types::SyntaxHighlighter,
+) -> Vec<Line<'static>> {
+    let (Some(path_hint), Some(start_index)) = (syntax_path_hint, syntax_start_index) else {
+        return lines
+            .iter()
+            .map(|line| Line::from(line.to_string()))
+            .collect::<Vec<_>>();
+    };
+
+    let (syntax, _syntax_name) = highlighter.resolve_syntax_for_path(path_hint);
+    let mut syntax_state = HighlightLines::new(syntax, &highlighter.theme);
+    let mut rendered = Vec::with_capacity(lines.len());
+
+    for (index, raw_line) in lines.iter().enumerate() {
+        if index < start_index {
+            rendered.push(Line::from(raw_line.to_string()));
+            continue;
+        }
+
+        let mut highlight_input = String::with_capacity(raw_line.len() + 1);
+        highlight_input.push_str(raw_line);
+        highlight_input.push('\n');
+        let spans = match syntax_state.highlight_line(&highlight_input, &highlighter.syntax_set) {
+            Ok(regions) if !regions.is_empty() => {
+                let last = regions.len() - 1;
+                let mut spans = Vec::new();
+                for (region_index, (style, segment)) in regions.into_iter().enumerate() {
+                    let text = if region_index == last {
+                        segment.strip_suffix('\n').unwrap_or(segment)
+                    } else {
+                        segment
+                    };
+                    if text.is_empty() {
+                        continue;
+                    }
+                    spans.push(ratatui::text::Span::styled(
+                        text.to_string(),
+                        syntect_style_to_ratatui(style),
+                    ));
+                }
+                if spans.is_empty() {
+                    vec![ratatui::text::Span::raw(String::new())]
+                } else {
+                    spans
+                }
+            }
+            _ => vec![ratatui::text::Span::raw(raw_line.to_string())],
+        };
+        rendered.push(Line::from(spans));
+    }
+
+    rendered
+}
+
+/// Converts a syntect style span into an equivalent ratatui style.
+fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> Style {
+    let mut result = Style::default().fg(ratatui::style::Color::Rgb(
+        style.foreground.r,
+        style.foreground.g,
+        style.foreground.b,
+    ));
+
+    if style.font_style.contains(FontStyle::BOLD) {
+        result = result.add_modifier(ratatui::style::Modifier::BOLD);
+    }
+    if style.font_style.contains(FontStyle::ITALIC) {
+        result = result.add_modifier(ratatui::style::Modifier::ITALIC);
+    }
+    if style.font_style.contains(FontStyle::UNDERLINE) {
+        result = result.add_modifier(ratatui::style::Modifier::UNDERLINED);
+    }
+
+    result
 }
 
 /// Renders payload object table with selected-row highlight.

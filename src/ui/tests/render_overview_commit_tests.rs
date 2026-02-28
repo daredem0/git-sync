@@ -245,6 +245,7 @@ fn render_commit_page_failed_mode_shows_unavailable_message() {
         overview: sample.overview,
         commit_pages: CommitPagesModel::Failed("metadata load failed".to_string()),
         payload: sample.payload,
+        payload_session: sample.payload_session,
         repo_path: PathBuf::from("."),
         bundle_path: PathBuf::from("sync.bundle.zip"),
         syntax_highlighter: super::super::types::SyntaxHighlighter::load(),
