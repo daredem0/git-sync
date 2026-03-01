@@ -7,6 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-01
+
+### Added
+- Added rustdoc PDF generation tooling:
+  - `scripts/generate-doc-pdf.sh`
+  - `scripts/generate-doc-pdf.mjs` (Playwright-based renderer)
+- Added CI PDF generation in the `docs` job and upload of a `docs-pdf` artifact.
+- Added release publishing of the generated rustdoc PDF alongside existing binaries/packages/docs archive.
+- Added SPDX file headers plus module-level summary/context documentation across `src/*` Rust files.
+- Expanded SDD/SAD with additional architecture/security diagrams, trust-boundary visualizations, and traceability content.
+
+### Changed
+- Improved rustdoc Mermaid rendering pipeline for GitHub/rustdoc compatibility and readability:
+  - parser-safe Mermaid labels
+  - responsive sizing behavior for mixed diagram sizes
+  - explicit themed styling for consistent contrast
+- Updated docs PDF generation to flatten crate documentation content into a single export (landing + module/item pages).
+- Updated docs build path to include `--document-private-items` for fuller API coverage in generated documentation/PDF exports.
+
+### Tests
+- Increased unit/integration test coverage across git-domain, UI, and CLI paths.
+- Added/expanded tests to strengthen regression protection for command behavior and payload/audit workflows.
+
+### Documentation
+- Updated README documentation workflow and PDF generation guidance, including Arch Linux local setup notes.
+- Refined SDD/SAD structure and explanatory depth with stronger static/dynamic architecture coverage.
+
 ## [0.7.0] - 2026-02-28
 
 ### Added
@@ -243,7 +270,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/daredem0/git-sync/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/daredem0/git-sync/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/daredem0/git-sync/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/daredem0/git-sync/compare/v0.5.0...v0.6.0
