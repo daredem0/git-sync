@@ -9,10 +9,13 @@
 use super::overview_tables::{render_changes_table, render_heads_table};
 use super::render_footer_text;
 use crate::ui::format::{render_dry_run_status, render_status_line};
-use crate::ui::types::{AppState, AuditModel, CommitPagesModel, DryRunLine, PayloadModel};
+use crate::ui::types::{
+    AppState, AuditModel, CommitPagesModel, DryRunLine, PayloadModel, StatusLine,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 const OVERVIEW_COLUMN_SPLIT: [Constraint; 2] =
@@ -42,16 +45,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     .wrap(Wrap { trim: false });
     frame.render_widget(title, chunks[0]);
 
-    let (
-        pack_proof_status,
-        pack_entries_parsed,
-        pack_entries_materialized,
-        pack_transfer_status,
-        pack_checksum_status,
-        pack_thin_status,
-        pack_baseline_resolutions,
-        bundle_reachability_status,
-    ) = render_pack_proof_summary(&model.payload);
+    let pack_summary = render_pack_proof_summary(&model.payload);
     let (
         payload_bundle_version,
         payload_heads_count,
@@ -71,23 +65,47 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         format!("transport entries: {payload_transport_entry_count}"),
         format!("payload objects: {payload_object_count}"),
     ];
+    let metadata_status = render_status_line(&overview.metadata_verification);
+    let dry_run_status = render_dry_run_status(&overview.dry_run);
+    let metadata_ok = matches!(&overview.metadata_verification, StatusLine::Ok);
+    let dry_run_ok = matches!(
+        &overview.dry_run,
+        DryRunLine::Ok(result) if result.can_apply_without_conflicts
+    );
     let general_right_lines = vec![
-        format!(
-            "metadata verification: {}",
-            render_status_line(&overview.metadata_verification)
+        styled_status_line("metadata verification", metadata_status, metadata_ok),
+        styled_status_line("dry-run applicability", dry_run_status, dry_run_ok),
+        styled_status_line("pack proof", pack_summary.status, pack_summary.status_ok),
+        styled_status_line(
+            "pack entries parsed",
+            pack_summary.entries_parsed,
+            pack_summary.entries_parsed_ok,
         ),
-        format!(
-            "dry-run applicability: {}",
-            render_dry_run_status(&overview.dry_run)
+        styled_status_line(
+            "pack entries materialized",
+            pack_summary.entries_materialized,
+            pack_summary.entries_materialized_ok,
         ),
-        format!("pack proof: {pack_proof_status}"),
-        format!("pack entries parsed: {pack_entries_parsed}"),
-        format!("pack entries materialized: {pack_entries_materialized}"),
-        format!("transfer gate: {pack_transfer_status}"),
-        format!("pack checksum: {pack_checksum_status}"),
-        format!("bundle fully reachable from heads: {bundle_reachability_status}"),
-        format!("thin pack detected: {pack_thin_status}"),
-        format!("baseline resolutions: {pack_baseline_resolutions}"),
+        styled_status_line(
+            "transfer gate",
+            pack_summary.transfer,
+            pack_summary.transfer_ok,
+        ),
+        styled_status_line(
+            "pack checksum",
+            pack_summary.checksum,
+            pack_summary.checksum_ok,
+        ),
+        styled_status_line(
+            "bundle fully reachable from heads",
+            pack_summary.bundle_reachability,
+            pack_summary.bundle_reachability_ok,
+        ),
+        Line::from(format!("thin pack detected: {}", pack_summary.thin)),
+        Line::from(format!(
+            "baseline resolutions: {}",
+            pack_summary.baseline_resolutions
+        )),
     ];
     let general_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -97,7 +115,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         .block(Block::default().borders(Borders::ALL).title("General"))
         .wrap(Wrap { trim: false });
     frame.render_widget(general_left, general_chunks[0]);
-    let general_right = Paragraph::new(general_right_lines.join("\n"))
+    let general_right = Paragraph::new(Text::from(general_right_lines))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -168,31 +186,16 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
 }
 
 /// Returns concise pack-proof status lines for overview's general section.
-fn render_pack_proof_summary(
-    payload: &PayloadModel,
-) -> (
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-) {
+fn render_pack_proof_summary(payload: &PayloadModel) -> PackProofSummary {
     match payload {
         PayloadModel::Ok(audit) => {
             let proof = &audit.pack_proof;
             let counts_match = proof.entries_declared == proof.entries_parsed;
+            let materialized_match = proof.entries_materialized == proof.entries_declared;
             let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
-            let status = if proof.verification_status.eq_ignore_ascii_case("ok")
+            let status_ok = proof.verification_status.eq_ignore_ascii_case("ok")
                 && counts_match
-                && checksums_match
-            {
-                "OK".to_string()
-            } else {
-                "FAILED".to_string()
-            };
+                && checksums_match;
             let parsed = format!("{}/{}", proof.entries_parsed, proof.entries_declared);
             let materialized = format!("{}/{}", proof.entries_materialized, proof.entries_declared);
             let transfer = if proof.transfer_allowed {
@@ -225,33 +228,83 @@ fn render_pack_proof_summary(
                 .iter()
                 .filter(|entry| !entry.reachable_from_heads)
                 .count();
-            let bundle_reachability = if total_objects == 0 || unreachable_objects == 0 {
+            let bundle_reachability_ok = total_objects == 0 || unreachable_objects == 0;
+            let bundle_reachability = if bundle_reachability_ok {
                 "yes".to_string()
             } else {
                 format!("no ({unreachable_objects}/{total_objects} unreachable)")
             };
-            (
-                status,
-                parsed,
-                materialized,
+            PackProofSummary {
+                status: if status_ok {
+                    "OK".to_string()
+                } else {
+                    "FAILED".to_string()
+                },
+                status_ok,
+                entries_parsed: parsed,
+                entries_parsed_ok: counts_match,
+                entries_materialized: materialized,
+                entries_materialized_ok: materialized_match,
                 transfer,
+                transfer_ok: proof.transfer_allowed,
                 checksum,
+                checksum_ok: proof.checksum_verified && checksums_match,
                 thin,
                 baseline_resolutions,
                 bundle_reachability,
-            )
+                bundle_reachability_ok,
+            }
         }
-        PayloadModel::Failed(err) => (
-            format!("FAILED (payload unavailable: {err})"),
-            "-".to_string(),
-            "-".to_string(),
-            "blocked".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-        ),
+        PayloadModel::Failed(err) => PackProofSummary {
+            status: format!("FAILED (payload unavailable: {err})"),
+            status_ok: false,
+            entries_parsed: "-".to_string(),
+            entries_parsed_ok: false,
+            entries_materialized: "-".to_string(),
+            entries_materialized_ok: false,
+            transfer: "blocked".to_string(),
+            transfer_ok: false,
+            checksum: "-".to_string(),
+            checksum_ok: false,
+            thin: "-".to_string(),
+            baseline_resolutions: "-".to_string(),
+            bundle_reachability: "-".to_string(),
+            bundle_reachability_ok: false,
+        },
     }
+}
+
+#[derive(Debug)]
+struct PackProofSummary {
+    status: String,
+    status_ok: bool,
+    entries_parsed: String,
+    entries_parsed_ok: bool,
+    entries_materialized: String,
+    entries_materialized_ok: bool,
+    transfer: String,
+    transfer_ok: bool,
+    checksum: String,
+    checksum_ok: bool,
+    thin: String,
+    baseline_resolutions: String,
+    bundle_reachability: String,
+    bundle_reachability_ok: bool,
+}
+
+/// Formats a status line and colors only the status value as pass/fail evidence.
+fn styled_status_line(label: &str, value: String, passed: bool) -> Line<'static> {
+    let style = if passed {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    };
+    Line::from(vec![
+        Span::raw(format!("{label}: ")),
+        Span::styled(value, style),
+    ])
 }
 
 /// Returns general payload context lines for the overview's left-side General panel.
