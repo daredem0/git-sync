@@ -1,5 +1,8 @@
 //! Unit tests for util tests.
 
+use super::super::util::{
+    current_hostname, current_unix_timestamp_secs, current_username, status_code,
+};
 use super::*;
 
 // Focus: utility-level helpers used across bundle creation, payload audit, and metadata verification.
@@ -53,5 +56,90 @@ fn path_to_string_handles_some_and_none_paths() {
     assert!(
         missing.is_err(),
         "missing path should error to protect callers from invalid diff entries"
+    );
+}
+
+// Verifies that status_code maps all supported change statuses to expected manifest codes.
+#[test]
+fn status_code_maps_all_change_status_variants() {
+    assert_eq!(status_code(ChangeStatus::Added), "A");
+    assert_eq!(status_code(ChangeStatus::Modified), "M");
+    assert_eq!(status_code(ChangeStatus::Deleted), "D");
+    assert_eq!(status_code(ChangeStatus::Renamed), "R");
+    assert_eq!(status_code(ChangeStatus::Copied), "C");
+    assert_eq!(status_code(ChangeStatus::TypeChanged), "T");
+}
+
+struct EnvGuard {
+    key: &'static str,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            original: std::env::var(key).ok(),
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.original {
+            // SAFETY: test process is single-threaded with respect to these env mutations.
+            unsafe { std::env::set_var(self.key, value) };
+        } else {
+            // SAFETY: test process is single-threaded with respect to these env mutations.
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+}
+
+// Verifies that current_username selects USER first, then USERNAME, then unknown fallback.
+#[test]
+fn current_username_uses_expected_environment_fallback_order() {
+    let _user_guard = EnvGuard::new("USER");
+    let _username_guard = EnvGuard::new("USERNAME");
+
+    // SAFETY: test mutates process env in a controlled scope guarded by EnvGuard.
+    unsafe { std::env::set_var("USER", "alice") };
+    // SAFETY: test mutates process env in a controlled scope guarded by EnvGuard.
+    unsafe { std::env::set_var("USERNAME", "bob") };
+    assert_eq!(current_username(), "alice");
+
+    // SAFETY: test mutates process env in a controlled scope guarded by EnvGuard.
+    unsafe { std::env::set_var("USER", "   ") };
+    assert_eq!(
+        current_username(),
+        "bob",
+        "when USER is blank, USERNAME should be used"
+    );
+
+    // SAFETY: test mutates process env in a controlled scope guarded by EnvGuard.
+    unsafe { std::env::set_var("USERNAME", "   ") };
+    assert_eq!(
+        current_username(),
+        "unknown",
+        "when both env vars are blank, username should fall back to unknown"
+    );
+}
+
+// Verifies that current_hostname prefers HOSTNAME env value when present.
+#[test]
+fn current_hostname_prefers_hostname_environment_variable() {
+    let _hostname_guard = EnvGuard::new("HOSTNAME");
+    // SAFETY: test mutates process env in a controlled scope guarded by EnvGuard.
+    unsafe { std::env::set_var("HOSTNAME", "test-host") };
+    assert_eq!(current_hostname(), "test-host");
+}
+
+// Verifies that current_unix_timestamp_secs returns a plausible non-zero timestamp.
+#[test]
+fn current_unix_timestamp_secs_returns_nonzero_timestamp() {
+    let ts = current_unix_timestamp_secs().expect("timestamp lookup should succeed");
+    assert!(
+        ts > 1_000_000_000,
+        "timestamp should be a plausible unix-seconds value"
     );
 }

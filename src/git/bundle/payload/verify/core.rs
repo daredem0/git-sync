@@ -72,17 +72,6 @@ pub(super) fn verify_pack_payload_impl(
         });
     }
 
-    if processed_object_count != preflight.declared_entry_count {
-        return Err(PayloadAuditError {
-            reason: format!(
-                "pack object count mismatch: declared={}, processed={}",
-                preflight.declared_entry_count, processed_object_count
-            ),
-            blocked_entry_idx: Some(processed_object_count),
-            ledger_partial: Some(ledger),
-        });
-    }
-
     let materialized_index = build_materialized_object_index_from_ledger(&ledger);
     let materialized_store = build_materialized_object_store(&objects_by_oid);
     let proof = PayloadPackProof::from_entry_counters(
@@ -106,4 +95,47 @@ pub(super) fn verify_pack_payload_impl(
         materialized_index,
         materialized_store,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_pack_payload_impl;
+    use crate::git::digest::sha1_bytes;
+
+    fn build_pack(version: u32, declared_entries: u32, body: &[u8]) -> Vec<u8> {
+        let mut pack = Vec::new();
+        pack.extend_from_slice(b"PACK");
+        pack.extend_from_slice(&version.to_be_bytes());
+        pack.extend_from_slice(&declared_entries.to_be_bytes());
+        pack.extend_from_slice(body);
+        let trailer = sha1_bytes(&pack).expect("must compute test pack checksum");
+        pack.extend_from_slice(&trailer);
+        pack
+    }
+
+    #[test]
+    fn verify_pack_payload_impl_rejects_when_pack_ends_before_declared_entries() {
+        let pack = build_pack(2, 1, &[]);
+        let error = verify_pack_payload_impl(&pack, None)
+            .expect_err("pack with missing declared entry payload should fail");
+        assert!(
+            error
+                .reason
+                .contains("pack ended before declared object count was processed"),
+            "error should report ended-before-declared mismatch"
+        );
+    }
+
+    #[test]
+    fn verify_pack_payload_impl_rejects_trailing_bytes_before_trailer() {
+        let pack = build_pack(2, 0, &[0xde, 0xad, 0xbe, 0xef]);
+        let error = verify_pack_payload_impl(&pack, None)
+            .expect_err("pack with unconsumed bytes must fail");
+        assert!(
+            error
+                .reason
+                .contains("pack contains trailing or unconsumed bytes before trailer"),
+            "error should report trailing/unconsumed bytes"
+        );
+    }
 }

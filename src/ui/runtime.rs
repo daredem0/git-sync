@@ -200,4 +200,72 @@ mod tests {
             "error text should preserve read failure details"
         );
     }
+
+    #[test]
+    fn run_loop_ignores_non_key_events_and_poll_false_cycles() {
+        let model = super::super::tests::support::sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        let mut terminal =
+            ratatui::Terminal::new(TestBackend::new(100, 30)).expect("must create test terminal");
+        let events = ScriptedEventSource::new(
+            vec![Ok(false), Ok(true), Ok(true)],
+            vec![
+                Ok(Event::Resize(120, 40)),
+                Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Char('q'),
+                    KeyModifiers::NONE,
+                ))),
+            ],
+        );
+
+        let result = run_loop(&mut terminal, &model, &mut state, &events);
+        assert!(
+            result.is_ok(),
+            "run loop should continue across poll-false and non-key events"
+        );
+    }
+
+    #[test]
+    fn run_loop_propagates_scripted_read_fallback_error_when_no_event_is_available() {
+        let model = super::super::tests::support::sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        let mut terminal =
+            ratatui::Terminal::new(TestBackend::new(100, 30)).expect("must create test terminal");
+        let events = ScriptedEventSource::new(vec![Ok(true)], vec![]);
+
+        let error = run_loop(&mut terminal, &model, &mut state, &events)
+            .expect_err("missing scripted event should surface as read fallback error");
+        assert!(
+            error.to_string().contains("no scripted event available"),
+            "error should preserve scripted fallback read message"
+        );
+    }
+
+    #[test]
+    fn run_loop_propagates_poll_errors() {
+        let model = super::super::tests::support::sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        let mut terminal =
+            ratatui::Terminal::new(TestBackend::new(100, 30)).expect("must create test terminal");
+        let events = ScriptedEventSource::new(
+            vec![Err(io::Error::new(
+                ErrorKind::BrokenPipe,
+                "scripted poll failure",
+            ))],
+            vec![],
+        );
+
+        let error = run_loop(&mut terminal, &model, &mut state, &events)
+            .expect_err("poll errors should stop the run loop");
+        assert!(
+            error.to_string().contains("scripted poll failure"),
+            "error should preserve poll failure details"
+        );
+    }
+
+    #[test]
+    fn crossterm_event_source_poll_is_callable() {
+        let source = CrosstermEventSource;
+        let _ = source.poll(Duration::from_millis(0));
+    }
 }

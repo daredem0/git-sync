@@ -23,16 +23,18 @@ pub(crate) use context::open_context;
 pub(crate) use metadata::verify_bundle_metadata_against_repo_input;
 pub(crate) use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, CommitAuditEntry,
-    CommitAuditIdentity, CreateBundleOptions, FileLineStat, HeadAuditEntry, OpenContext,
-    PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit, PayloadAuditDocument,
-    PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind,
-    PayloadPackVerification, PayloadResolveMode, ReceiveBundleOptions, ReceiveBundleResult,
-    ResolutionSource,
+    CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
+    OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit,
+    PayloadAuditDocument, PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry,
+    PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveBundleOptions,
+    ReceiveBundleResult, ResolutionSource,
 };
 
 #[cfg(test)]
 pub(crate) use types::{
-    CreateBundleResult, PackEntryLedger, PayloadPackProof, PayloadTransportEntry,
+    PackEntryLedger, PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead,
+    PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadPackProof,
+    PayloadTransportEntry,
 };
 
 #[cfg(test)]

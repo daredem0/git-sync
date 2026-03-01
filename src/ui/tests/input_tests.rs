@@ -2,7 +2,9 @@
 
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 
-use super::super::input::{handle_diff_keys, handle_key_press, handle_page_keys};
+use super::super::input::{
+    handle_diff_keys, handle_key_press, handle_page_keys, handle_payload_object_keys,
+};
 use super::super::types::{DiffViewState, MainView, OverviewFocus, PayloadModel, PayloadSubView};
 use super::support::*;
 use crate::git::PayloadObjectKind;
@@ -874,4 +876,39 @@ fn handle_key_press_payload_object_mode_consumes_scroll_keys() {
         state.payload_selected_index, 0,
         "payload-object scroll keys should not mutate payload row selection"
     );
+}
+
+// Verifies that direct payload-object key helper applies mapped scroll and reset actions.
+#[test]
+fn handle_payload_object_keys_scrolls_and_resets_object_view_offsets() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.payload_object_view = Some(super::super::types::PayloadObjectViewState {
+        oid: git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("valid oid"),
+        kind: PayloadObjectKind::Blob,
+        syntax_name: "Rust".to_string(),
+        lines: vec![Line::from("line 1"), Line::from("line 2")],
+        max_line_width: 20,
+        scroll_y: 0,
+        scroll_x: 0,
+    });
+
+    handle_payload_object_keys(&mut state, KeyCode::Down);
+    handle_payload_object_keys(&mut state, KeyCode::Right);
+    {
+        let view = state
+            .payload_object_view
+            .as_ref()
+            .expect("payload-object view must remain open");
+        assert_eq!(view.scroll_y, 1);
+        assert_eq!(view.scroll_x, 2);
+    }
+
+    handle_payload_object_keys(&mut state, KeyCode::Home);
+    let view = state
+        .payload_object_view
+        .as_ref()
+        .expect("payload-object view must remain open");
+    assert_eq!(view.scroll_y, 0);
+    assert_eq!(view.scroll_x, 0);
 }

@@ -5,6 +5,32 @@ use super::*;
 
 // Focus: tree-diff entry detection and deterministic diff-entry ordering.
 
+fn commit_with_modes(
+    repo: &git2::Repository,
+    message: &str,
+    files: &[(&str, &[u8], i32)],
+    parent_oids: &[git2::Oid],
+) -> git2::Oid {
+    let mut builder = repo.treebuilder(None).expect("must create tree builder");
+    for (path, content, mode) in files {
+        let blob_id = repo.blob(content).expect("must create blob object");
+        builder
+            .insert(*path, blob_id, *mode)
+            .expect("must insert file entry with mode");
+    }
+
+    let tree_id = builder.write().expect("must write tree");
+    let tree = repo.find_tree(tree_id).expect("must find tree");
+    let parent_commits: Vec<git2::Commit<'_>> = parent_oids
+        .iter()
+        .map(|oid| repo.find_commit(*oid).expect("must find parent commit"))
+        .collect();
+    let parent_refs: Vec<&git2::Commit<'_>> = parent_commits.iter().collect();
+    let sig = git2::Signature::now("Test User", "test@example.com").expect("must create sig");
+    repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+        .expect("must create commit")
+}
+
 // Verifies that collect_diff_entries returns an empty list when base and tip are the same commit.
 #[test]
 fn collect_diff_entries_returns_empty_when_base_equals_tip() {
@@ -152,6 +178,51 @@ fn collect_diff_entries_detect_renames() {
     assert_eq!(
         rename.path, "new_name.txt",
         "rename entry path must be the new path"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that collect_diff_entries reports file-to-symlink transitions as type changes.
+#[test]
+fn collect_diff_entries_detect_type_changes() {
+    let repo_dir = temp_repo_dir("diff-entries-typechange");
+    std::fs::create_dir_all(&repo_dir).expect("must create repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init git repo");
+
+    let base_commit_id = commit_with_modes(
+        &repo,
+        "base commit",
+        &[("mode.txt", b"plain-file", 0o100644)],
+        &[],
+    );
+    let tip_commit_id = commit_with_modes(
+        &repo,
+        "tip commit",
+        &[("mode.txt", b"target/path", 0o120000)],
+        &[base_commit_id],
+    );
+
+    let entries = collect_diff_entries(&repo, base_commit_id, tip_commit_id)
+        .expect("collect_diff_entries should detect type changes");
+    assert_eq!(
+        entries.len(),
+        1,
+        "exactly one type-change entry should be reported"
+    );
+
+    let entry = &entries[0];
+    assert_eq!(
+        entry.status,
+        ChangeStatus::TypeChanged,
+        "mode transition must be reported as TypeChanged"
+    );
+    assert_eq!(entry.path, "mode.txt");
+    assert_eq!(entry.old_mode, Some(0o100644));
+    assert_eq!(entry.new_mode, Some(0o120000));
+    assert!(
+        entry.old_oid.is_some() && entry.new_oid.is_some(),
+        "type-change entries should retain old/new object IDs"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

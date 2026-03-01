@@ -3,8 +3,6 @@
 use crate::git::digest::{hex_encode, sha1_hex};
 use crate::git::types::PayloadAuditError;
 
-use super::pack::read_be_u32;
-
 #[derive(Debug, Clone)]
 pub(super) struct PackPreflight {
     pub(super) pack_version: u32,
@@ -32,11 +30,8 @@ pub(super) fn run_pack_preflight(
         });
     }
 
-    let pack_version = read_be_u32(pack_data, 4).map_err(|err| PayloadAuditError {
-        reason: err.to_string(),
-        blocked_entry_idx: None,
-        ledger_partial: None,
-    })?;
+    // Header bytes are guaranteed present by the minimum-size check above.
+    let pack_version = u32::from_be_bytes(pack_data[4..8].try_into().expect("slice length"));
     if pack_version != 2 && pack_version != 3 {
         return Err(PayloadAuditError {
             reason: format!("unsupported pack version: {pack_version}"),
@@ -45,20 +40,12 @@ pub(super) fn run_pack_preflight(
         });
     }
 
-    let declared_entry_count = read_be_u32(pack_data, 8).map_err(|err| PayloadAuditError {
-        reason: err.to_string(),
-        blocked_entry_idx: None,
-        ledger_partial: None,
-    })? as usize;
+    // Header bytes are guaranteed present by the minimum-size check above.
+    let declared_entry_count =
+        u32::from_be_bytes(pack_data[8..12].try_into().expect("slice length")) as usize;
 
-    let trailer_offset = pack_data
-        .len()
-        .checked_sub(20)
-        .ok_or_else(|| PayloadAuditError {
-            reason: "pack payload missing trailer checksum".to_string(),
-            blocked_entry_idx: None,
-            ledger_partial: None,
-        })?;
+    // `pack_data.len() >= 32` guarantees a trailer is present.
+    let trailer_offset = pack_data.len() - 20;
 
     let computed_checksum =
         sha1_hex(&pack_data[..trailer_offset]).map_err(|err| PayloadAuditError {
