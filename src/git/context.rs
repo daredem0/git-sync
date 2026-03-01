@@ -1,4 +1,10 @@
-//! Git-layer context functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Git-domain module for context functionality.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::app::AppConfig;
 use crate::git::{OpenContext, inspect_bundle};

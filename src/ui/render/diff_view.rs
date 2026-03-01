@@ -1,4 +1,10 @@
-//! TUI-layer diff view functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI rendering module for diff view views.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::render_footer_text;
 use crate::ui::types::{AppState, DiffViewState};

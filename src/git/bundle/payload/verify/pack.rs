@@ -1,4 +1,10 @@
-//! PACK header/entry parsing helpers.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! PACK payload verification step for pack.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::git::types::PackEntryKind;
 use anyhow::{Result, anyhow, bail};

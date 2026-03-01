@@ -1,4 +1,10 @@
-//! `audit` command handler.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! CLI command handler for audit flows.
+//!
+//! Part of the application orchestration layer that translates CLI intent into domain calls.
+//! Keeps command flow boundaries explicit and user-facing output predictable.
 
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;

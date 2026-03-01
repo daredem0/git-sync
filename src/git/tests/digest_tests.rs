@@ -1,6 +1,10 @@
-//! Unit tests for digest helpers.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests for digest behavior and invariants.
 //!
-//! Focus: centralized SHA-1/SHA-256 and hex encoding behavior used by proof-sensitive paths.
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::*;
 

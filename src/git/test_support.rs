@@ -1,4 +1,10 @@
-//! Test-only helper exports for the git module test suite.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Shared test helpers for git-domain fixtures.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 pub(crate) use super::archive::{
     extract_bundle_archive, remove_file_if_exists, resolve_patch_sidecar_path, write_zip_archive,

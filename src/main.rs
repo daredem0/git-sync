@@ -1,4 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
 //! CLI entrypoint for git-sync.
+//!
+//! Combines CLI parsing with command dispatch and includes project docs in rustdoc output.
+//! Acts as the binary entry boundary between user input and application workflows.
+
 #![doc = include_str!("../README.md")]
 #![doc = "\n\n---\n\n"]
 #![doc = include_str!("../SDD_SAD.md")]

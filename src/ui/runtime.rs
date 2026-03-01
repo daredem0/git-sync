@@ -1,4 +1,10 @@
-//! TUI-layer runtime functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Terminal runtime loop for the interactive audit UI.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::input::handle_key_press;
 use super::model::build_audit_model;

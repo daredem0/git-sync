@@ -1,4 +1,10 @@
-//! Unit tests for mod.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Git-domain test module wiring.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::test_support::*;
 use super::*;

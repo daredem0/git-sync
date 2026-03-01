@@ -1,4 +1,10 @@
-//! Git-layer verify functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Metadata handling module for verify operations.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::git::archive::{
     caudit_sidecar_path, extract_bundle_archive, is_zip_bundle_input_path,

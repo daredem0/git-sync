@@ -1,4 +1,10 @@
-//! Diff parsing and syntax-aware rendering helpers for the UI.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Diff support module wiring and exports.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 mod parse;
 mod render;

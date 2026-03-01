@@ -1,4 +1,10 @@
-//! Unit tests for state diff open tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for state diff open behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: AppState diff-opening behavior for normal, out-of-context, and non-text commit file selections.
 

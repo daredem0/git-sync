@@ -1,4 +1,10 @@
-//! Unit tests for fixtures.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Shared UI test support for fixtures fixtures and helpers.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::helpers::{commit_from_entries, commit_from_files, unique_temp_dir};
 use crate::git::{self, CommitAuditEntry};

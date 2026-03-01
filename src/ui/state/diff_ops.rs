@@ -1,4 +1,10 @@
-//! TUI-layer diff ops functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI state transition logic for diff ops operations.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::git;
 use crate::ui::diff::render_patch_with_syntax;

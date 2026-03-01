@@ -1,4 +1,10 @@
-//! CLI command dispatch and per-command orchestration.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Command dispatch module for CLI subcommands.
+//!
+//! Part of the application orchestration layer that translates CLI intent into domain calls.
+//! Keeps command flow boundaries explicit and user-facing output predictable.
 
 mod audit;
 mod create;

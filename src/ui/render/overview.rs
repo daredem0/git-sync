@@ -1,4 +1,10 @@
-//! TUI-layer overview functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI rendering module for overview views.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::overview_tables::{render_changes_table, render_heads_table};
 use super::render_footer_text;

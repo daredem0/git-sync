@@ -1,4 +1,10 @@
-//! Width/layout calculation helpers for table rendering.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Output formatting logic for layout views.
+//!
+//! Part of the application orchestration layer that translates CLI intent into domain calls.
+//! Keeps command flow boundaries explicit and user-facing output predictable.
 
 use crate::git::PayloadAudit;
 

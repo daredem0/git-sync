@@ -1,4 +1,10 @@
-//! Unit tests for state navigation tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for state navigation behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: AppState page navigation and file selection movement invariants.
 

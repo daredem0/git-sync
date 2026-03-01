@@ -1,4 +1,10 @@
-//! Pack-entry ledger table rendering.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Payload table rendering for entries data.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::super::util::{payload_entry_base_ref_label, payload_entry_kind_label, short_oid};
 use crate::ui::types::AppState;

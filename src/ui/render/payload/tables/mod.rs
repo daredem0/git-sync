@@ -1,4 +1,10 @@
-//! Payload list-table rendering entrypoints.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Payload table rendering module wiring and exports.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 mod entries;
 mod objects;

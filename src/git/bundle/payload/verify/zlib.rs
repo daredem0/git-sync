@@ -1,4 +1,10 @@
-//! Zlib stream helpers for PACK entry decoding.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! PACK payload verification step for zlib.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use anyhow::{Result, bail};
 use flate2::{Decompress, FlushDecompress, Status};

@@ -1,4 +1,10 @@
-//! Git delta instruction decoding/apply helpers.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! PACK payload verification step for delta.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use anyhow::{Result, anyhow, bail};
 

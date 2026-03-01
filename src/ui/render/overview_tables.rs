@@ -1,4 +1,10 @@
-//! TUI-layer overview tables functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI rendering module for overview tables views.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::git::{self, BundleVersion};
 use ratatui::Frame;

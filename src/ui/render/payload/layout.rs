@@ -1,4 +1,10 @@
-//! Layout splits for payload page and payload detail page.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Payload rendering module for layout views.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 

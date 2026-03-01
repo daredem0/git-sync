@@ -1,4 +1,10 @@
-//! Unit tests for input tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for input behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: keyboard event handling, page/diff key behavior, and exit/help toggles.
 

@@ -1,4 +1,10 @@
-//! Terminal UI composition, rendering, and interaction state.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI module facade and submodule wiring.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 mod diff;
 mod format;

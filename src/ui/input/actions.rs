@@ -1,4 +1,10 @@
-//! Action reducers for routed UI input events.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Keyboard input handling for actions behavior.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::router::{DiffAction, KeyAction, PayloadObjectAction};
 use crate::ui::types::{AppState, AuditModel, MainView};

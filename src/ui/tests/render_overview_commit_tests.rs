@@ -1,4 +1,10 @@
-//! Unit tests for render overview commit tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for render overview commit behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: rendering behavior for overview and commit pages, including unavailable and out-of-range commit states.
 

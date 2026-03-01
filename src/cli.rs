@@ -1,4 +1,10 @@
-//! CLI argument models and audit-input resolution.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Command-line interface model and argument parsing.
+//!
+//! Defines user-facing command contracts, flags, and argument relationships.
+//! Keeps input validation close to the CLI boundary before deeper workflow execution.
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};

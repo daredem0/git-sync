@@ -1,6 +1,10 @@
-//! Unit tests for model tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for model behavior and rendering.
 //!
-//! Focus: overview-model repository display helpers and remote-name derivation.
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::super::model::build_audit_model;
 use super::super::model::{derive_repo_name_from_remote_url, format_repo_display};

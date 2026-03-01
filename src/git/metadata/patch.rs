@@ -1,4 +1,10 @@
-//! Git-layer patch functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Metadata handling module for patch operations.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::git::archive::patch_sidecar_path;
 use crate::git::digest::sha256_hex;

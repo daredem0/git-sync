@@ -1,4 +1,10 @@
-//! Unit tests for format tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for format behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: formatting helpers for identities/timestamps/status lines and non-text diff error recognition.
 

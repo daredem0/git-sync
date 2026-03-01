@@ -1,4 +1,10 @@
-//! Git-domain operations for bundle creation, receive, diffing, and metadata.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Git-domain module facade and public exports.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 mod archive;
 mod bundle;

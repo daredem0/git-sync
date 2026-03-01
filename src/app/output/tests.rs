@@ -1,4 +1,10 @@
-//! Output-rendering tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests for non-interactive output formatting behavior.
+//!
+//! Part of the application orchestration layer that translates CLI intent into domain calls.
+//! Keeps command flow boundaries explicit and user-facing output predictable.
 
 use super::kind::payload_kind_label;
 use super::render_payload_audit_json;

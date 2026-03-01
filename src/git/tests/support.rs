@@ -1,4 +1,10 @@
-//! Unit tests for support.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Support utilities for git-domain tests.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::*;
 use std::path::PathBuf;

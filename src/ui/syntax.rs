@@ -1,4 +1,10 @@
-//! TUI-layer syntax functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Syntax highlighting support for text previews.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::types::SyntaxHighlighter;
 use std::path::Path;

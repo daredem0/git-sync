@@ -1,4 +1,10 @@
-//! TUI-layer render functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Diff processing helpers for render behavior.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::parse::{classify_patch_line, line_number_columns, parse_hunk_header};
 use super::style::render_patch_content_line;

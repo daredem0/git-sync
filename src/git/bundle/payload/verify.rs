@@ -1,13 +1,10 @@
-//! PACK verification and materialization for payload audit.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Top-level PACK payload verification orchestration.
 //!
-//! Proof invariants enforced at the `VerifiedPayload` boundary:
-//! - `entries_parsed == entries_declared`
-//! - `entries_materialized == entries_declared`
-//! - checksum verification succeeded
-//! - transfer gate is allowed
-//! - ledger/index counters are internally consistent
-//!
-//! Any violation returns a fail-closed `PayloadAuditError` and blocks transfer.
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 mod core;
 mod delta;

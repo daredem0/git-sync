@@ -1,4 +1,10 @@
-//! Transport-entry table rendering.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Payload table rendering for transport data.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::super::util::short_sha256;
 use ratatui::Frame;

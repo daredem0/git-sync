@@ -1,4 +1,10 @@
-//! TUI-layer commit table functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI rendering module for commit table views.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::git::CommitAuditEntry;
 use crate::ui::types::AppState;

@@ -1,4 +1,10 @@
-//! Git-layer collect functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Metadata handling module for collect operations.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::git::diff::collect_diff_entries;
 use crate::git::types::{

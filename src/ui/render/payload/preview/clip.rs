@@ -1,4 +1,10 @@
-//! Preview clipping helper based on current preview panel height.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Payload preview rendering for clip.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::syntax::render_visible_plain_lines;
 use ratatui::layout::Rect;

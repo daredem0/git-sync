@@ -1,4 +1,10 @@
-//! Materialized payload object and verification-error types.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Typed data models for payload materialized domain concepts.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use super::{PackEntryLedger, PayloadObjectKind, PayloadPackProof};
 

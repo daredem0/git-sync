@@ -1,4 +1,10 @@
-//! Unit tests for render diff help tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI tests for render diff help behavior and rendering.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 // Focus: rendering behavior for diff page, footer/help text, and help overlay modes.
 

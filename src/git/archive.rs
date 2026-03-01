@@ -1,4 +1,10 @@
-//! Git-layer archive functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Git-domain module for archive functionality.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 use crate::git::types::CreateBundleAuditPatchSidecar;
 use anyhow::{Result, anyhow, bail};

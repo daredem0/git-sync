@@ -1,4 +1,10 @@
-//! Unit tests for util tests.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests for util behavior and invariants.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use super::super::util::{
     current_hostname, current_unix_timestamp_secs, current_username, status_code,

@@ -1,4 +1,10 @@
-//! TUI-layer model functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI model construction from repository and payload evidence.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use super::format::single_line_error;
 use super::types::{

@@ -1,4 +1,10 @@
-//! Unit tests for helpers.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Shared UI test support for helpers fixtures and helpers.
+//!
+//! Part of the git-sync regression suite for command, domain, and UI correctness.
+//! Protects behavior and proof-relevant invariants with focused automated checks.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -1,4 +1,10 @@
-//! TUI-layer navigation functionality.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI state transition logic for navigation operations.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::ui::types::{
     AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, OverviewFocus, PayloadSortMode,

@@ -1,4 +1,10 @@
-//! TUI payload-view selection and object drill-down state transitions.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! UI state transition logic for payload ops operations.
+//!
+//! Part of the read-only review UI that projects verified evidence for operators.
+//! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::git;
 use crate::ui::format::single_line_error;

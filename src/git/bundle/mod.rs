@@ -1,4 +1,10 @@
-//! Bundle-oriented operations: create, inspect, receive, and commit patch views.
+// SPDX-FileCopyrightText: 2026 Florian Leuze
+// SPDX-License-Identifier: Apache-2.0
+
+//! Bundle domain module wiring and exports.
+//!
+//! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
+//! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
 mod create;
 mod inspect;
