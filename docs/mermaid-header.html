@@ -1,3 +1,26 @@
+<style>
+  .rustdoc .example-wrap>.rustdoc-mermaid-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .rustdoc-mermaid-wrap {
+    margin: 1rem 0;
+    width: 100%;
+  }
+
+  .rustdoc-mermaid {
+    width: 100%;
+  }
+
+  .rustdoc-mermaid>svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+</style>
+
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
 
@@ -8,16 +31,61 @@
       const source = code ? code.textContent : pre.textContent;
       if (!source) continue;
 
+      const wrapper = document.createElement("div");
+      wrapper.className = "rustdoc-mermaid-wrap";
+
       const container = document.createElement("div");
-      container.className = "mermaid";
+      container.className = "mermaid rustdoc-mermaid";
       container.textContent = source.trim();
-      pre.replaceWith(container);
+
+      wrapper.append(container);
+      pre.replaceWith(wrapper);
+    }
+  }
+
+  function normalizeMermaidSvgSizing() {
+    const svgs = document.querySelectorAll(".rustdoc-mermaid > svg");
+    for (const svg of svgs) {
+      const viewBox = svg.viewBox && svg.viewBox.baseVal;
+      const viewBoxWidth = viewBox && viewBox.width > 0 ? viewBox.width : 0;
+      const attrWidth = Number.parseFloat(svg.getAttribute("width") || "");
+      const naturalWidth = Number.isFinite(viewBoxWidth) && viewBoxWidth > 0
+        ? viewBoxWidth
+        : Number.isFinite(attrWidth) && attrWidth > 0
+          ? attrWidth
+          : null;
+
+      // Keep small diagrams at natural size and only downscale when needed.
+      if (naturalWidth) {
+        svg.style.width = `min(100%, ${Math.ceil(naturalWidth)}px)`;
+      } else {
+        svg.style.width = "100%";
+      }
+      svg.style.maxWidth = "100%";
+      svg.style.height = "auto";
     }
   }
 
   window.addEventListener("DOMContentLoaded", async () => {
     convertRustdocMermaidBlocks();
-    mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
-    await mermaid.run({ querySelector: ".mermaid" });
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      theme: "neutral",
+      themeVariables: {
+        fontSize: "12px",
+      },
+      flowchart: {
+        useMaxWidth: true,
+      },
+      sequence: {
+        useMaxWidth: true,
+      },
+      gantt: {
+        useMaxWidth: true,
+      },
+    });
+    await mermaid.run({ querySelector: ".rustdoc-mermaid" });
+    normalizeMermaidSvgSizing();
   });
 </script>
