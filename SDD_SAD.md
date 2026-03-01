@@ -720,12 +720,14 @@ Major modes:
 ```mermaid
 stateDiagram-v2
     [*] --> HistoryOverview
-    HistoryOverview --> HistoryCommit: Enter (selected head)
-    HistoryOverview --> PayloadMain: Tab / v / 2
-    PayloadMain --> HistoryOverview: Tab / v / 1
-    HistoryCommit --> DiffView: Enter (selected file)
+    HistoryOverview --> HistoryCommit: Enter selected head
+    HistoryOverview --> PayloadMain: v or 2
+    HistoryCommit --> PayloadMain: 2
+    PayloadMain --> HistoryOverview: v or 1
+    PayloadMain --> HistoryCommit: 3
+    HistoryCommit --> DiffView: Enter selected file
     DiffView --> HistoryCommit: Esc
-    PayloadMain --> PayloadObjectDetail: Enter (selected object)
+    PayloadMain --> PayloadObjectDetail: Enter selected object or resolved entry
     PayloadObjectDetail --> PayloadMain: Esc
     HistoryCommit --> HistoryOverview: Esc
     HistoryOverview --> [*]: q or Esc
@@ -738,7 +740,28 @@ Key interaction properties:
 - `v` toggles history/payload from main page
 - `Tab` switches overview focus between head and would-change tables
 - payload supports sort cycling, page jumps, and entry/object subview toggles
+- `?` opens a contextual help overlay with three pages (`Hotkeys`, `Glossary`, `Audit Guide`)
+- while help is open, paging keys (`PgUp/PgDn`, `h/l`, arrows, `j/k`, `Tab`) switch help pages instead of mutating the underlying review selection
 - Esc closes deep modes first (diff/detail), then unwinds to overview, then exits
+
+### 7.1 Contextual help overlay
+
+The help system is modeled as a transient overlay that can be entered from any primary UI mode. Its content is mode-aware and intentionally split by reviewer intent:
+
+- `Hotkeys`: interaction and navigation controls for the active mode
+- `Glossary`: terms currently visible on the active page (for example proof counters, object kinds, and delta terminology)
+- `Audit Guide`: practical review guidance for auditors who are not expected to be experts in Git internals or PACK encoding
+
+```mermaid
+stateDiagram-v2
+    state "Any active review mode" as ActiveMode
+    ActiveMode --> HelpOverlay: ?
+    HelpOverlay --> ActiveMode: ? or Esc
+    HelpOverlay --> HelpOverlay: PgUp/PgDn or h/l or arrows or j/k or Tab (cycle pages)
+    HelpOverlay --> [*]: q
+```
+
+The overlay text uses the same semantic color language as the core UI where practical (for example object kinds and delta terms), which reduces context switching during audit review.
 
 ## 8. Auditability Guarantees and Limits
 

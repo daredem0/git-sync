@@ -7,6 +7,35 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-03-01
+
+### Added
+- Added a contextual in-app help overlay with three auditor-focused pages:
+  - `Hotkeys`
+  - `Glossary`
+  - `Audit Guide`
+- Added a persistent help-page header (`1 Hotkeys | 2 Glossary | 3 Audit Guide`) with active-page emphasis.
+- Added per-view audit guidance content so operators without deep Git/PACK internals can still perform structured review checks.
+
+### Changed
+- Updated help overlay behavior to be view-aware (overview, commit page, diff, payload objects, payload entries, payload object detail).
+- Added semantic term highlighting inside help content to align with existing terminal-theme colors (for example `commit`, `tree`, `blob`, `tag`, `ref-delta`, `ofs-delta`, `OID`).
+- Help paging now cleanly captures navigation keys while help is open and clamps page navigation to the defined help-page range.
+- Refactored module-local test organization to separate implementation and test code in touched modules (`#[cfg(test)] mod tests;` + dedicated `tests.rs` files).
+- Standardized per-module test placement into folder-based layouts where possible (for example `src/ui/input/router/tests.rs`, `src/git/bundle/payload/verify/entry/tests.rs`).
+
+### Tests
+- Expanded UI tests to cover:
+  - help-page navigation and clamping behavior
+  - per-page/per-view help rendering
+  - audit-guide content presence in relevant contexts
+  - persistent page-header rendering in the help overlay
+- Migrated former inline unit tests from 22 implementation files into dedicated module test files while preserving coverage and behavior.
+- Verified full suite passes after migration (`cargo test --all-targets`).
+
+### Documentation
+- Updated SDD/SAD UI interaction model to document contextual help overlay behavior and auditor guidance pages.
+
 ## [0.7.2] - 2026-03-01
 
 ### Added
@@ -282,7 +311,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/daredem0/git-sync/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/daredem0/git-sync/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/daredem0/git-sync/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/daredem0/git-sync/compare/v0.6.1...v0.7.0
