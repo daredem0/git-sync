@@ -1,7 +1,7 @@
 # git-sync
 
 [![CI](https://github.com/daredem0/git-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/daredem0/git-sync/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/daredem0/git-sync/branch/main/graph/badge.svg)](https://codecov.io/gh/daredem0/git-sync)
+[![Coverage](https://codecov.io/gh/daredem0/git-sync/graph/badge.svg?branch=main)](https://codecov.io/gh/daredem0/git-sync)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-2ea44f?logo=github)](https://daredem0.github.io/git-sync/)
 [![Release](https://img.shields.io/github/v/release/daredem0/git-sync)](https://github.com/daredem0/git-sync/releases)
 [![License](https://img.shields.io/github/license/daredem0/git-sync)](./LICENSE)
@@ -403,9 +403,55 @@ Payload page:
 
 ## For Developers
 
+Development tasks are grouped into tiers:
+- `core`: build and test
+- `quality`: coverage, docs, and license reports
+- `release`: manpages and Linux packaging
+- `all`: everything above
+
+### Developer Setup and Task Runner (`just`)
+
+Install `just`:
+
+```bash
+# via cargo (works on all platforms with Rust installed)
+cargo install --locked just
+```
+
+Install dependencies and verify tooling:
+
+```bash
+# Arch Linux
+./scripts/setup-dev-arch.sh all
+
+# Debian/Ubuntu
+./scripts/setup-dev-ubuntu.sh all
+
+# verify local tooling
+just preflight all
+```
+
+Use `just` as the primary entry point:
+
+```bash
+just help
+just core-build
+just core-test
+just quality-coverage
+just quality-docs-private
+just quality-docs-pdf
+just release-manpages
+just release-packages
+```
+
 ### Build and Run
 
 ```bash
+just core-build
+just core-build-release
+just core-run-help
+
+# direct commands
 cargo build
 cargo build --release
 ./target/debug/git-sync --help
@@ -417,6 +463,9 @@ cargo build --release
 Run full test suite:
 
 ```bash
+just core-test
+
+# direct command
 cargo test
 ```
 
@@ -429,6 +478,9 @@ cargo test --test bundle_workflow_integration -- --nocapture
 ### Coverage
 
 ```bash
+just quality-coverage
+
+# direct command
 cargo llvm-cov --workspace --all-features --summary-only
 ```
 
@@ -444,12 +496,18 @@ cargo install --locked cargo-about
 Check dependency licenses against policy (`deny.toml`):
 
 ```bash
+just quality-licenses-check
+
+# direct command
 ./scripts/check-licenses.sh
 ```
 
 Generate/update third-party license inventory:
 
 ```bash
+just quality-licenses-generate
+
+# direct command
 ./scripts/generate-third-party-licenses.sh
 ```
 
@@ -481,6 +539,9 @@ cargo install --locked cargo-deb
 Generate man pages from documentation (`README.md` and `SDD_SAD.md` -> section 7 man pages):
 
 ```bash
+just release-manpages
+
+# direct command
 ./scripts/generate-manpages.sh
 ```
 
@@ -492,13 +553,18 @@ This writes:
 Build a Debian package (`.deb`):
 
 ```bash
-cargo install --locked cargo-deb
+just release-deb
+
+# direct command
 ./scripts/build-deb.sh
 ```
 
 Build an Arch package (`.pkg.tar.zst`):
 
 ```bash
+just release-arch
+
+# direct command
 ./scripts/build-arch.sh
 ```
 
@@ -564,12 +630,18 @@ This keeps the release pipeline immutable for tagged builds and avoids rebuildin
 Generate Rust API docs:
 
 ```bash
+just quality-docs
+
+# direct command
 cargo doc --no-deps
 ```
 
 Generate docs with Mermaid diagrams rendered (requires internet access for the Mermaid JS module):
 
 ```bash
+just quality-docs
+
+# direct command
 RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --bins
 ```
 
@@ -582,12 +654,18 @@ cargo doc --no-deps --open
 Generate docs including private items (useful for internal development):
 
 ```bash
+just quality-docs-private
+
+# direct command
 cargo doc --no-deps --document-private-items
 ```
 
 Generate a PDF from the rendered crate docs (includes Mermaid diagrams, Arch Linux local setup):
 
 ```bash
+just quality-docs-pdf
+
+# one-time Arch prerequisites if missing:
 sudo pacman -S --needed nss nspr atk at-spi2-atk gtk3 libdrm libxkbcommon pango cairo alsa-lib libxcomposite libxdamage libxfixes libxrandr libx11 libxext libxrender libxi libxtst libcups mesa ttf-liberation
 npm install --no-save playwright@1.52.0
 npx playwright install chromium
