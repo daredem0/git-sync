@@ -39,6 +39,12 @@ pub(super) enum KeyAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HelpAction {
+    NextPage,
+    PreviousPage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DiffAction {
     ScrollDown(usize),
     ScrollUp(usize),
@@ -82,6 +88,21 @@ pub(super) fn action_for_page_key(state: &AppState, code: KeyCode) -> Option<Key
         return action_for_payload_page_key(state, code);
     }
     action_for_history_page_key(state, code)
+}
+
+pub(super) fn action_for_help_key(code: KeyCode) -> Option<HelpAction> {
+    match code {
+        KeyCode::Down
+        | KeyCode::Char('j')
+        | KeyCode::Right
+        | KeyCode::Char('l')
+        | KeyCode::PageDown
+        | KeyCode::Tab => Some(HelpAction::NextPage),
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::Left | KeyCode::Char('h') | KeyCode::PageUp => {
+            Some(HelpAction::PreviousPage)
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn action_for_diff_key(code: KeyCode) -> Option<DiffAction> {
@@ -306,5 +327,26 @@ mod tests {
             Some(PayloadObjectAction::Reset)
         );
         assert_eq!(action_for_payload_object_key(KeyCode::Char('x')), None);
+    }
+
+    #[test]
+    fn action_for_help_key_maps_bidirectional_paging_shortcuts() {
+        assert_eq!(
+            action_for_help_key(KeyCode::Right),
+            Some(HelpAction::NextPage)
+        );
+        assert_eq!(
+            action_for_help_key(KeyCode::PageDown),
+            Some(HelpAction::NextPage)
+        );
+        assert_eq!(
+            action_for_help_key(KeyCode::Left),
+            Some(HelpAction::PreviousPage)
+        );
+        assert_eq!(
+            action_for_help_key(KeyCode::PageUp),
+            Some(HelpAction::PreviousPage)
+        );
+        assert_eq!(action_for_help_key(KeyCode::Char('x')), None);
     }
 }

@@ -11,6 +11,8 @@ use crate::ui::types::{
     PayloadSubView,
 };
 
+const HELP_PAGE_COUNT: usize = 2;
+
 impl AppState {
     /// Creates initial UI state for the provided audit model.
     pub(crate) fn new(model: &AuditModel) -> Self {
@@ -32,6 +34,7 @@ impl AppState {
             payload_selected_index: 0,
             payload_sort_mode: PayloadSortMode::Canonical,
             show_help: false,
+            help_page_index: 0,
             action_message: None,
             payload_detail_cache: std::collections::HashMap::new(),
             payload_preview_cache: std::collections::HashMap::new(),
@@ -209,6 +212,32 @@ impl AppState {
     /// Returns `true` when the inline diff view is currently open.
     pub(crate) fn is_diff_open(&self) -> bool {
         self.diff_view.is_some()
+    }
+
+    /// Toggles help overlay visibility and resets help paging when opening.
+    pub(crate) fn toggle_help(&mut self) {
+        if self.show_help {
+            self.close_help();
+        } else {
+            self.show_help = true;
+            self.help_page_index = 0;
+        }
+    }
+
+    /// Closes help overlay and resets paging state to the first help page.
+    pub(crate) fn close_help(&mut self) {
+        self.show_help = false;
+        self.help_page_index = 0;
+    }
+
+    /// Advances help overlay to the next help page.
+    pub(crate) fn next_help_page(&mut self) {
+        self.help_page_index = std::cmp::min(self.help_page_index + 1, HELP_PAGE_COUNT - 1);
+    }
+
+    /// Moves help overlay to the previous help page.
+    pub(crate) fn previous_help_page(&mut self) {
+        self.help_page_index = self.help_page_index.saturating_sub(1);
     }
 
     /// Closes the diff view and clears transient action messages.

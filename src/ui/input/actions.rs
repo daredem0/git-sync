@@ -6,7 +6,7 @@
 //! Part of the read-only review UI that projects verified evidence for operators.
 //! Keeps interaction and rendering concerns separate from proof computation.
 
-use super::router::{DiffAction, KeyAction, PayloadObjectAction};
+use super::router::{DiffAction, HelpAction, KeyAction, PayloadObjectAction};
 use crate::ui::types::{AppState, AuditModel, MainView};
 
 pub(super) fn apply_key_action(
@@ -39,7 +39,10 @@ pub(super) fn apply_key_action(
         }
         KeyAction::Quit => true,
         KeyAction::Escape => {
-            if state.is_diff_open() {
+            if state.show_help {
+                state.close_help();
+                false
+            } else if state.is_diff_open() {
                 state.close_diff();
                 false
             } else if state.is_payload_object_open() {
@@ -53,7 +56,7 @@ pub(super) fn apply_key_action(
             }
         }
         KeyAction::ToggleHelp => {
-            state.show_help = !state.show_help;
+            state.toggle_help();
             false
         }
         KeyAction::ToggleMainView => {
@@ -127,6 +130,13 @@ pub(super) fn apply_key_action(
             state.open_selected_payload_object(model);
             false
         }
+    }
+}
+
+pub(super) fn apply_help_action(state: &mut AppState, action: HelpAction) {
+    match action {
+        HelpAction::NextPage => state.next_help_page(),
+        HelpAction::PreviousPage => state.previous_help_page(),
     }
 }
 

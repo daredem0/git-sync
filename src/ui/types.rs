@@ -71,6 +71,7 @@ pub(crate) struct AppState {
     pub(crate) selected_file_indices: Vec<Vec<usize>>,
     pub(crate) payload_selected_index: usize,
     pub(crate) show_help: bool,
+    pub(crate) help_page_index: usize,
     pub(crate) action_message: Option<String>,
     pub(crate) payload_detail_cache: HashMap<git2::Oid, git::PayloadObjectDetail>,
     pub(crate) payload_preview_cache: HashMap<git2::Oid, PayloadPreviewState>,

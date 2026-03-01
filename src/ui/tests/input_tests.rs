@@ -77,6 +77,66 @@ fn handle_key_press_question_toggles_help() {
     let should_exit = handle_key_press(&mut state, &model, KeyCode::Char('?'));
     assert!(!should_exit, "toggling help should not request app exit");
     assert!(state.show_help, "help flag should flip to true");
+    assert_eq!(
+        state.help_page_index, 0,
+        "opening help should reset to the first help page"
+    );
+}
+
+// Verifies that help-page navigation keys are consumed by the help overlay and do not mutate page selection.
+#[test]
+fn handle_key_press_help_overlay_consumes_navigation_for_help_paging() {
+    let model = sample_multi_head_model(&[2, 2]);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 1;
+    state.selected_head_index = 1;
+    state.selected_file_indices[1][0] = 1;
+
+    let opened = handle_key_press(&mut state, &model, KeyCode::Char('?'));
+    assert!(!opened, "opening help should not exit");
+    assert!(state.show_help, "help should be visible after '?'");
+
+    let next_page = handle_key_press(&mut state, &model, KeyCode::PageDown);
+    assert!(!next_page, "help page switch should not exit");
+    assert_eq!(
+        state.help_page_index, 1,
+        "help PageDown should advance to second help page"
+    );
+    assert_eq!(
+        state.page_index, 1,
+        "help paging should not trigger commit-page navigation"
+    );
+    assert_eq!(
+        state.selected_file_indices[1][0], 1,
+        "help paging should not change selected file row"
+    );
+
+    let prev_page = handle_key_press(&mut state, &model, KeyCode::PageUp);
+    assert!(!prev_page, "help page switch should not exit");
+    assert_eq!(
+        state.help_page_index, 0,
+        "help PageUp should return to first help page"
+    );
+}
+
+// Verifies that Esc closes help overlay before normal escape routing.
+#[test]
+fn handle_key_press_esc_closes_help_before_page_navigation_or_exit() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.show_help = true;
+    state.help_page_index = 1;
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Esc);
+    assert!(
+        !should_exit,
+        "Esc should close help overlay first instead of exiting"
+    );
+    assert!(!state.show_help, "Esc should hide help overlay");
+    assert_eq!(
+        state.help_page_index, 0,
+        "closing help should reset paging to first page"
+    );
 }
 
 // Verifies that Esc from a commit page returns to overview instead of exiting immediately.

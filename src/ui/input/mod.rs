@@ -14,6 +14,16 @@ mod router;
 
 /// Handles one key press and returns `true` when the app should exit.
 pub(crate) fn handle_key_press(state: &mut AppState, model: &AuditModel, code: KeyCode) -> bool {
+    if state.show_help {
+        if let Some(action) = router::global_action(code) {
+            return actions::apply_key_action(state, model, action);
+        }
+        if let Some(action) = router::action_for_help_key(code) {
+            actions::apply_help_action(state, action);
+        }
+        return false;
+    }
+
     if let Some(action) = router::global_action(code) {
         return actions::apply_key_action(state, model, action);
     }
