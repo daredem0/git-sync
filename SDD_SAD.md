@@ -63,10 +63,10 @@ flowchart LR
         PKG[[sync.bundle.zip]]
     end
     subgraph RECV["Auditor / Receiver Host"]
-        AUDIT[audit (UI/table/json)]
+        AUDIT[audit UI-table-JSON]
         VM[audit --verify-metadata]
         GATE{Transfer Gate Decision}
-        RECEIVE[receive / receive --dry-run]
+        RECEIVE[receive and receive --dry-run]
         DST[(Receiver Repository)]
     end
 
@@ -472,7 +472,7 @@ Dry-run and apply are intentionally parallel in logic but different in target:
 
 ```mermaid
 flowchart LR
-    subgraph DRY["Dry-run path (`receive --dry-run`)"]
+    subgraph DRY["Dry-run path: receive --dry-run"]
         D1[Create temp bare mirror]
         D2[Fetch receiver refs into mirror]
         D3[Apply bundle in mirror]
@@ -481,11 +481,11 @@ flowchart LR
         D1 --> D2 --> D3 --> D4 --> D5
     end
 
-    subgraph APPLY["Apply path (`receive`)"]
+    subgraph APPLY["Apply path: receive"]
         A1[Open receiver repository]
         A2[Optional metadata integrity verify]
         A3[Apply bundle to receiver]
-        A4[Update heads (skip already-applied)]
+        A4[Update heads: skip already-applied]
         A5[Persist imported state]
         A1 --> A2 --> A3 --> A4 --> A5
     end
