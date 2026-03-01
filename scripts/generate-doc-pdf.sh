@@ -3,6 +3,7 @@ set -euo pipefail
 
 DOCS_DIR="${1:-target/doc}"
 OUTPUT_PATH="${2:-}"
+ENTRY_FILE="${3:-index.html}"
 
 if [[ ! -d "${DOCS_DIR}" ]]; then
   echo "Docs directory not found: ${DOCS_DIR}" >&2
@@ -11,7 +12,7 @@ if [[ ! -d "${DOCS_DIR}" ]]; then
 fi
 
 CRATE_DOC_DIR="$(grep -m1 '^name = ' Cargo.toml | sed -E 's/name = "([^"]+)"/\1/' | tr '-' '_')"
-ENTRY_PATH="${CRATE_DOC_DIR}/index.html"
+ENTRY_PATH="${CRATE_DOC_DIR}/${ENTRY_FILE}"
 
 if [[ ! -f "${DOCS_DIR}/${ENTRY_PATH}" ]]; then
   echo "Expected crate docs entry not found: ${DOCS_DIR}/${ENTRY_PATH}" >&2
@@ -30,4 +31,3 @@ node scripts/generate-doc-pdf.mjs \
   --output "${OUTPUT_PATH}"
 
 echo "Docs PDF written to: ${OUTPUT_PATH}"
-

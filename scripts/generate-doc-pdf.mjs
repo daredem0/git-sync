@@ -1,12 +1,21 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { readFile, readdir, stat } from "node:fs/promises";
+import {
+  dirname,
+  extname,
+  join,
+  normalize,
+  posix as pathPosix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { chromium } from "playwright";
 
 const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_PORT = 8787;
+const DEFAULT_PORT = 0;
 
 function parseArgs(argv) {
   const args = {
@@ -41,7 +50,7 @@ function parseArgs(argv) {
     console.error("Both --entry and --output are required.");
     printUsageAndExit(2);
   }
-  if (!Number.isFinite(args.port) || args.port <= 0) {
+  if (!Number.isFinite(args.port) || args.port < 0) {
     console.error(`Invalid --port value: ${args.port}`);
     printUsageAndExit(2);
   }
@@ -51,7 +60,7 @@ function parseArgs(argv) {
 
 function printUsageAndExit(code) {
   console.error(
-    "Usage: generate-doc-pdf.mjs --docs-dir <target/doc> --entry <crate/index.html> --output <out.pdf> [--host 127.0.0.1] [--port 8787]",
+    "Usage: generate-doc-pdf.mjs --docs-dir <target/doc> --entry <crate/index.html> --output <out.pdf> [--host 127.0.0.1] [--port 0]",
   );
   process.exit(code);
 }
@@ -80,9 +89,23 @@ function contentType(pathname) {
     case ".jpg":
     case ".jpeg":
       return "image/jpeg";
+    case ".webp":
+      return "image/webp";
     default:
       return "application/octet-stream";
   }
+}
+
+function toPosixPath(filePath) {
+  return filePath.split(sep).join("/");
+}
+
+function escapeHtml(input) {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function createStaticServer(rootDir, host, port) {
@@ -124,33 +147,252 @@ function createStaticServer(rootDir, host, port) {
 
   return new Promise((resolveServer, rejectServer) => {
     server.once("error", rejectServer);
-    server.listen(port, host, () => resolveServer(server));
+    server.listen(port, host, () => {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") {
+        rejectServer(new Error("Failed to resolve bound server port."));
+        return;
+      }
+      resolveServer({ server, port: addr.port });
+    });
   });
+}
+
+function pageRank(relPath, entryPath, allPath) {
+  if (relPath === entryPath) return 0;
+  if (relPath === allPath) return 1;
+  if (relPath.endsWith("/index.html")) return 2;
+  if (/\/fn\..+\.html$/.test(relPath)) return 3;
+  return 4;
+}
+
+async function collectCrateHtmlPages(docsDir, crateDir, entryPath) {
+  const crateRoot = resolve(docsDir, crateDir);
+  const crateInfo = await stat(crateRoot).catch(() => null);
+  if (!crateInfo?.isDirectory()) {
+    throw new Error(`Crate docs directory not found: ${crateRoot}`);
+  }
+
+  const pages = [];
+
+  async function walk(dirPath) {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".html")) {
+        const rel = toPosixPath(relative(resolve(docsDir), fullPath));
+        pages.push(rel);
+      }
+    }
+  }
+
+  await walk(crateRoot);
+
+  const allPath = `${crateDir}/all.html`;
+  pages.sort((a, b) => {
+    const rankA = pageRank(a, entryPath, allPath);
+    const rankB = pageRank(b, entryPath, allPath);
+    if (rankA !== rankB) return rankA - rankB;
+    return a.localeCompare(b);
+  });
+  return pages;
+}
+
+async function extractPageContent(page, url, relPath) {
+  await page.goto(url, { waitUntil: "networkidle", timeout: 120_000 });
+  await page.waitForLoadState("networkidle", { timeout: 120_000 });
+  await page.evaluate(() => document.fonts?.ready);
+  await page.evaluate(async () => {
+    const diagrams = Array.from(document.querySelectorAll(".rustdoc-mermaid"));
+    if (diagrams.length === 0) return;
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      if (diagrams.every((node) => node.querySelector("svg"))) return;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    }
+  });
+  await page.waitForTimeout(200);
+
+  return page.evaluate((pathLabel) => {
+    const contentNode = document.querySelector("main .content");
+    const headingText =
+      document.querySelector("main .main-heading h1")?.textContent?.trim() ??
+      document.title;
+
+    const stylesheetHrefs = Array.from(
+      document.querySelectorAll('link[rel="stylesheet"]'),
+    ).map((link) => link.href);
+
+    if (!contentNode) {
+      return {
+        relPath: pathLabel,
+        heading: headingText,
+        html: `<p>Unable to extract main content from ${pathLabel}</p>`,
+        stylesheets: stylesheetHrefs,
+      };
+    }
+
+    const clone = contentNode.cloneNode(true);
+    clone.querySelectorAll("rustdoc-toolbar,#copy-path").forEach((node) => node.remove());
+
+    // Rewrite links and asset references to absolute URLs so stitched content remains navigable.
+    clone.querySelectorAll("[href]").forEach((node) => {
+      const value = node.getAttribute("href");
+      if (!value) return;
+      try {
+        node.setAttribute("href", new URL(value, document.baseURI).href);
+      } catch {
+        // Keep original value if URL resolution fails.
+      }
+    });
+    clone.querySelectorAll("[src]").forEach((node) => {
+      const value = node.getAttribute("src");
+      if (!value) return;
+      try {
+        node.setAttribute("src", new URL(value, document.baseURI).href);
+      } catch {
+        // Keep original value if URL resolution fails.
+      }
+    });
+
+    return {
+      relPath: pathLabel,
+      heading: headingText,
+      html: clone.innerHTML,
+      stylesheets: stylesheetHrefs,
+    };
+  }, relPath);
+}
+
+function buildMergedHtmlDocument(pages, stylesheetHrefs) {
+  const links = [...stylesheetHrefs]
+    .map((href) => `<link rel="stylesheet" href="${escapeHtml(href)}">`)
+    .join("\n");
+
+  const sections = pages
+    .map((page) => {
+      const pageTitle = escapeHtml(page.heading);
+      const pagePath = escapeHtml(page.relPath);
+      return `
+        <section class="doc-page">
+          <header class="doc-page-meta">
+            <h1 class="doc-page-title">${pageTitle}</h1>
+            <div class="doc-page-path">${pagePath}</div>
+          </header>
+          <div class="doc-page-content">${page.html}</div>
+        </section>
+      `;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>git-sync rustdoc (flattened)</title>
+  ${links}
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #111111;
+    }
+    .doc-page {
+      margin: 0;
+      padding: 16px 20px 20px;
+      break-after: page;
+      page-break-after: always;
+    }
+    .doc-page:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .doc-page-meta {
+      margin: 0 0 12px;
+      padding: 0 0 8px;
+      border-bottom: 1px solid #c7c7c7;
+    }
+    .doc-page-title {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    .doc-page-path {
+      margin-top: 4px;
+      font-size: 0.8rem;
+      color: #5a5a5a;
+      font-family: monospace;
+    }
+    .doc-page-content .width-limiter {
+      max-width: none !important;
+      margin: 0 !important;
+    }
+    .doc-page-content .main-heading {
+      margin-top: 0 !important;
+    }
+    .doc-page-content rustdoc-toolbar,
+    .doc-page-content #copy-path {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  ${sections}
+</body>
+</html>`;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const docsDir = resolve(args.docsDir);
   const outputPath = resolve(args.output);
-  const entryPath = args.entry.replace(/^[/\\]+/, "");
-  const targetUrl = `http://${args.host}:${args.port}/${entryPath}`;
+  const entryPath = toPosixPath(args.entry.replace(/^[/\\]+/, ""));
+  const crateDir = toPosixPath(dirname(entryPath));
+  if (!crateDir || crateDir === "." || crateDir === "/") {
+    throw new Error(
+      `--entry must point to a crate page like git_sync/index.html (received: ${args.entry})`,
+    );
+  }
 
-  const server = await createStaticServer(docsDir, args.host, args.port);
+  const pagePaths = await collectCrateHtmlPages(docsDir, crateDir, entryPath);
+  if (pagePaths.length === 0) {
+    throw new Error(`No HTML pages found under crate docs directory: ${crateDir}`);
+  }
+
+  const { server, port } = await createStaticServer(docsDir, args.host, args.port);
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({
+    const extractor = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
     });
 
-    await page.goto(targetUrl, { waitUntil: "networkidle", timeout: 120_000 });
-    await page.waitForLoadState("networkidle", { timeout: 120_000 });
+    const extractedPages = [];
+    const stylesheets = new Set();
+    for (const relPath of pagePaths) {
+      const url = `http://${args.host}:${port}/${relPath}`;
+      const extracted = await extractPageContent(extractor, url, relPath);
+      extractedPages.push(extracted);
+      for (const href of extracted.stylesheets) {
+        stylesheets.add(href);
+      }
+      console.log(`Collected: ${relPath}`);
+    }
+    await extractor.close();
 
-    // Wait for webfonts and Mermaid rendering to stabilize.
-    await page.evaluate(() => document.fonts?.ready);
-    await page.waitForTimeout(1200);
+    const mergedHtml = buildMergedHtmlDocument(extractedPages, stylesheets);
+    const outPage = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    await outPage.setContent(mergedHtml, { waitUntil: "networkidle" });
+    await outPage.evaluate(() => document.fonts?.ready);
+    await outPage.waitForTimeout(500);
 
-    await page.pdf({
+    await outPage.pdf({
       path: outputPath,
       format: "A4",
       printBackground: true,
@@ -161,8 +403,9 @@ async function main() {
         left: "10mm",
       },
     });
+    await outPage.close();
 
-    console.log(`Generated docs PDF: ${outputPath}`);
+    console.log(`Generated flattened docs PDF (${extractedPages.length} pages): ${outputPath}`);
   } finally {
     if (browser) {
       await browser.close();
@@ -177,4 +420,3 @@ main().catch((err) => {
   console.error(err instanceof Error ? err.stack ?? err.message : String(err));
   process.exit(1);
 });
-

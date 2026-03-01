@@ -584,8 +584,17 @@ Generate a PDF from the rendered crate docs (includes Mermaid diagrams, Arch Lin
 sudo pacman -S --needed nss nspr atk at-spi2-atk gtk3 libdrm libxkbcommon pango cairo alsa-lib libxcomposite libxdamage libxfixes libxrandr libx11 libxext libxrender libxi libxtst libcups mesa ttf-liberation
 npm install --no-save playwright@1.52.0
 npx playwright install chromium
-RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --bins
+RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --bins --document-private-items
 ./scripts/generate-doc-pdf.sh
+```
+
+Notes:
+- PDF generation flattens the crate rustdoc into one document (landing page plus module and item pages).
+- Default entry is `git_sync/index.html` and the full crate tree is stitched automatically.
+- You can still choose a different start page by passing a third argument:
+
+```bash
+./scripts/generate-doc-pdf.sh target/doc target/docs-pdf/git_sync-rustdoc-all.pdf all.html
 ```
 
 ### Additional Project Documentation
