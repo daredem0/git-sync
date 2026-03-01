@@ -16,6 +16,8 @@ mod payload;
 use crate::ui::types::{AppState, AuditModel, MainView};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 pub(crate) use commit::render_commit_page;
@@ -66,7 +68,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     }
 }
 
-const HELP_PAGE_COUNT: usize = 2;
+const HELP_PAGE_COUNT: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HelpContext {
@@ -78,26 +80,22 @@ enum HelpContext {
     PayloadObjectDetail,
 }
 
-/// Renders the centered two-page help overlay for the current mode.
+/// Renders the centered pageable help overlay for the current mode.
 pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, state: &AppState) {
     let area = centered_rect(82, 78, frame.area());
     frame.render_widget(Clear, area);
     let context = active_help_context(state);
     let page_index = std::cmp::min(state.help_page_index, HELP_PAGE_COUNT - 1);
-    let (page_label, page_text) = if page_index == 0 {
-        ("Hotkeys", help_hotkeys_text(context))
-    } else {
-        ("Context", help_context_text(context))
+    let (page_label, page_text) = match page_index {
+        0 => ("Hotkeys", help_hotkeys_text(context)),
+        1 => ("Context", help_context_text(context)),
+        _ => ("How to Audit", help_audit_text(context)),
     };
-    let help_text = format!(
-        "{page_text}\n\
-         \n\
-         Page {}/{} | PgUp/PgDn or h/l switch help pages | ? or Esc close | q quit",
-        page_index + 1,
-        HELP_PAGE_COUNT
-    );
+    let mut lines = style_help_text(page_text);
+    lines.push(Line::from(String::new()));
+    lines.push(help_footer_line(page_index));
 
-    let help = Paragraph::new(help_text)
+    let help = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(format!(
             "Help {}/{} - {page_label}",
             page_index + 1,
@@ -274,6 +272,200 @@ fn help_context_text(context: HelpContext) -> &'static str {
              - line-number gutter: stable anchor for discussing exact lines during review."
         }
     }
+}
+
+fn help_audit_text(context: HelpContext) -> &'static str {
+    match context {
+        HelpContext::HistoryOverview => {
+            "How to Audit (Overview)\n\
+             - Start with green checks only: metadata verification, pack proof, transfer gate, and pack checksum should all pass.\n\
+             - Verify the ratios: pack entries parsed and materialized should be N/N (no missing rows).\n\
+             - Reachability must be complete: \"bundle fully reachable from heads\" should be yes.\n\
+             - Scan the Heads To Import table: confirm refs and OIDs match what you expect to receive.\n\
+             - Scan Would Change: unexpected sensitive paths, huge +LINES/-LINES spikes, or many unrelated files are red flags.\n\
+             - If any integrity line is red, stop and request a rebuilt bundle before moving forward."
+        }
+        HelpContext::HistoryCommit => {
+            "How to Audit (Commit Page)\n\
+             - Work commit by commit, not file by file across commits.\n\
+             - Check commit subject/position for a coherent story (feature/fix scope should be narrow and explainable).\n\
+             - Open changed files that affect security, build scripts, deployment, auth, crypto, and external interfaces first.\n\
+             - Treat wide-scoped commits touching many unrelated directories as suspicious until justified.\n\
+             - Use this page to decide where deeper diff review is needed; then open file diffs with Enter."
+        }
+        HelpContext::Diff => {
+            "How to Audit (Diff)\n\
+             - Read hunk by hunk and ask: what behavior changes for users, data, auth, and network boundaries?\n\
+             - Prioritize dangerous classes: credential handling, shell execution, path handling, serialization, and permissions.\n\
+             - Look for hidden risk in small edits: condition flips, removed checks, default value changes, and silent error handling.\n\
+             - Validate deletions as much as additions; removed checks can be as risky as new code.\n\
+             - If intent is unclear, block transfer until commit message and code intent are aligned."
+        }
+        HelpContext::PayloadObjects => {
+            "How to Audit (Payload Objects)\n\
+             - Confirm object mix is plausible for the claimed update (commit/tree/blob/tag distribution).\n\
+             - Every listed object should be reachable unless explicitly justified.\n\
+             - Use object detail on high-risk blobs (scripts/config/security-sensitive files) to inspect real content.\n\
+             - Unexpected large blobs or many binary blobs deserve extra scrutiny before approval.\n\
+             - This view helps verify \"what is inside\" independent of branch names."
+        }
+        HelpContext::PayloadEntries => {
+            "How to Audit (Payload Entries)\n\
+             - Treat this as transport-level evidence: each row is one PACK entry that must resolve cleanly.\n\
+             - RESOLVED should be yes for all entries that matter to transfer; unresolved rows are a stop signal.\n\
+             - Compare HDR_SIZE and RECON_SIZE for sanity; extreme mismatches can indicate unusual delta expansion.\n\
+             - Review delta rows (ofs-delta/ref-delta): they are normal, but unresolved or inconsistent bases are not.\n\
+             - BASE and OID fields should look consistent and complete for resolved rows."
+        }
+        HelpContext::PayloadObjectDetail => {
+            "How to Audit (Object Detail)\n\
+             - This is the closest view to ground truth content; read it as the exact object payload.\n\
+             - For blobs, verify file intent, sensitive data handling, and dangerous operations directly in content.\n\
+             - For non-text/binary blobs, require external validation of provenance and expected purpose.\n\
+             - Cross-check suspicious objects back to commit/diff context before approving transfer.\n\
+             - If object content cannot be explained, block and request clarification or re-export."
+        }
+    }
+}
+
+fn style_help_text(text: &str) -> Vec<Line<'static>> {
+    text.lines().map(style_help_line).collect()
+}
+
+fn style_help_line(line: &str) -> Line<'static> {
+    if line.trim().is_empty() {
+        return Line::from(String::new());
+    }
+
+    let rules = help_highlight_rules();
+    let mut spans = Vec::<Span<'static>>::new();
+    let mut cursor = 0usize;
+
+    while cursor < line.len() {
+        let mut next_match: Option<(usize, usize, Style)> = None;
+        for (pattern, style) in &rules {
+            if let Some(found) = line[cursor..].find(pattern) {
+                let start = cursor + found;
+                let len = pattern.len();
+                match next_match {
+                    None => next_match = Some((start, len, *style)),
+                    Some((best_start, best_len, _))
+                        if start < best_start || (start == best_start && len > best_len) =>
+                    {
+                        next_match = Some((start, len, *style));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some((start, len, style)) = next_match {
+            if start > cursor {
+                spans.push(Span::raw(line[cursor..start].to_string()));
+            }
+            spans.push(Span::styled(line[start..start + len].to_string(), style));
+            cursor = start + len;
+        } else {
+            spans.push(Span::raw(line[cursor..].to_string()));
+            break;
+        }
+    }
+
+    Line::from(spans)
+}
+
+fn help_footer_line(page_index: usize) -> Line<'static> {
+    let key_style = help_key_style();
+    Line::from(vec![
+        Span::raw(format!("Page {}/{} | ", page_index + 1, HELP_PAGE_COUNT)),
+        Span::styled("PgUp/PgDn", key_style),
+        Span::raw(" or "),
+        Span::styled("h/l", key_style),
+        Span::raw(" switch pages | "),
+        Span::styled("?/Esc", key_style),
+        Span::raw(" close | "),
+        Span::styled("q", key_style),
+        Span::raw(" quit"),
+    ])
+}
+
+fn help_highlight_rules() -> Vec<(&'static str, Style)> {
+    vec![
+        ("ref-delta", help_delta_style()),
+        ("ofs-delta", help_delta_style()),
+        ("RECON_SIZE", help_delta_style()),
+        ("HDR_SIZE", help_delta_style()),
+        ("materialized", help_ok_style()),
+        ("RESOLVED", help_ok_style()),
+        ("reachable", help_ok_style()),
+        ("checksum", help_ok_style()),
+        ("pack proof", help_ok_style()),
+        ("OID", help_oid_style()),
+        ("oid", help_oid_style()),
+        ("commit", help_commit_style()),
+        ("tree", help_tree_style()),
+        ("blob", help_blob_style()),
+        ("tag", help_tag_style()),
+        ("PgUp/PgDn", help_key_style()),
+        ("Enter", help_key_style()),
+        ("Esc", help_key_style()),
+        ("Tab", help_key_style()),
+        ("h/l", help_key_style()),
+        ("j/k", help_key_style()),
+        ("1 / 2 / 3", help_key_style()),
+        ("+LINES", help_ok_style()),
+        ("-LINES", help_warn_style()),
+    ]
+}
+
+fn help_key_style() -> Style {
+    Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_commit_style() -> Style {
+    Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_tree_style() -> Style {
+    Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_blob_style() -> Style {
+    Style::default()
+        .fg(Color::Blue)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_tag_style() -> Style {
+    Style::default()
+        .fg(Color::Magenta)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_delta_style() -> Style {
+    Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_oid_style() -> Style {
+    Style::default().fg(Color::Yellow)
+}
+
+fn help_ok_style() -> Style {
+    Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn help_warn_style() -> Style {
+    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
 }
 
 /// Computes a centered popup rectangle using percentage-based constraints.

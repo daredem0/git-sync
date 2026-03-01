@@ -11,7 +11,7 @@ use crate::ui::types::{
     PayloadSubView,
 };
 
-const HELP_PAGE_COUNT: usize = 2;
+const HELP_PAGE_COUNT: usize = 3;
 
 impl AppState {
     /// Creates initial UI state for the provided audit model.

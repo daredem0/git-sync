@@ -111,11 +111,25 @@ fn handle_key_press_help_overlay_consumes_navigation_for_help_paging() {
         "help paging should not change selected file row"
     );
 
+    let third_page = handle_key_press(&mut state, &model, KeyCode::PageDown);
+    assert!(!third_page, "help page switch should not exit");
+    assert_eq!(
+        state.help_page_index, 2,
+        "second help PageDown should advance to third help page"
+    );
+
+    let clamped = handle_key_press(&mut state, &model, KeyCode::PageDown);
+    assert!(!clamped, "help page switch should not exit");
+    assert_eq!(
+        state.help_page_index, 2,
+        "help paging should clamp at last available page"
+    );
+
     let prev_page = handle_key_press(&mut state, &model, KeyCode::PageUp);
     assert!(!prev_page, "help page switch should not exit");
     assert_eq!(
-        state.help_page_index, 0,
-        "help PageUp should return to first help page"
+        state.help_page_index, 1,
+        "help PageUp should move back to second help page"
     );
 }
 

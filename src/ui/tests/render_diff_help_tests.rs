@@ -162,7 +162,7 @@ fn render_help_overlay_page_mode_renders_page_navigation_hints() {
         render_help_overlay(frame, &state);
     });
     assert!(
-        output.contains("Help 1/2 - Hotkeys"),
+        output.contains("Help 1/3 - Hotkeys"),
         "page help overlay should include page indicator and title"
     );
     assert!(
@@ -250,5 +250,55 @@ fn render_help_overlay_payload_entries_context_page_explains_entry_terms() {
     assert!(
         output.contains("OID"),
         "payload entries context page should explain OID column semantics"
+    );
+}
+
+// Verifies that help page 3 in overview mode teaches audit checks for non-expert reviewers.
+#[test]
+fn render_help_overlay_overview_audit_page_teaches_review_focus() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.help_page_index = 2;
+
+    let output = render_and_capture_text(140, 35, |frame| {
+        render_help_overlay(frame, &state);
+    });
+    assert!(
+        output.contains("How to Audit (Overview)"),
+        "overview audit page should render audit guidance heading"
+    );
+    assert!(
+        output.contains("pack proof"),
+        "overview audit page should emphasize integrity-first checks"
+    );
+    assert!(
+        output.contains("Would Change"),
+        "overview audit page should explain what to inspect in would-change rows"
+    );
+}
+
+// Verifies that help page 3 in payload entries mode explains audit focus for entry-level transport evidence.
+#[test]
+fn render_help_overlay_payload_entries_audit_page_explains_transport_checks() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.payload_sub_view = PayloadSubView::Entries;
+    state.help_page_index = 2;
+
+    let output = render_and_capture_text(140, 35, |frame| {
+        render_help_overlay(frame, &state);
+    });
+    assert!(
+        output.contains("How to Audit (Payload Entries)"),
+        "payload entries audit page should render audit guidance heading"
+    );
+    assert!(
+        output.contains("RESOLVED"),
+        "payload entries audit page should explain resolved-state checks"
+    );
+    assert!(
+        output.contains("HDR_SIZE"),
+        "payload entries audit page should explain size sanity checks"
     );
 }
