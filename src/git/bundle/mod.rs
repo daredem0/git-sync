@@ -30,6 +30,8 @@ pub(crate) use payload::verify_pack_payload_for_bundle_input_with_resolve_mode;
 pub use receive::{
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
     receive_bundle_input, receive_bundle_input_with_options,
+    receive_bundle_input_with_options_and_policy,
+    receive_bundle_input_with_options_policy_and_branch_mirror,
 };
 
 #[cfg(test)]

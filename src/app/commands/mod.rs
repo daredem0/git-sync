@@ -55,7 +55,16 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             bundle,
             verify_metadata,
             dry_run,
-        }) => receive::run(repo, bundle, verify_metadata, dry_run),
+            integrate,
+            incoming_as_branches,
+        }) => receive::run(
+            repo,
+            bundle,
+            verify_metadata,
+            dry_run,
+            integrate,
+            incoming_as_branches,
+        ),
         None => {
             println!("git-sync scaffold is ready.");
             println!("Use --help to inspect planned commands.");

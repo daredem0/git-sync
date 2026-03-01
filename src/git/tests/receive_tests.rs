@@ -108,6 +108,60 @@ fn create_binary_bundle_fixture(
     (repo_dir, bundle_result, base_commit_id, tip_commit_id)
 }
 
+fn find_incoming_head_ref_target(
+    repo: &git2::Repository,
+    head_reference: &str,
+) -> Option<(String, git2::Oid)> {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    let expected_tail = format!("/{suffix}");
+    let mut refs = repo.references().ok()?;
+    while let Some(reference_result) = refs.next() {
+        let reference = reference_result.ok()?;
+        let Some(name) = reference.name() else {
+            continue;
+        };
+        if !name.starts_with("refs/sync/incoming/") {
+            continue;
+        }
+        if !name.ends_with(&expected_tail) {
+            continue;
+        }
+        if let Some(target) = reference.target() {
+            return Some((name.to_string(), target));
+        }
+    }
+    None
+}
+
+fn find_incoming_head_branch_target(
+    repo: &git2::Repository,
+    head_reference: &str,
+) -> Option<(String, git2::Oid)> {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    let expected_tail = format!("/{suffix}");
+    let mut refs = repo.references().ok()?;
+    while let Some(reference_result) = refs.next() {
+        let reference = reference_result.ok()?;
+        let Some(name) = reference.name() else {
+            continue;
+        };
+        if !name.starts_with("refs/heads/incoming/") {
+            continue;
+        }
+        if !name.ends_with(&expected_tail) {
+            continue;
+        }
+        if let Some(target) = reference.target() {
+            return Some((name.to_string(), target));
+        }
+    }
+    None
+}
+
 // Focus: receive workflow correctness, prerequisite handling, idempotency, and ref-application checks.
 // Verifies that receive_bundle_input imports a zip-packaged bundle and updates exported head refs when prerequisites exist.
 #[test]
@@ -276,6 +330,213 @@ fn receive_bundle_input_is_idempotent_when_same_package_is_applied_twice() {
         tip_ref.target(),
         Some(tip_commit_id),
         "tip ref should remain pinned to the imported tip commit after repeated receive"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that fast-forward-only integration fails for diverged targets, keeps target refs unchanged,
+// and still preserves incoming heads under refs/sync/incoming/<bundle-id>/...
+#[test]
+fn receive_fast_forward_only_rejects_diverged_target_and_preserves_incoming_namespace_refs() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-fast-forward-only-diverged", false);
+    let receiver_dir = temp_repo_dir("receive-fast-forward-only-diverged-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let diverged_tip_oid = commit_from_files(
+        &receiver_repo,
+        "receiver diverged tip",
+        &[
+            ("f.txt", "receiver-side change"),
+            ("local.txt", "local only"),
+        ],
+        &[base_commit_id],
+    );
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            diverged_tip_oid,
+            true,
+            "seed diverged target",
+        )
+        .expect("must seed diverged receiver tip ref");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::FastForwardOnly,
+    );
+    assert!(
+        receive_result.is_err(),
+        "fast-forward-only receive must fail when target ref has diverged"
+    );
+    let error_text = receive_result
+        .expect_err("result must be error")
+        .to_string();
+    assert!(
+        error_text.contains("diverged (non-fast-forward)"),
+        "failure diagnostics should include non-fast-forward reason"
+    );
+    assert!(
+        error_text.contains("next-step: merge required"),
+        "failure diagnostics should include merge-required guidance"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("target tip ref should still exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(diverged_tip_oid),
+        "diverged target tip must remain unchanged after failed fast-forward-only receive"
+    );
+
+    let incoming_ref = find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming namespace ref for tip should be created even on divergence");
+    assert_eq!(
+        incoming_ref.1, tip_commit_id,
+        "incoming namespace ref must point at imported bundle head oid"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that create-refs-only integration never updates target refs and still writes incoming namespace refs.
+#[test]
+fn receive_create_refs_only_preserves_target_ref_even_when_fast_forward_is_possible() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-create-refs-only", false);
+    let receiver_dir = temp_repo_dir("receive-create-refs-only-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            base_commit_id,
+            true,
+            "seed receiver tip at base",
+        )
+        .expect("must create receiver tip reference");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::CreateRefsOnly,
+    )
+    .expect("create-refs-only receive should succeed");
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture bundle should report one imported head"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("target tip ref should still exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(base_commit_id),
+        "create-refs-only policy must not update existing target refs"
+    );
+
+    let incoming_ref = find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming namespace ref for tip should be created");
+    assert_eq!(
+        incoming_ref.1, tip_commit_id,
+        "incoming namespace ref must point at imported bundle head oid"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that incoming_as_branches additionally mirrors imported heads under refs/heads/incoming/<bundle-id>/...
+#[test]
+fn receive_incoming_as_branches_writes_branch_mirrors() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-incoming-as-branches", false);
+    let receiver_dir = temp_repo_dir("receive-incoming-as-branches-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            base_commit_id,
+            true,
+            "seed receiver tip at base",
+        )
+        .expect("must create receiver tip reference");
+
+    let receive_result = receive_bundle_input_with_options_policy_and_branch_mirror(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::CreateRefsOnly,
+        true,
+    )
+    .expect("receive with incoming_as_branches should succeed");
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture bundle should report one imported head"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let incoming_namespace = find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming namespace ref for tip should be created");
+    assert_eq!(
+        incoming_namespace.1, tip_commit_id,
+        "incoming namespace ref must point at imported bundle head oid"
+    );
+
+    let incoming_branch = find_incoming_head_branch_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming branch mirror ref for tip should be created");
+    assert_eq!(
+        incoming_branch.1, tip_commit_id,
+        "incoming branch mirror ref must point at imported bundle head oid"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

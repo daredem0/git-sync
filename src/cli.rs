@@ -75,6 +75,10 @@ pub enum Command {
         verify_metadata: bool,
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+        #[arg(long, value_enum, default_value_t = ReceiveIntegratePolicy::FastForwardOnly)]
+        integrate: ReceiveIntegratePolicy,
+        #[arg(long, default_value_t = false)]
+        incoming_as_branches: bool,
     },
 }
 
@@ -103,6 +107,16 @@ pub enum PayloadResolveMode {
     PackOnly,
     /// Allow baseline repository ODB as delta-base source.
     Baseline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+/// Target-ref integration policy for `receive`.
+pub enum ReceiveIntegratePolicy {
+    /// Preserve target refs and only write imported heads under the incoming namespace.
+    CreateRefsOnly,
+    /// Update target refs only when they can be advanced via strict fast-forward.
+    #[default]
+    FastForwardOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

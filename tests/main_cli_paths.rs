@@ -217,6 +217,185 @@ fn create_fixture() -> Fixture {
     }
 }
 
+fn rev_parse(repo: &Path, spec: &str) -> String {
+    let output = run_command(
+        "git",
+        &["-C", repo.to_string_lossy().as_ref(), "rev-parse", spec],
+        None,
+    );
+    assert_success(&output, "git rev-parse");
+    String::from_utf8(output.stdout)
+        .expect("rev-parse stdout should be utf-8")
+        .trim()
+        .to_string()
+}
+
+fn find_incoming_ref_target(receiver_repo: &Path, target_ref: &str) -> Option<(String, String)> {
+    let output = run_command(
+        "git",
+        &[
+            "-C",
+            receiver_repo.to_string_lossy().as_ref(),
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/sync/incoming",
+        ],
+        None,
+    );
+    assert_success(&output, "git for-each-ref incoming namespace");
+    let stdout =
+        String::from_utf8(output.stdout).expect("incoming ref listing stdout should be utf-8");
+    let tail = format!(
+        "/{}",
+        target_ref.strip_prefix("refs/").unwrap_or(target_ref)
+    );
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(ref_name) = parts.next() else {
+            continue;
+        };
+        let Some(object_name) = parts.next() else {
+            continue;
+        };
+        if ref_name.ends_with(&tail) {
+            return Some((ref_name.to_string(), object_name.to_string()));
+        }
+    }
+    None
+}
+
+fn find_incoming_branch_target(receiver_repo: &Path, target_ref: &str) -> Option<(String, String)> {
+    let output = run_command(
+        "git",
+        &[
+            "-C",
+            receiver_repo.to_string_lossy().as_ref(),
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads/incoming",
+        ],
+        None,
+    );
+    assert_success(&output, "git for-each-ref incoming branch mirror");
+    let stdout =
+        String::from_utf8(output.stdout).expect("incoming branch listing stdout should be utf-8");
+    let tail = format!(
+        "/{}",
+        target_ref.strip_prefix("refs/").unwrap_or(target_ref)
+    );
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(ref_name) = parts.next() else {
+            continue;
+        };
+        let Some(object_name) = parts.next() else {
+            continue;
+        };
+        if ref_name.ends_with(&tail) {
+            return Some((ref_name.to_string(), object_name.to_string()));
+        }
+    }
+    None
+}
+
+fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &str) -> String {
+    let mut command = Command::new("git");
+    command.args([
+        "-C",
+        repo.to_string_lossy().as_ref(),
+        "hash-object",
+        "-w",
+        "--stdin",
+    ]);
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("must spawn git hash-object");
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(content.as_bytes())
+        .expect("must write blob content");
+    let output = child.wait_with_output().expect("must wait for hash-object");
+    if !output.status.success() {
+        panic!(
+            "git hash-object failed\nexit={}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let blob_oid = String::from_utf8(output.stdout)
+        .expect("blob oid stdout should be utf-8")
+        .trim()
+        .to_string();
+    let mktree_input = format!("100644 blob {blob_oid}\tbase.txt\n");
+    let mut mktree = Command::new("git");
+    mktree.args(["-C", repo.to_string_lossy().as_ref(), "mktree"]);
+    mktree
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = mktree.spawn().expect("must spawn git mktree");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(mktree_input.as_bytes())
+        .expect("must write mktree input");
+    let output = child.wait_with_output().expect("must wait for mktree");
+    if !output.status.success() {
+        panic!(
+            "git mktree failed\nexit={}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let tree_oid = String::from_utf8(output.stdout)
+        .expect("tree oid stdout should be utf-8")
+        .trim()
+        .to_string();
+
+    let mut commit_tree = Command::new("git");
+    commit_tree.args([
+        "-C",
+        repo.to_string_lossy().as_ref(),
+        "commit-tree",
+        &tree_oid,
+        "-p",
+        parent_oid,
+    ]);
+    commit_tree
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = commit_tree.spawn().expect("must spawn git commit-tree");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(b"receiver diverged tip\n")
+        .expect("must write commit message");
+    let output = child.wait_with_output().expect("must wait for commit-tree");
+    if !output.status.success() {
+        panic!(
+            "git commit-tree failed\nexit={}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout)
+        .expect("commit oid stdout should be utf-8")
+        .trim()
+        .to_string()
+}
+
 // Verifies that invoking the binary without a subcommand prints the scaffold/help hint path.
 #[test]
 fn main_without_subcommand_prints_scaffold_message() {
@@ -686,5 +865,453 @@ fn receive_dry_run_prints_no_changes_when_head_already_applied() {
     assert!(
         text.contains("(no file content changes)"),
         "dry-run output should print empty-change marker when all heads are already applied"
+    );
+}
+
+// Verifies that `receive --integrate fast-forward-only` succeeds when receiver has only the base prerequisite.
+#[test]
+fn receive_integrate_fast_forward_only_passes_when_target_can_be_advanced() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-ff-pass");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init ff-pass receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "fast-forward-only",
+        ],
+        None,
+    );
+    assert_success(&output, "receive fast-forward-only pass");
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, source_tip,
+        "fast-forward-only receive should advance target tip ref to bundle tip commit"
+    );
+
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_some(),
+        "incoming namespace ref should exist after successful receive"
+    );
+    let (_, incoming_oid) = incoming.expect("incoming ref should exist");
+    assert_eq!(
+        incoming_oid, source_tip,
+        "incoming namespace ref should point to imported tip commit"
+    );
+}
+
+// Verifies that `receive --integrate fast-forward-only` fails for diverged targets and preserves both target and incoming refs.
+#[test]
+fn receive_integrate_fast_forward_only_fails_for_diverged_target() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-ff-fail-diverged");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init ff-fail receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_diverged_commit_on_bare_repo(&receiver, &base_oid, "receiver-side diverged\n");
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "fast-forward-only",
+        ],
+        None,
+    );
+    assert_failure(&output, "receive fast-forward-only diverged target");
+    let text = output_text(&output);
+    assert!(
+        text.contains("diverged (non-fast-forward)"),
+        "fast-forward-only failure should report non-fast-forward divergence"
+    );
+    assert!(
+        text.contains("target ref:"),
+        "fast-forward-only failure should include target ref diagnostics"
+    );
+    assert!(
+        text.contains("target oid:"),
+        "fast-forward-only failure should include target oid diagnostics"
+    );
+    assert!(
+        text.contains("incoming oid:"),
+        "fast-forward-only failure should include incoming oid diagnostics"
+    );
+    assert!(
+        text.contains("merge-base oid:"),
+        "fast-forward-only failure should include merge-base diagnostics"
+    );
+    assert!(
+        text.contains("next-step: merge required; incoming ref preserved at refs/sync/incoming/"),
+        "fast-forward-only failure should include merge guidance with preserved incoming ref path"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "failed fast-forward-only receive must keep diverged target tip unchanged"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_some(),
+        "incoming namespace ref should be preserved on fast-forward-only failure"
+    );
+    let (_, incoming_oid) = incoming.expect("incoming ref should exist");
+    assert_eq!(
+        incoming_oid, source_tip,
+        "incoming namespace ref should still point to bundle tip commit on failure"
+    );
+}
+
+// Verifies that `receive --integrate create-refs-only` succeeds and does not update target refs.
+#[test]
+fn receive_integrate_create_refs_only_passes_without_updating_target_ref() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-create-refs-pass");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init create-refs-only pass receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let pin_tip_to_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &base_oid,
+        ],
+        None,
+    );
+    assert_success(&pin_tip_to_base, "pin tip ref to base");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "create-refs-only",
+        ],
+        None,
+    );
+    assert_success(&output, "receive create-refs-only pass");
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, base_oid,
+        "create-refs-only receive must not update existing target tip ref"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_some(),
+        "create-refs-only should still write incoming namespace refs"
+    );
+    let (_, incoming_oid) = incoming.expect("incoming ref should exist");
+    assert_eq!(
+        incoming_oid, source_tip,
+        "incoming namespace ref should point to bundle tip commit"
+    );
+}
+
+// Verifies that `receive --integrate create-refs-only` succeeds for diverged targets
+// (no target integration requested) and preserves incoming refs.
+#[test]
+fn receive_integrate_create_refs_only_passes_for_diverged_target() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-create-refs-diverged-pass");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init create-refs-only diverged-pass receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_diverged_commit_on_bare_repo(&receiver, &base_oid, "receiver-side diverged\n");
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "create-refs-only",
+        ],
+        None,
+    );
+    assert_success(
+        &output,
+        "receive create-refs-only should succeed on diverged target without integrating target refs",
+    );
+    let text = output_text(&output);
+    assert!(
+        text.contains("bundle received:"),
+        "successful create-refs-only receive should report normal success summary"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "create-refs-only receive must keep diverged target tip unchanged"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_some(),
+        "incoming namespace ref should be created on create-refs-only diverged success"
+    );
+    let (_, incoming_oid) = incoming.expect("incoming ref should exist");
+    assert_eq!(
+        incoming_oid, source_tip,
+        "incoming namespace ref should point to bundle tip commit"
+    );
+}
+
+// Verifies that `receive --incoming-as-branches` mirrors incoming heads under refs/heads/incoming/<bundle-id>/...
+#[test]
+fn receive_incoming_as_branches_creates_branch_mirror_refs() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-incoming-branches");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init receiver for incoming-as-branches");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "create-refs-only",
+            "--incoming-as-branches",
+        ],
+        None,
+    );
+    assert_success(&output, "receive with incoming-as-branches");
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+
+    let incoming_namespace = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming_namespace.is_some(),
+        "safe incoming namespace refs should still be created"
+    );
+    let (_, namespace_oid) = incoming_namespace.expect("incoming namespace ref should exist");
+    assert_eq!(
+        namespace_oid, source_tip,
+        "incoming namespace ref should point to imported tip commit"
+    );
+
+    let incoming_branch = find_incoming_branch_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming_branch.is_some(),
+        "incoming branch mirror ref should be created when flag is enabled"
+    );
+    let (_, branch_oid) = incoming_branch.expect("incoming branch ref should exist");
+    assert_eq!(
+        branch_oid, source_tip,
+        "incoming branch mirror ref should point to imported tip commit"
+    );
+}
+
+// Verifies that `receive --integrate create-refs-only` still fails when repository prerequisites are missing.
+#[test]
+fn receive_integrate_create_refs_only_fails_without_prerequisite_history() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-create-refs-fail-prereq");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init create-refs-only fail receiver");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "create-refs-only",
+        ],
+        None,
+    );
+    assert_failure(&output, "receive create-refs-only without prerequisites");
+
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_none(),
+        "failed import without prerequisites should not create incoming namespace refs"
+    );
+}
+
+// Verifies that `receive --integrate create-refs-only` fails for a missing bundle path (different failure cause).
+#[test]
+fn receive_integrate_create_refs_only_fails_for_missing_bundle_path() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-create-refs-fail-missing-path");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(
+        &init_receiver,
+        "init create-refs-only missing-path receiver",
+    );
+
+    let missing_bundle = fixture.root.join("does-not-exist.bundle.zip");
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            missing_bundle.to_string_lossy().as_ref(),
+            "--integrate",
+            "create-refs-only",
+        ],
+        None,
+    );
+    assert_failure(&output, "receive create-refs-only with missing bundle path");
+    let text = output_text(&output);
+    assert!(
+        text.contains("No such file")
+            || text.contains("not found")
+            || text.contains("does not exist"),
+        "missing bundle path failure should mention missing file path"
     );
 }

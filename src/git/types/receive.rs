@@ -8,6 +8,16 @@
 
 use super::{BundleHead, BundleVersion};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Integration policy applied to target refs during receive.
+pub enum ReceiveIntegratePolicy {
+    /// Only create/update incoming namespace refs; never touch target refs.
+    CreateRefsOnly,
+    /// Update target refs only when updates are strict fast-forwards.
+    #[default]
+    FastForwardOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Result of receiving a bundle or running receive in dry-run mode.
 pub struct ReceiveBundleResult {

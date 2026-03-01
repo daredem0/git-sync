@@ -9,11 +9,12 @@
 use super::inspect::inspect_bundle;
 use super::parse::parse_bundle_payload;
 use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
+use crate::git::digest::sha256_hex;
 use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
 use crate::git::{
     BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
-    HeadAuditEntry, ReceiveBundleOptions, ReceiveBundleResult,
+    HeadAuditEntry, ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
@@ -33,10 +34,11 @@ pub fn receive_bundle_input(
     bundle_input_path: &Path,
     receiver_repo_path: &Path,
 ) -> Result<ReceiveBundleResult> {
-    receive_bundle_input_with_options(
+    receive_bundle_input_with_options_and_policy(
         bundle_input_path,
         receiver_repo_path,
         ReceiveBundleOptions::default(),
+        ReceiveIntegratePolicy::FastForwardOnly,
     )
 }
 
@@ -54,15 +56,78 @@ pub fn receive_bundle_input_with_options(
     receiver_repo_path: &Path,
     options: ReceiveBundleOptions,
 ) -> Result<ReceiveBundleResult> {
+    receive_bundle_input_with_options_policy_and_branch_mirror(
+        bundle_input_path,
+        receiver_repo_path,
+        options,
+        ReceiveIntegratePolicy::FastForwardOnly,
+        false,
+    )
+}
+
+/// Receives a bundle input with explicit ref-integration policy.
+///
+/// When `dry_run` is enabled, import and integration are evaluated against a
+/// temporary mirror and do not mutate the receiver.
+///
+/// # Errors
+///
+/// Returns an error when metadata verification fails (if enabled), archive
+/// extraction fails, bundle import cannot be applied, or integration policy
+/// constraints are violated (for example non-fast-forward updates).
+pub fn receive_bundle_input_with_options_and_policy(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    options: ReceiveBundleOptions,
+    integrate_policy: ReceiveIntegratePolicy,
+) -> Result<ReceiveBundleResult> {
+    receive_bundle_input_with_options_policy_and_branch_mirror(
+        bundle_input_path,
+        receiver_repo_path,
+        options,
+        integrate_policy,
+        false,
+    )
+}
+
+/// Receives a bundle input with explicit ref-integration policy and optional incoming branch mirroring.
+///
+/// When `incoming_as_branches` is enabled, incoming heads are mirrored under
+/// `refs/heads/incoming/<bundle-id>/...` in addition to the stable safe namespace.
+///
+/// # Errors
+///
+/// Returns an error when metadata verification fails (if enabled), archive
+/// extraction fails, bundle import cannot be applied, or integration policy
+/// constraints are violated (for example non-fast-forward updates).
+pub fn receive_bundle_input_with_options_policy_and_branch_mirror(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    options: ReceiveBundleOptions,
+    integrate_policy: ReceiveIntegratePolicy,
+    incoming_as_branches: bool,
+) -> Result<ReceiveBundleResult> {
     if options.verify_metadata {
         verify_bundle_metadata_integrity_input(bundle_input_path)?;
     }
 
     if is_zip_bundle_input_path(bundle_input_path) {
         let extracted = extract_bundle_archive(bundle_input_path)?;
-        receive_bundle(&extracted.bundle_path, receiver_repo_path, options.dry_run)
+        receive_bundle(
+            &extracted.bundle_path,
+            receiver_repo_path,
+            options.dry_run,
+            integrate_policy,
+            incoming_as_branches,
+        )
     } else {
-        receive_bundle(bundle_input_path, receiver_repo_path, options.dry_run)
+        receive_bundle(
+            bundle_input_path,
+            receiver_repo_path,
+            options.dry_run,
+            integrate_policy,
+            incoming_as_branches,
+        )
     }
 }
 
@@ -107,6 +172,8 @@ fn receive_bundle(
     bundle_path: &Path,
     receiver_repo_path: &Path,
     dry_run: bool,
+    integrate_policy: ReceiveIntegratePolicy,
+    incoming_as_branches: bool,
 ) -> Result<ReceiveBundleResult> {
     let inspection = inspect_bundle(bundle_path)?;
     if inspection.heads.is_empty() {
@@ -114,14 +181,24 @@ fn receive_bundle(
     }
 
     let repo = git2::Repository::open(receiver_repo_path)?;
-    if inspection
+    let all_heads_already_applied = inspection
         .heads
         .iter()
         .map(|head| is_head_already_applied(&repo, head))
         .collect::<Result<Vec<bool>>>()?
         .into_iter()
-        .all(std::convert::identity)
-    {
+        .all(std::convert::identity);
+    if all_heads_already_applied {
+        if !dry_run {
+            let bundle_bytes = fs::read(bundle_path)?;
+            let bundle_id = bundle_receive_id(&bundle_bytes)?;
+            write_incoming_namespace_refs(
+                &repo,
+                &inspection.heads,
+                &bundle_id,
+                incoming_as_branches,
+            )?;
+        }
         return Ok(ReceiveBundleResult {
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
@@ -134,7 +211,13 @@ fn receive_bundle(
         // Dry-run operates on a temporary mirror so we can safely import and diff.
         let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
         let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
-        apply_bundle_to_repo(&dry_run_repo, bundle_path, &inspection.heads)?;
+        apply_bundle_to_repo(
+            &dry_run_repo,
+            bundle_path,
+            &inspection.heads,
+            integrate_policy,
+            incoming_as_branches,
+        )?;
         let line_stats = collect_bundle_line_stats(&dry_run_repo, &inspection)?;
 
         return Ok(ReceiveBundleResult {
@@ -145,7 +228,13 @@ fn receive_bundle(
         });
     }
 
-    apply_bundle_to_repo(&repo, bundle_path, &inspection.heads)?;
+    apply_bundle_to_repo(
+        &repo,
+        bundle_path,
+        &inspection.heads,
+        integrate_policy,
+        incoming_as_branches,
+    )?;
 
     Ok(ReceiveBundleResult {
         bundle_version: inspection.version,
@@ -165,6 +254,8 @@ fn apply_bundle_to_repo(
     repo: &git2::Repository,
     bundle_path: &Path,
     heads: &[BundleHead],
+    integrate_policy: ReceiveIntegratePolicy,
+    incoming_as_branches: bool,
 ) -> Result<()> {
     let bundle_bytes = fs::read(bundle_path)?;
     let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
@@ -186,14 +277,192 @@ fn apply_bundle_to_repo(
         })?;
     }
 
+    let bundle_id = bundle_receive_id(&bundle_bytes)?;
+    let incoming_refs =
+        write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
+    apply_head_integration_policy(repo, heads, &incoming_refs, integrate_policy)?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct IncomingHeadRef {
+    target_ref: String,
+    incoming_ref: String,
+    incoming_oid: git2::Oid,
+}
+
+#[derive(Debug, Clone)]
+struct NonFastForwardDiagnostic {
+    target_ref: String,
+    target_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+    merge_base_oid: Option<git2::Oid>,
+    preserved_incoming_ref: String,
+}
+
+/// Derives a stable short identifier for incoming namespace refs.
+///
+/// Uses the SHA-256 of bundle bytes and truncates to 12 hex chars.
+fn bundle_receive_id(bundle_bytes: &[u8]) -> Result<String> {
+    sha256_hex(bundle_bytes).map(|digest| digest.chars().take(12).collect())
+}
+
+/// Writes all incoming bundle heads to `refs/sync/incoming/<bundle-id>/...`.
+fn write_incoming_namespace_refs(
+    repo: &git2::Repository,
+    heads: &[BundleHead],
+    bundle_id: &str,
+    incoming_as_branches: bool,
+) -> Result<Vec<IncomingHeadRef>> {
+    let mut incoming_refs = Vec::with_capacity(heads.len());
     for head in heads {
-        if is_head_already_applied(&repo, head)? {
+        let incoming_ref = incoming_ref_name(bundle_id, &head.reference);
+        repo.reference(
+            &incoming_ref,
+            head.oid,
+            true,
+            "receive bundle import (incoming namespace)",
+        )?;
+        if incoming_as_branches {
+            let incoming_branch_ref = incoming_branch_ref_name(bundle_id, &head.reference);
+            repo.reference(
+                &incoming_branch_ref,
+                head.oid,
+                true,
+                "receive bundle import (incoming branch mirror)",
+            )?;
+        }
+        incoming_refs.push(IncomingHeadRef {
+            target_ref: head.reference.clone(),
+            incoming_ref,
+            incoming_oid: head.oid,
+        });
+    }
+    Ok(incoming_refs)
+}
+
+/// Builds one incoming namespace ref name for a bundle head reference.
+fn incoming_ref_name(bundle_id: &str, head_reference: &str) -> String {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    format!("refs/sync/incoming/{bundle_id}/{suffix}")
+}
+
+/// Builds one incoming branch-mirror ref name for a bundle head reference.
+fn incoming_branch_ref_name(bundle_id: &str, head_reference: &str) -> String {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    format!("refs/heads/incoming/{bundle_id}/{suffix}")
+}
+
+/// Applies the selected integration policy to target refs after bundle import.
+fn apply_head_integration_policy(
+    repo: &git2::Repository,
+    heads: &[BundleHead],
+    incoming_refs: &[IncomingHeadRef],
+    integrate_policy: ReceiveIntegratePolicy,
+) -> Result<()> {
+    match integrate_policy {
+        ReceiveIntegratePolicy::CreateRefsOnly => Ok(()),
+        ReceiveIntegratePolicy::FastForwardOnly => {
+            apply_fast_forward_only_integration(repo, heads, incoming_refs)
+        }
+    }
+}
+
+/// Applies imported heads to target refs only when updates are fast-forwardable.
+///
+/// This function first validates all heads, then updates refs, so diverged refs
+/// do not result in partial target-ref mutation.
+fn apply_fast_forward_only_integration(
+    repo: &git2::Repository,
+    heads: &[BundleHead],
+    incoming_refs: &[IncomingHeadRef],
+) -> Result<()> {
+    let mut updates = Vec::<(&str, git2::Oid)>::new();
+    let mut diagnostics = Vec::<NonFastForwardDiagnostic>::new();
+
+    for (head, incoming_ref) in heads.iter().zip(incoming_refs.iter()) {
+        let current_target = resolve_reference_target(repo, &head.reference)?;
+        let Some(current_target) = current_target else {
+            updates.push((&head.reference, head.oid));
+            continue;
+        };
+        if current_target == head.oid {
             continue;
         }
-        repo.reference(&head.reference, head.oid, true, "receive bundle import")?;
+
+        if repo.graph_descendant_of(head.oid, current_target)? {
+            updates.push((&head.reference, head.oid));
+            continue;
+        }
+
+        diagnostics.push(NonFastForwardDiagnostic {
+            target_ref: incoming_ref.target_ref.clone(),
+            target_oid: current_target,
+            incoming_oid: incoming_ref.incoming_oid,
+            merge_base_oid: repo.merge_base(current_target, head.oid).ok(),
+            preserved_incoming_ref: incoming_ref.incoming_ref.clone(),
+        });
+    }
+
+    if !diagnostics.is_empty() {
+        bail!(format_non_fast_forward_diagnostics(&diagnostics));
+    }
+
+    for (target_ref, new_target) in updates {
+        repo.reference(
+            target_ref,
+            new_target,
+            true,
+            "receive bundle import (fast-forward)",
+        )?;
     }
 
     Ok(())
+}
+
+/// Resolves a reference name to its peeled direct target OID.
+fn resolve_reference_target(repo: &git2::Repository, ref_name: &str) -> Result<Option<git2::Oid>> {
+    let reference = match repo.find_reference(ref_name) {
+        Ok(reference) => reference,
+        Err(err) if err.code() == git2::ErrorCode::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let target = reference.target().or_else(|| {
+        reference
+            .resolve()
+            .ok()
+            .and_then(|resolved| resolved.target())
+    });
+    Ok(target)
+}
+
+/// Formats per-ref diagnostics for non-fast-forward integration failures.
+fn format_non_fast_forward_diagnostics(diagnostics: &[NonFastForwardDiagnostic]) -> String {
+    let mut message =
+        String::from("unable to integrate bundle heads with --integrate fast-forward-only:\n");
+    for diagnostic in diagnostics {
+        let merge_base = diagnostic
+            .merge_base_oid
+            .map(|oid| oid.to_string())
+            .unwrap_or_else(|| "<none>".to_string());
+        let _ = std::fmt::Write::write_fmt(
+            &mut message,
+            format_args!(
+                "- target ref: {}\n  target oid: {}\n  incoming oid: {}\n  merge-base oid: {}\n  reason: diverged (non-fast-forward)\n  next-step: merge required; incoming ref preserved at {}\n",
+                diagnostic.target_ref,
+                diagnostic.target_oid,
+                diagnostic.incoming_oid,
+                merge_base,
+                diagnostic.preserved_incoming_ref
+            ),
+        );
+    }
+    message
 }
 
 /// Aggregates per-file line deltas across all imported heads.
@@ -411,11 +680,23 @@ fn with_imported_bundle_input_repo<T>(
     let inspection = if is_zip_bundle_input_path(bundle_input_path) {
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let inspection = inspect_bundle(&extracted.bundle_path)?;
-        apply_bundle_to_repo(&repo, &extracted.bundle_path, &inspection.heads)?;
+        apply_bundle_to_repo(
+            &repo,
+            &extracted.bundle_path,
+            &inspection.heads,
+            ReceiveIntegratePolicy::CreateRefsOnly,
+            false,
+        )?;
         inspection
     } else {
         let inspection = inspect_bundle(bundle_input_path)?;
-        apply_bundle_to_repo(&repo, bundle_input_path, &inspection.heads)?;
+        apply_bundle_to_repo(
+            &repo,
+            bundle_input_path,
+            &inspection.heads,
+            ReceiveIntegratePolicy::CreateRefsOnly,
+            false,
+        )?;
         inspection
     };
 
