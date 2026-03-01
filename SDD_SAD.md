@@ -51,6 +51,31 @@ flowchart LR
     PKG --> RECEIVE --> DST
 ```
 
+Trust boundary and verification gates:
+
+```mermaid
+flowchart LR
+    subgraph PROD["Producer Host"]
+        SRC[(Source Repository)]
+        CREATE[create]
+    end
+    subgraph TRANSFER["Transfer Unit"]
+        PKG[[sync.bundle.zip]]
+    end
+    subgraph RECV["Auditor / Receiver Host"]
+        AUDIT[audit (UI/table/json)]
+        VM[audit --verify-metadata]
+        GATE{Transfer Gate Decision}
+        RECEIVE[receive / receive --dry-run]
+        DST[(Receiver Repository)]
+    end
+
+    SRC --> CREATE --> PKG
+    PKG --> AUDIT --> GATE
+    PKG --> VM --> GATE
+    GATE --> RECEIVE --> DST
+```
+
 Two audits coexist and solve different problems:
 
 - payload audit (PACK truth): proves what bytes and objects are in the package payload
@@ -75,6 +100,31 @@ Architectural characteristics:
   - payload truth (PACK entry stream proof)
   - repository truth (range recomputation)
   - metadata truth (sidecar claims)
+
+### 3.1 Quality attributes and acceptance criteria
+
+The quality attributes below are treated as acceptance criteria for architecture changes. A feature that weakens one of these attributes must introduce compensating controls and explicit test coverage.
+
+| Quality attribute | Operational interpretation | Acceptance criteria | Primary evidence |
+|---|---|---|---|
+| Payload completeness assurance | Transfer decisions are based on PACK entry accounting, not reachability alone | `entries_declared == entries_parsed == entries_materialized` and `transfer_allowed=true` for accepted payloads | `pack_proof` counters, ledger output, payload tests in `src/git/tests/payload_tests.rs` |
+| Fail-closed behavior | Parsing or proof ambiguity blocks approval/import paths | Malformed framing, checksum mismatch, unresolved deltas, or counter mismatch produce errors (no synthetic success) | `src/git/bundle/parse.rs`, `src/git/bundle/payload/verify/*`, negative-path tests |
+| Deterministic review output | Repeated runs on identical inputs produce stable ordering/counters | Stable table/JSON row ordering and deterministic derived payload projections | deterministic payload tests and UI/render tests |
+| Dry-run safety with operational parity | Impact preview uses equivalent import logic without mutating target repo | `receive --dry-run` computes applicability/stats and leaves receiver unchanged | dry-run tests in `src/git/tests/receive_tests.rs` |
+| Traceable provenance | Operator-visible evidence includes tool/build identity | version appears in CLI/UI and exported documents/metadata fields | `src/version.rs`, CLI/UI paths, exported documents |
+
+### 3.2 Key architecture decisions and trade-offs
+
+The following decisions capture deliberate architectural trade-offs that shape both implementation and audit posture.
+
+| Decision | Why this was chosen | Trade-off accepted | Future extension path |
+|---|---|---|---|
+| PACK entry stream is the proof unit | It answers what bytes crossed the boundary | More implementation complexity than simple reachability reporting | Keep reachability as context only; preserve ledger authority |
+| Strict bundle framing (no heuristic PACK scan) | Removes ambiguity in payload start and parser behavior | Rejects loosely formatted but potentially recoverable inputs | Maintain strict parse contract; document failures clearly |
+| Separate metadata (`.caudit`) from payload proof (`.paudit`) | Keeps claim-verification and byte-proof concerns independent | Two documents to maintain and review | Optional policy profiles can combine both decisions explicitly |
+| `pack-only` as strict default resolve policy | Makes hidden external dependencies fail closed | Some payloads require explicit baseline mode | Keep baseline as explicit operator choice with recorded provenance |
+| UI is presentation-only for proof data | Prevents renderer changes from altering proof semantics | Additional model/projection layer needed | Continue exposing proof tuple consistently across surfaces |
+| Dry-run through temporary mirror | Mirrors receive behavior while preserving receiver state | Extra temporary repo setup cost | Keep parity tests to prevent drift from apply path |
 
 ## 4. Static View
 
@@ -257,6 +307,26 @@ The payload audit document (`.paudit`) is an **audit-time proof/report document*
 | `entry_ledger` (`summary`/`full`) | authoritative stream-entry accounting with unresolved rows and optional full rows | Direct inspection of PACK entry coverage and failure context |
 | `pack_summary`, `pack_objects`, `object_details` | derived object-level views and drill-down detail | Reviewer-friendly browsing after proof is established |
 
+Relationship view of metadata and payload evidence:
+
+```mermaid
+flowchart TD
+    PKG[[sync.bundle.zip / .bundle]]
+    META[.caudit.json<br/>creation-time manifest]
+    PVERIFY[PACK verifier + entry ledger]
+    PAUDIT[.paudit document<br/>audit-time proof report]
+    MVERIFY[metadata verification]
+    REPO[(Repository truth)]
+    DECIDE{Transfer decision inputs}
+
+    PKG --> META
+    PKG --> PVERIFY --> PAUDIT
+    META --> MVERIFY
+    REPO --> MVERIFY
+    MVERIFY --> DECIDE
+    PAUDIT --> DECIDE
+```
+
 Design consequence: metadata can be fully valid while payload proof fails, and payload proof can succeed even if metadata claims are missing or inconsistent. Therefore transfer-gate decisions that depend on completeness are anchored in payload proof (`pack_proof` + ledger), not metadata alone.
 
 ## 5. Dynamic View
@@ -398,6 +468,29 @@ sequenceDiagram
     R-->>U: applicability + line table
 ```
 
+Dry-run and apply are intentionally parallel in logic but different in target:
+
+```mermaid
+flowchart LR
+    subgraph DRY["Dry-run path (`receive --dry-run`)"]
+        D1[Create temp bare mirror]
+        D2[Fetch receiver refs into mirror]
+        D3[Apply bundle in mirror]
+        D4[Compute would-change stats]
+        D5[Return applicability + report]
+        D1 --> D2 --> D3 --> D4 --> D5
+    end
+
+    subgraph APPLY["Apply path (`receive`)"]
+        A1[Open receiver repository]
+        A2[Optional metadata integrity verify]
+        A3[Apply bundle to receiver]
+        A4[Update heads (skip already-applied)]
+        A5[Persist imported state]
+        A1 --> A2 --> A3 --> A4 --> A5
+    end
+```
+
 Behavioral points:
 
 - optional metadata integrity checks can run before import
@@ -405,6 +498,27 @@ Behavioral points:
 - head existence is verified after import
 - ref updates skip already-applied heads (idempotency)
 - dry-run computes impact without mutating receiver state
+
+### 5.6 Evidence derivation and consumption flow
+
+The evidence pipeline is designed so every transfer-relevant decision can be traced back to either repository recomputation or payload byte proof, with both paths observable in machine and human outputs.
+
+```mermaid
+flowchart LR
+    CREATE[create]
+    PKG[[sync.bundle.zip]]
+    CA[.caudit manifest]
+    PVERIFY[PACK verify + ledger]
+    PA[.paudit JSON/table/TUI projections]
+    MV[audit --verify-metadata]
+    GATE{Transfer gate decision}
+    RECEIVE[receive]
+
+    CREATE --> PKG
+    PKG --> CA --> MV --> GATE
+    PKG --> PVERIFY --> PA --> GATE
+    GATE --> RECEIVE
+```
 
 ## 6. PACK Proofing Model and Security Argument
 
@@ -538,6 +652,23 @@ When proof succeeds:
 - declared entry set is fully accounted for in ledger/materialization counters
 - transfer-gate acceptance is explicit and policy-bound
 
+#### 6.5.12 Transfer-gate decision tree
+
+```mermaid
+flowchart TD
+    S[Bundle input] --> B{Strict bundle framing valid?}
+    B -- no --> X1[Block: invalid framing / ambiguous PACK start]
+    B -- yes --> C{Trailer checksum valid?}
+    C -- no --> X2[Block: payload integrity mismatch]
+    C -- yes --> D{entries_parsed == entries_declared?}
+    D -- no --> X3[Block: incomplete or inconsistent entry accounting]
+    D -- yes --> E{entries_materialized == entries_declared?}
+    E -- no --> X4[Block: unresolved or non-materialized entries]
+    E -- yes --> F{Resolve policy satisfied?}
+    F -- no --> X5[Block: dependency policy violation]
+    F -- yes --> A[Allow transfer: transfer_allowed=true]
+```
+
 Proof model flow:
 
 ```mermaid
@@ -657,6 +788,19 @@ The architectural invariants that tie these surfaces together are:
 | I4 | Payload proof tuple consistency (framing, checksum, declared/parsed/materialized counters) | PACK verifier + proof boundary checks |
 | I5 | Receive idempotency (already-applied heads skipped deterministically) | receive/import head application logic |
 | I6 | Dry-run/apply parity (same import logic, isolated target) | dry-run mirror execution model |
+
+### 8.4 Claim-to-implementation traceability matrix
+
+This matrix links the document's assurance claims to concrete implementation files and representative executable tests. It is intended as a maintenance guardrail: if code or tests move, this table should be updated with the same rigor as the claim text.
+
+| Claim | Invariant(s) | Primary code locations | Representative tests |
+|---|---|---|---|
+| Create rejects non-linear ranges | I1 | `src/git/bundle/create.rs`, `src/git/range.rs` | `create_bundle_fails_when_to_commit_is_not_descendant_of_from_commit`, `open_context_fails_when_tip_ref_is_not_descendant_of_base_ref` |
+| Metadata integrity binds claims to transport artifacts | I2 | `src/git/metadata/verify.rs`, `src/git/metadata/load.rs` | `verify_bundle_metadata_integrity_rejects_header_version_mismatch`, `verify_bundle_metadata_integrity_rejects_patch_sidecar_sha_mismatch` |
+| Metadata claims match repository truth when verified | I3 | `src/git/metadata/collect.rs`, `src/git/metadata/verify.rs` | `verify_bundle_metadata_against_repo_rejects_commit_chain_mismatch`, `verify_bundle_metadata_against_repo_rejects_changed_files_mismatch` |
+| Payload completeness and integrity are enforced fail-closed | I4 | `src/git/bundle/parse.rs`, `src/git/bundle/payload/verify/*`, `src/git/bundle/payload/verify/proof.rs` | `bundle_pack_offset_is_read_from_header_not_scanned`, `verify_pack_payload_validates_trailer_checksum`, `pack_ledger_contains_exactly_declared_entry_count`, `strict_mode_blocks_when_unresolved_entries_remain` |
+| Re-applying same package is idempotent | I5 | `src/git/bundle/receive.rs` | `receive_bundle_input_is_idempotent_when_same_package_is_applied_twice`, `receive_dry_run_prints_no_changes_when_head_already_applied` |
+| Dry-run mirrors receive logic without mutating target repo | I6 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo`, `receive_dry_run_prints_would_change_table_for_pending_import` |
 
 ## 9. Build and Versioning
 
