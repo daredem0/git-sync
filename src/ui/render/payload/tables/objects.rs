@@ -10,7 +10,7 @@ use super::super::util::{payload_kind_label, short_oid};
 use crate::ui::types::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 /// Renders payload object table with selected-row highlight.
@@ -40,6 +40,13 @@ pub(in crate::ui::render::payload) fn render_objects_table(
                         "yes".to_string()
                     } else {
                         "no".to_string()
+                    })
+                    .style(if entry.reachable_from_heads {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     }),
                 ])
             })

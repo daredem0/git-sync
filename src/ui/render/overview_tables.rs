@@ -9,7 +9,7 @@
 use crate::git::{self, BundleVersion};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 /// Renders the table of bundle heads that would be imported.
@@ -96,8 +96,16 @@ pub(super) fn render_changes_table(
             .map(|stat| {
                 Row::new(vec![
                     Cell::from(stat.path.clone()),
-                    Cell::from(stat.additions.to_string()),
-                    Cell::from(stat.deletions.to_string()),
+                    Cell::from(stat.additions.to_string()).style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(stat.deletions.to_string()).style(
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ])
             })
             .collect()

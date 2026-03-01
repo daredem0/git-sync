@@ -10,7 +10,7 @@ use crate::git::CommitAuditEntry;
 use crate::ui::types::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
 /// Renders the per-commit file stats table with selection highlighting.
@@ -37,8 +37,16 @@ pub(super) fn render_commit_files_table(
         .map(|stat| {
             Row::new(vec![
                 Cell::from(stat.path.clone()),
-                Cell::from(stat.additions.to_string()),
-                Cell::from(stat.deletions.to_string()),
+                Cell::from(stat.additions.to_string()).style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from(stat.deletions.to_string()).style(
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ])
         })
         .collect();

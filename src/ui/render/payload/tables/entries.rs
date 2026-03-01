@@ -10,7 +10,7 @@ use super::super::util::{payload_entry_base_ref_label, payload_entry_kind_label,
 use crate::ui::types::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 /// Renders payload entry-ledger table with selected-row highlight.
@@ -58,6 +58,13 @@ pub(in crate::ui::render::payload) fn render_entries_table(
                         "yes".to_string()
                     } else {
                         "no".to_string()
+                    })
+                    .style(if entry.resolved {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     }),
                 ])
             })

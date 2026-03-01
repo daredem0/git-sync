@@ -15,7 +15,8 @@ mod util;
 use super::render_footer_text;
 use crate::ui::types::{AppState, AuditModel, PayloadModel};
 use ratatui::Frame;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 /// Renders payload page tables or selected payload-object detail view.
@@ -26,7 +27,7 @@ pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, sta
     }
 
     let page_layout = layout::split_payload_page(frame.area());
-    let title = Paragraph::new(payload_title_text(model, state))
+    let title = Paragraph::new(Text::from(payload_title_lines(model, state)))
         .block(Block::default().borders(Borders::ALL).title("git-sync"));
     frame.render_widget(title, page_layout.title);
 
@@ -124,6 +125,97 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
             Transport package entries, selected-object preview, and full pack object listing\n\
             Use j/k to select object rows and Enter to open object detail"
             .to_string(),
+    }
+}
+
+/// Builds payload-page lines and colors pass/fail fields for quick scanning.
+fn payload_title_lines(model: &AuditModel, state: &AppState) -> Vec<Line<'static>> {
+    payload_title_text(model, state)
+        .lines()
+        .map(style_payload_title_line)
+        .collect()
+}
+
+/// Styles payload-summary fields while preserving the existing text content.
+fn style_payload_title_line(line: &str) -> Line<'static> {
+    if let Some(rest) = line.strip_prefix("status: ") {
+        if let Some((status, pack_version)) = rest.split_once(" | pack version: ") {
+            return Line::from(vec![
+                Span::raw("status: "),
+                Span::styled(
+                    status.to_string(),
+                    status_style(status.eq_ignore_ascii_case("ok")),
+                ),
+                Span::raw(" | pack version: "),
+                Span::raw(pack_version.to_string()),
+            ]);
+        }
+    }
+
+    if let Some(rest) = line.strip_prefix("entries: ") {
+        if let Some((entries_ratio, materialized_part)) = rest.split_once(" | materialized: ") {
+            return Line::from(vec![
+                Span::raw("entries: "),
+                Span::styled(
+                    entries_ratio.to_string(),
+                    status_style(ratio_matches_declared(entries_ratio)),
+                ),
+                Span::raw(" | materialized: "),
+                Span::styled(
+                    materialized_part.to_string(),
+                    status_style(ratio_matches_declared(materialized_part)),
+                ),
+            ]);
+        }
+    }
+
+    if let Some(rest) = line.strip_prefix("transfer: ") {
+        if let Some((transfer_value, hash_and_checksum)) = rest.split_once(" | hash: ")
+            && let Some((hash_value, checksum_value)) =
+                hash_and_checksum.split_once(" | checksum: ")
+        {
+            return Line::from(vec![
+                Span::raw("transfer: "),
+                Span::styled(
+                    transfer_value.to_string(),
+                    status_style(transfer_value == "allowed"),
+                ),
+                Span::raw(" | hash: "),
+                Span::raw(hash_value.to_string()),
+                Span::raw(" | checksum: "),
+                Span::styled(
+                    checksum_value.to_string(),
+                    status_style(checksum_value.eq_ignore_ascii_case("ok")),
+                ),
+            ]);
+        }
+    }
+
+    Line::from(line.to_string())
+}
+
+/// Returns `true` when a `N/N`-style ratio has matching parsed and declared counts.
+fn ratio_matches_declared(value: &str) -> bool {
+    let Some((lhs, rhs)) = value.split_once('/') else {
+        return false;
+    };
+    let Ok(lhs) = lhs.trim().parse::<u64>() else {
+        return false;
+    };
+    let Ok(rhs) = rhs.trim().parse::<u64>() else {
+        return false;
+    };
+    lhs == rhs
+}
+
+/// Returns semantic status styling for pass/fail values in payload title lines.
+fn status_style(passed: bool) -> Style {
+    if passed {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     }
 }
 
