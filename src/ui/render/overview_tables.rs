@@ -96,16 +96,8 @@ pub(super) fn render_changes_table(
             .map(|stat| {
                 Row::new(vec![
                     Cell::from(stat.path.clone()),
-                    Cell::from(stat.additions.to_string()).style(
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(stat.deletions.to_string()).style(
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    styled_line_count_cell(stat.additions, true),
+                    styled_line_count_cell(stat.deletions, false),
                 ])
             })
             .collect()
@@ -148,4 +140,20 @@ pub(super) fn render_changes_table(
         )));
     }
     frame.render_stateful_widget(changes_table, area, &mut table_state);
+}
+
+/// Renders `+LINES`/`-LINES` values, coloring only non-zero counts.
+fn styled_line_count_cell(value: usize, is_addition: bool) -> Cell<'static> {
+    let mut cell = Cell::from(value.to_string());
+    if value > 0 {
+        let style = if is_addition {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        };
+        cell = cell.style(style);
+    }
+    cell
 }
