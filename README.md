@@ -546,7 +546,8 @@ CI release/version behavior:
 - `build-release` builds release binary + manpages exactly once and uploads them as `release-package-inputs`.
 - `package-deb` and `package-arch` download `release-package-inputs` and package from those prebuilt files.
 - `package-crate` runs `cargo package --locked` and uploads the produced `.crate`.
-- `release` publishes debug/release binaries, Debian/Arch packages, docs archive, and coverage report to GitHub Releases.
+- `docs` also generates a PDF from rustdoc content (including Mermaid diagrams).
+- `release` publishes debug/release binaries, Debian/Arch packages, docs archive, docs PDF, and coverage report to GitHub Releases.
 - Release notes are generated from the matching version section in `CHANGELOG.md`.
 
 This keeps the release pipeline immutable for tagged builds and avoids rebuilding release binaries in package jobs.
@@ -575,6 +576,16 @@ Generate docs including private items (useful for internal development):
 
 ```bash
 cargo doc --no-deps --document-private-items
+```
+
+Generate a PDF from the rendered crate docs (includes Mermaid diagrams, Arch Linux local setup):
+
+```bash
+sudo pacman -S --needed nss nspr atk at-spi2-atk gtk3 libdrm libxkbcommon pango cairo alsa-lib libxcomposite libxdamage libxfixes libxrandr libx11 libxext libxrender libxi libxtst libcups mesa ttf-liberation
+npm install --no-save playwright@1.52.0
+npx playwright install chromium
+RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --bins
+./scripts/generate-doc-pdf.sh
 ```
 
 ### Additional Project Documentation

@@ -254,11 +254,24 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Generate docs
         run: RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --locked --no-deps --bins
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install --no-save playwright@1.52.0
+          npx playwright install --with-deps chromium
+
+      - name: Generate docs PDF
+        run: ./scripts/generate-doc-pdf.sh
 
       - name: Create root docs index for GitHub Pages
         run: |
@@ -297,6 +310,13 @@ jobs:
         with:
           name: docs-html
           path: target/docs-html.tar.gz
+          if-no-files-found: error
+
+      - name: Upload docs PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-pdf
+          path: target/docs-pdf/*.pdf
           if-no-files-found: error
 
   release:
@@ -341,6 +361,12 @@ jobs:
           name: docs-html
           path: dist/docs-html
 
+      - name: Download docs PDF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-pdf
+          path: dist/docs-pdf
+
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
         with:
@@ -355,6 +381,7 @@ jobs:
           cp dist/package-deb/*.deb dist/release-assets/
           cp dist/package-arch/*.pkg.tar.* dist/release-assets/
           cp dist/docs-html/*.tar.gz dist/release-assets/
+          cp dist/docs-pdf/*.pdf dist/release-assets/
           cp dist/coverage-lcov/* dist/release-assets/
 
       - name: Extract release notes from CHANGELOG
