@@ -12,6 +12,8 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
+const FOCUS_ACCENT: Color = Color::Cyan;
+
 /// Renders the table of bundle heads that would be imported.
 pub(super) fn render_heads_table(
     frame: &mut Frame<'_>,
@@ -52,15 +54,12 @@ pub(super) fn render_heads_table(
     };
     let heads_table = Table::new(rows, [Constraint::Length(40), Constraint::Min(20)])
         .header(Row::new(vec!["OID", "REF"]).style(Style::default().add_modifier(Modifier::BOLD)))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(focused_row_style(is_focused))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(if is_focused {
-                    Style::default().add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                })
+                .border_style(focus_border_style(is_focused))
+                .title_style(focus_title_style(is_focused))
                 .title(heads_title),
         )
         .column_spacing(2);
@@ -120,15 +119,12 @@ pub(super) fn render_changes_table(
         Row::new(vec!["PATH", "+LINES", "-LINES"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .row_highlight_style(focused_row_style(is_focused))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(if is_focused {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            })
+            .border_style(focus_border_style(is_focused))
+            .title_style(focus_title_style(is_focused))
             .title(changes_title),
     )
     .column_spacing(2);
@@ -156,4 +152,37 @@ fn styled_line_count_cell(value: usize, is_addition: bool) -> Cell<'static> {
         cell = cell.style(style);
     }
     cell
+}
+
+/// Returns the block border style used to show active table focus.
+fn focus_border_style(is_focused: bool) -> Style {
+    if is_focused {
+        Style::default()
+            .fg(FOCUS_ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+/// Returns the title style used to highlight active table focus.
+fn focus_title_style(is_focused: bool) -> Style {
+    if is_focused {
+        Style::default()
+            .fg(FOCUS_ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+/// Returns row highlight style, accenting focused tables for clearer keyboard navigation.
+fn focused_row_style(is_focused: bool) -> Style {
+    if is_focused {
+        Style::default()
+            .fg(FOCUS_ACCENT)
+            .add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
 }

@@ -13,6 +13,8 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
+const FOCUS_ACCENT: Color = Color::Cyan;
+
 /// Renders payload entry-ledger table with selected-row highlight.
 pub(in crate::ui::render::payload) fn render_entries_table(
     frame: &mut Frame<'_>,
@@ -71,7 +73,7 @@ pub(in crate::ui::render::payload) fn render_entries_table(
             .collect()
     };
     let title = format!(
-        "Pack Entries ({} parsed / {} declared)",
+        "Pack Entries ({} parsed / {} declared) [active]",
         entries.len(),
         payload.entry_ledger.declared_entry_count
     );
@@ -101,8 +103,26 @@ pub(in crate::ui::render::payload) fn render_entries_table(
         ])
         .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    .block(Block::default().borders(Borders::ALL).title(title))
+    .row_highlight_style(
+        Style::default()
+            .fg(FOCUS_ACCENT)
+            .add_modifier(Modifier::REVERSED),
+    )
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(FOCUS_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title_style(
+                Style::default()
+                    .fg(FOCUS_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title(title),
+    )
     .column_spacing(1);
 
     let mut table_state = TableState::default();

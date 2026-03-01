@@ -13,6 +13,8 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
+const FOCUS_ACCENT: Color = Color::Cyan;
+
 /// Renders payload object table with selected-row highlight.
 pub(in crate::ui::render::payload) fn render_objects_table(
     frame: &mut Frame<'_>,
@@ -54,7 +56,7 @@ pub(in crate::ui::render::payload) fn render_objects_table(
     };
 
     let title = format!(
-        "Pack Objects ({} total, {} heads, sort: {})",
+        "Pack Objects ({} total, {} heads, sort: {}) [active]",
         payload.objects.len(),
         payload.heads.len(),
         state.payload_sort_mode_label()
@@ -72,8 +74,26 @@ pub(in crate::ui::render::payload) fn render_objects_table(
         Row::new(vec!["OID", "TYPE", "SIZE", "REACHABLE"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    .block(Block::default().borders(Borders::ALL).title(title))
+    .row_highlight_style(
+        Style::default()
+            .fg(FOCUS_ACCENT)
+            .add_modifier(Modifier::REVERSED),
+    )
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(FOCUS_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title_style(
+                Style::default()
+                    .fg(FOCUS_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .title(title),
+    )
     .column_spacing(1);
 
     let mut table_state = TableState::default();

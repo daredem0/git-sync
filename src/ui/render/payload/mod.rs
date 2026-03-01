@@ -19,6 +19,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+const FOCUS_ACCENT: Color = Color::Cyan;
+
 /// Renders payload page tables or selected payload-object detail view.
 pub(crate) fn render_payload_page(frame: &mut Frame<'_>, model: &AuditModel, state: &AppState) {
     if state.payload_object_view.is_some() {
@@ -191,6 +193,16 @@ fn style_payload_title_line(line: &str) -> Line<'static> {
         }
     }
 
+    if let Some(rest) = line.strip_prefix("subview: ")
+        && let Some((subview_value, toggle_suffix)) = rest.split_once(" (toggle: e)")
+    {
+        return Line::from(vec![
+            Span::raw("subview: "),
+            Span::styled(subview_value.to_string(), focus_style()),
+            Span::raw(format!(" (toggle: e){toggle_suffix}")),
+        ]);
+    }
+
     Line::from(line.to_string())
 }
 
@@ -217,6 +229,13 @@ fn status_style(passed: bool) -> Style {
     } else {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     }
+}
+
+/// Returns shared cyan accent style used for focused navigation cues.
+fn focus_style() -> Style {
+    Style::default()
+        .fg(FOCUS_ACCENT)
+        .add_modifier(Modifier::BOLD)
 }
 
 #[cfg(test)]
