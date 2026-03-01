@@ -7,6 +7,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-03-01
+
+### Added
+- Added a project `Justfile` to provide a single entry point for common local workflows.
+- Added payload `Entries` preview support that can render the resolved materialized object preview directly from an entry row.
+
+### Changed
+- Improved audit UI readability with semantic terminal-theme colors for integrity-relevant values and object kinds.
+- Improved `+lines` / `-lines` highlighting so only non-zero deltas are colorized and zero values stay neutral.
+- Added active-pane focus highlighting to make keyboard navigation between tables more obvious.
+- Enabled object-style drill-down from payload `Entries` rows (when an entry resolves to a materialized object).
+
 ## [0.7.1] - 2026-03-01
 
 ### Added
@@ -270,7 +282,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/daredem0/git-sync/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/daredem0/git-sync/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/daredem0/git-sync/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/daredem0/git-sync/compare/v0.6.0...v0.6.1
