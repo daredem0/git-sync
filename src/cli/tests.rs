@@ -127,3 +127,29 @@ fn receive_parses_incoming_as_branches_flag() {
         "incoming branch mirroring should be enabled when flag is set"
     );
 }
+
+// Verifies that `receive --dry-run --format json` parses with the selected output format.
+#[test]
+fn receive_parses_dry_run_json_output_format() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "receive",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--dry-run",
+        "--format",
+        "json",
+    ])
+    .expect("receive dry-run with --format json should parse");
+
+    let Some(Command::Receive { format, .. }) = cli.command else {
+        panic!("expected parsed receive command");
+    };
+    assert_eq!(
+        format,
+        Some(OutputFormat::Json),
+        "receive --format json should map to OutputFormat::Json"
+    );
+}

@@ -57,6 +57,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             dry_run,
             integrate,
             incoming_as_branches,
+            format,
         }) => receive::run(
             repo,
             bundle,
@@ -64,6 +65,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             dry_run,
             integrate,
             incoming_as_branches,
+            format,
         ),
         None => {
             println!("git-sync scaffold is ready.");

@@ -79,10 +79,12 @@ pub enum Command {
         integrate: ReceiveIntegratePolicy,
         #[arg(long, default_value_t = false)]
         incoming_as_branches: bool,
+        #[arg(long, value_enum)]
+        format: Option<OutputFormat>,
     },
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 /// Non-interactive output encoding for `audit --format`.
 pub enum OutputFormat {
     /// Human-readable aligned payload table.

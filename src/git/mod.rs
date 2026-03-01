@@ -34,7 +34,8 @@ pub(crate) use types::{
     OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit,
     PayloadAuditDocument, PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry,
     PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveBundleOptions,
-    ReceiveBundleResult, ReceiveIntegratePolicy, ResolutionSource,
+    ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry, ReceivePlanStatus,
+    ResolutionSource,
 };
 
 #[cfg(test)]

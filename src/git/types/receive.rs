@@ -27,8 +27,52 @@ pub struct ReceiveBundleResult {
     pub imported_heads: Vec<BundleHead>,
     /// Whether the import can be applied cleanly.
     pub can_apply_without_conflicts: bool,
+    /// Deterministic preflight integration plan for each imported head.
+    pub preflight_plan: Vec<ReceivePlanEntry>,
     /// Per-file additions/deletions produced during dry-run analysis.
     pub line_stats: Vec<FileLineStat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Preflight integration status for one incoming head.
+pub enum ReceivePlanStatus {
+    /// Target ref already points to the incoming object.
+    AlreadyPresent,
+    /// Target ref does not currently exist.
+    TargetMissing,
+    /// Target ref can be advanced via strict fast-forward.
+    FastForwardOk,
+    /// Target and incoming have diverged; manual merge is required.
+    DivergedMergeRequired,
+}
+
+impl ReceivePlanStatus {
+    /// Returns a stable machine-friendly label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlreadyPresent => "already_present",
+            Self::TargetMissing => "target_missing",
+            Self::FastForwardOk => "fast_forward_ok",
+            Self::DivergedMergeRequired => "diverged_merge_required",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// One row in the receive preflight integration plan.
+pub struct ReceivePlanEntry {
+    /// Target ref that may be updated depending on integration policy.
+    pub target_ref: String,
+    /// Current target OID before receive, if the ref exists.
+    pub target_oid: Option<git2::Oid>,
+    /// Incoming OID imported from the bundle head.
+    pub incoming_oid: git2::Oid,
+    /// Merge-base between target and incoming, when both are resolvable.
+    pub merge_base_oid: Option<git2::Oid>,
+    /// Preserve-location for manual follow-up.
+    pub preserved_incoming_ref: String,
+    /// Computed integration status.
+    pub status: ReceivePlanStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

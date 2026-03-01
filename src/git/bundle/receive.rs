@@ -15,6 +15,7 @@ use crate::git::util::path_to_string;
 use crate::git::{
     BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
     HeadAuditEntry, ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy,
+    ReceivePlanEntry, ReceivePlanStatus,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
@@ -181,6 +182,8 @@ fn receive_bundle(
     }
 
     let repo = git2::Repository::open(receiver_repo_path)?;
+    let bundle_bytes = fs::read(bundle_path)?;
+    let bundle_id = bundle_receive_id(&bundle_bytes)?;
     let all_heads_already_applied = inspection
         .heads
         .iter()
@@ -189,9 +192,9 @@ fn receive_bundle(
         .into_iter()
         .all(std::convert::identity);
     if all_heads_already_applied {
+        let incoming_refs = incoming_head_refs(&inspection.heads, &bundle_id);
+        let preflight_plan = compute_receive_plan(&repo, &incoming_refs)?;
         if !dry_run {
-            let bundle_bytes = fs::read(bundle_path)?;
-            let bundle_id = bundle_receive_id(&bundle_bytes)?;
             write_incoming_namespace_refs(
                 &repo,
                 &inspection.heads,
@@ -203,6 +206,7 @@ fn receive_bundle(
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
             can_apply_without_conflicts: true,
+            preflight_plan,
             line_stats: Vec::new(),
         });
     }
@@ -211,7 +215,7 @@ fn receive_bundle(
         // Dry-run operates on a temporary mirror so we can safely import and diff.
         let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
         let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
-        apply_bundle_to_repo(
+        let preflight_plan = apply_bundle_to_repo(
             &dry_run_repo,
             bundle_path,
             &inspection.heads,
@@ -219,27 +223,35 @@ fn receive_bundle(
             incoming_as_branches,
         )?;
         let line_stats = collect_bundle_line_stats(&dry_run_repo, &inspection)?;
+        let can_apply_without_conflicts = !preflight_plan
+            .iter()
+            .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
 
         return Ok(ReceiveBundleResult {
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
-            can_apply_without_conflicts: true,
+            can_apply_without_conflicts,
+            preflight_plan,
             line_stats,
         });
     }
 
-    apply_bundle_to_repo(
+    let preflight_plan = apply_bundle_to_repo(
         &repo,
         bundle_path,
         &inspection.heads,
         integrate_policy,
         incoming_as_branches,
     )?;
+    let can_apply_without_conflicts = !preflight_plan
+        .iter()
+        .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
 
     Ok(ReceiveBundleResult {
         bundle_version: inspection.version,
         imported_heads: inspection.heads,
-        can_apply_without_conflicts: true,
+        can_apply_without_conflicts,
+        preflight_plan,
         line_stats: Vec::new(),
     })
 }
@@ -256,7 +268,7 @@ fn apply_bundle_to_repo(
     heads: &[BundleHead],
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
-) -> Result<()> {
+) -> Result<Vec<ReceivePlanEntry>> {
     let bundle_bytes = fs::read(bundle_path)?;
     let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
     let pack_data = parsed_bundle.pack_data;
@@ -280,9 +292,11 @@ fn apply_bundle_to_repo(
     let bundle_id = bundle_receive_id(&bundle_bytes)?;
     let incoming_refs =
         write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
-    apply_head_integration_policy(repo, heads, &incoming_refs, integrate_policy)?;
+    let preflight_plan = compute_receive_plan(repo, &incoming_refs)?;
+    validate_receive_plan(&preflight_plan, integrate_policy)?;
+    apply_receive_plan(repo, &preflight_plan, integrate_policy)?;
 
-    Ok(())
+    Ok(preflight_plan)
 }
 
 #[derive(Debug, Clone)]
@@ -292,20 +306,23 @@ struct IncomingHeadRef {
     incoming_oid: git2::Oid,
 }
 
-#[derive(Debug, Clone)]
-struct NonFastForwardDiagnostic {
-    target_ref: String,
-    target_oid: git2::Oid,
-    incoming_oid: git2::Oid,
-    merge_base_oid: Option<git2::Oid>,
-    preserved_incoming_ref: String,
-}
-
 /// Derives a stable short identifier for incoming namespace refs.
 ///
 /// Uses the SHA-256 of bundle bytes and truncates to 12 hex chars.
 fn bundle_receive_id(bundle_bytes: &[u8]) -> Result<String> {
     sha256_hex(bundle_bytes).map(|digest| digest.chars().take(12).collect())
+}
+
+/// Builds incoming-ref descriptors for all bundle heads without mutating refs.
+fn incoming_head_refs(heads: &[BundleHead], bundle_id: &str) -> Vec<IncomingHeadRef> {
+    heads
+        .iter()
+        .map(|head| IncomingHeadRef {
+            target_ref: head.reference.clone(),
+            incoming_ref: incoming_ref_name(bundle_id, &head.reference),
+            incoming_oid: head.oid,
+        })
+        .collect()
 }
 
 /// Writes all incoming bundle heads to `refs/sync/incoming/<bundle-id>/...`.
@@ -315,29 +332,23 @@ fn write_incoming_namespace_refs(
     bundle_id: &str,
     incoming_as_branches: bool,
 ) -> Result<Vec<IncomingHeadRef>> {
-    let mut incoming_refs = Vec::with_capacity(heads.len());
-    for head in heads {
-        let incoming_ref = incoming_ref_name(bundle_id, &head.reference);
+    let incoming_refs = incoming_head_refs(heads, bundle_id);
+    for incoming in &incoming_refs {
         repo.reference(
-            &incoming_ref,
-            head.oid,
+            &incoming.incoming_ref,
+            incoming.incoming_oid,
             true,
             "receive bundle import (incoming namespace)",
         )?;
         if incoming_as_branches {
-            let incoming_branch_ref = incoming_branch_ref_name(bundle_id, &head.reference);
+            let incoming_branch_ref = incoming_branch_ref_name(bundle_id, &incoming.target_ref);
             repo.reference(
                 &incoming_branch_ref,
-                head.oid,
+                incoming.incoming_oid,
                 true,
                 "receive bundle import (incoming branch mirror)",
             )?;
         }
-        incoming_refs.push(IncomingHeadRef {
-            target_ref: head.reference.clone(),
-            incoming_ref,
-            incoming_oid: head.oid,
-        });
     }
     Ok(incoming_refs)
 }
@@ -358,68 +369,86 @@ fn incoming_branch_ref_name(bundle_id: &str, head_reference: &str) -> String {
     format!("refs/heads/incoming/{bundle_id}/{suffix}")
 }
 
-/// Applies the selected integration policy to target refs after bundle import.
-fn apply_head_integration_policy(
+/// Computes a deterministic per-head preflight plan for receive integration.
+fn compute_receive_plan(
     repo: &git2::Repository,
-    heads: &[BundleHead],
     incoming_refs: &[IncomingHeadRef],
-    integrate_policy: ReceiveIntegratePolicy,
-) -> Result<()> {
-    match integrate_policy {
-        ReceiveIntegratePolicy::CreateRefsOnly => Ok(()),
-        ReceiveIntegratePolicy::FastForwardOnly => {
-            apply_fast_forward_only_integration(repo, heads, incoming_refs)
-        }
-    }
-}
-
-/// Applies imported heads to target refs only when updates are fast-forwardable.
-///
-/// This function first validates all heads, then updates refs, so diverged refs
-/// do not result in partial target-ref mutation.
-fn apply_fast_forward_only_integration(
-    repo: &git2::Repository,
-    heads: &[BundleHead],
-    incoming_refs: &[IncomingHeadRef],
-) -> Result<()> {
-    let mut updates = Vec::<(&str, git2::Oid)>::new();
-    let mut diagnostics = Vec::<NonFastForwardDiagnostic>::new();
-
-    for (head, incoming_ref) in heads.iter().zip(incoming_refs.iter()) {
-        let current_target = resolve_reference_target(repo, &head.reference)?;
-        let Some(current_target) = current_target else {
-            updates.push((&head.reference, head.oid));
-            continue;
+) -> Result<Vec<ReceivePlanEntry>> {
+    let mut plan = Vec::with_capacity(incoming_refs.len());
+    for incoming in incoming_refs {
+        let target_oid = resolve_reference_target(repo, &incoming.target_ref)?;
+        let status = match target_oid {
+            None => ReceivePlanStatus::TargetMissing,
+            Some(current) if current == incoming.incoming_oid => ReceivePlanStatus::AlreadyPresent,
+            Some(current) => {
+                if repo.graph_descendant_of(incoming.incoming_oid, current)? {
+                    ReceivePlanStatus::FastForwardOk
+                } else {
+                    ReceivePlanStatus::DivergedMergeRequired
+                }
+            }
         };
-        if current_target == head.oid {
-            continue;
-        }
+        let merge_base_oid = match target_oid {
+            Some(current) => repo.merge_base(current, incoming.incoming_oid).ok(),
+            None => None,
+        };
 
-        if repo.graph_descendant_of(head.oid, current_target)? {
-            updates.push((&head.reference, head.oid));
-            continue;
-        }
-
-        diagnostics.push(NonFastForwardDiagnostic {
-            target_ref: incoming_ref.target_ref.clone(),
-            target_oid: current_target,
-            incoming_oid: incoming_ref.incoming_oid,
-            merge_base_oid: repo.merge_base(current_target, head.oid).ok(),
-            preserved_incoming_ref: incoming_ref.incoming_ref.clone(),
+        plan.push(ReceivePlanEntry {
+            target_ref: incoming.target_ref.clone(),
+            target_oid,
+            incoming_oid: incoming.incoming_oid,
+            merge_base_oid,
+            preserved_incoming_ref: incoming.incoming_ref.clone(),
+            status,
         });
     }
+    Ok(plan)
+}
 
-    if !diagnostics.is_empty() {
-        bail!(format_non_fast_forward_diagnostics(&diagnostics));
+/// Validates an integration plan under the selected policy.
+fn validate_receive_plan(
+    preflight_plan: &[ReceivePlanEntry],
+    integrate_policy: ReceiveIntegratePolicy,
+) -> Result<()> {
+    if matches!(integrate_policy, ReceiveIntegratePolicy::CreateRefsOnly) {
+        return Ok(());
     }
 
-    for (target_ref, new_target) in updates {
-        repo.reference(
-            target_ref,
-            new_target,
-            true,
-            "receive bundle import (fast-forward)",
-        )?;
+    let diverged = preflight_plan
+        .iter()
+        .filter(|entry| entry.status == ReceivePlanStatus::DivergedMergeRequired)
+        .collect::<Vec<_>>();
+    if !diverged.is_empty() {
+        bail!(format_non_fast_forward_diagnostics(&diverged));
+    }
+
+    Ok(())
+}
+
+/// Applies validated ref updates according to the selected integration policy.
+fn apply_receive_plan(
+    repo: &git2::Repository,
+    preflight_plan: &[ReceivePlanEntry],
+    integrate_policy: ReceiveIntegratePolicy,
+) -> Result<()> {
+    if matches!(integrate_policy, ReceiveIntegratePolicy::CreateRefsOnly) {
+        return Ok(());
+    }
+
+    for entry in preflight_plan {
+        match entry.status {
+            ReceivePlanStatus::TargetMissing | ReceivePlanStatus::FastForwardOk => {
+                repo.reference(
+                    &entry.target_ref,
+                    entry.incoming_oid,
+                    true,
+                    "receive bundle import (fast-forward)",
+                )?;
+            }
+            ReceivePlanStatus::AlreadyPresent | ReceivePlanStatus::DivergedMergeRequired => {
+                // Already-present rows require no update; diverged rows are rejected in validation.
+            }
+        }
     }
 
     Ok(())
@@ -442,7 +471,7 @@ fn resolve_reference_target(repo: &git2::Repository, ref_name: &str) -> Result<O
 }
 
 /// Formats per-ref diagnostics for non-fast-forward integration failures.
-fn format_non_fast_forward_diagnostics(diagnostics: &[NonFastForwardDiagnostic]) -> String {
+fn format_non_fast_forward_diagnostics(diagnostics: &[&ReceivePlanEntry]) -> String {
     let mut message =
         String::from("unable to integrate bundle heads with --integrate fast-forward-only:\n");
     for diagnostic in diagnostics {
@@ -455,7 +484,9 @@ fn format_non_fast_forward_diagnostics(diagnostics: &[NonFastForwardDiagnostic])
             format_args!(
                 "- target ref: {}\n  target oid: {}\n  incoming oid: {}\n  merge-base oid: {}\n  reason: diverged (non-fast-forward)\n  next-step: merge required; incoming ref preserved at {}\n",
                 diagnostic.target_ref,
-                diagnostic.target_oid,
+                diagnostic
+                    .target_oid
+                    .expect("diverged receive diagnostics must include target oid"),
                 diagnostic.incoming_oid,
                 merge_base,
                 diagnostic.preserved_incoming_ref

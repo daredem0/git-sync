@@ -221,6 +221,16 @@ fn receive_bundle_input_imports_zip_bundle_and_updates_heads_when_prerequisite_e
         receive_result.imported_heads[0].oid, tip_commit_id,
         "receive should point exported tip ref at the imported tip commit"
     );
+    assert_eq!(
+        receive_result.preflight_plan.len(),
+        1,
+        "single-head fixture should produce one preflight plan row"
+    );
+    assert_eq!(
+        receive_result.preflight_plan[0].status,
+        ReceivePlanStatus::TargetMissing,
+        "first receive should classify missing target refs as target_missing"
+    );
 
     let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
     let tip_ref = receiver_repo
@@ -304,6 +314,16 @@ fn receive_bundle_input_is_idempotent_when_same_package_is_applied_twice() {
     assert_eq!(
         second_receive.imported_heads, first_receive.imported_heads,
         "idempotent receive should report the same imported heads"
+    );
+    assert_eq!(
+        second_receive.preflight_plan.len(),
+        1,
+        "single-head fixture should produce one preflight row"
+    );
+    assert_eq!(
+        second_receive.preflight_plan[0].status,
+        ReceivePlanStatus::AlreadyPresent,
+        "second receive should classify unchanged refs as already_present"
     );
 
     let mut pack_entries_after_second = std::fs::read_dir(&pack_dir)
@@ -458,6 +478,16 @@ fn receive_create_refs_only_preserves_target_ref_even_when_fast_forward_is_possi
         receive_result.imported_heads.len(),
         1,
         "fixture bundle should report one imported head"
+    );
+    assert_eq!(
+        receive_result.preflight_plan.len(),
+        1,
+        "single-head fixture should produce one preflight row"
+    );
+    assert_eq!(
+        receive_result.preflight_plan[0].status,
+        ReceivePlanStatus::FastForwardOk,
+        "create-refs-only should still classify this target as fast_forward_ok"
     );
 
     let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
@@ -1557,6 +1587,16 @@ fn receive_bundle_input_with_options_dry_run_reports_zero_line_stats_for_symlink
     assert_eq!(
         symlink_stat.deletions, 0,
         "non-text symlink changes must not report textual deletions"
+    );
+    assert_eq!(
+        dry_run.preflight_plan.len(),
+        1,
+        "single-head fixture should produce one preflight row"
+    );
+    assert_eq!(
+        dry_run.preflight_plan[0].status,
+        ReceivePlanStatus::TargetMissing,
+        "dry-run should classify missing target ref as target_missing"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

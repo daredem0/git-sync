@@ -31,7 +31,8 @@ pub(crate) fn collect_diff_entries(
 
     let mut diff_opts = git2::DiffOptions::new();
     diff_opts.include_typechange(true);
-    let mut diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut diff_opts))?;
+    let mut diff =
+        repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut diff_opts))?;
     let mut find_opts = git2::DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))?;
