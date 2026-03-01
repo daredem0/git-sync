@@ -1,5 +1,12 @@
 # git-sync
 
+[![CI](https://github.com/daredem0/git-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/daredem0/git-sync/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/daredem0/git-sync/branch/main/graph/badge.svg)](https://codecov.io/gh/daredem0/git-sync)
+[![Docs](https://img.shields.io/badge/docs-github%20pages-2ea44f?logo=github)](https://daredem0.github.io/git-sync/)
+[![Release](https://img.shields.io/github/v/release/daredem0/git-sync)](https://github.com/daredem0/git-sync/releases)
+[![License](https://img.shields.io/github/license/daredem0/git-sync)](./LICENSE)
+[![Rust Edition](https://img.shields.io/badge/rust-2024%20edition-black?logo=rust)](https://www.rust-lang.org/)
+
 `git-sync` is a command-line tool for moving Git history across disconnected environments while keeping that transfer auditable.
 
 It helps you:
