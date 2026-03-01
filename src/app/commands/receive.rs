@@ -90,9 +90,21 @@ pub(super) fn run(
         println!("HEAD\t{}\t{}", head.oid, head.reference);
     }
 
+    render_preflight_plan(&result.preflight_plan);
+    render_plan_outcome(
+        &result.preflight_plan,
+        integrate_policy,
+        dry_run,
+        result.can_apply_without_conflicts,
+    );
+
     if dry_run {
-        render_dry_run_preflight_plan(&result.preflight_plan);
         render_dry_run_line_stats(&result.line_stats);
+        println!();
+        println!("dry-run completed successfully.");
+    } else {
+        println!();
+        println!("receive completed successfully.");
     }
 
     Ok(())
@@ -136,58 +148,109 @@ fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) 
     .expect("receive dry-run json rendering should always be serializable")
 }
 
-fn render_dry_run_preflight_plan(plan: &[ReceivePlanEntry]) {
+fn render_preflight_plan(plan: &[ReceivePlanEntry]) {
     println!();
-    println!("preflight plan (per-ref integration status):");
-
-    let ref_header = "TARGET_REF";
-    let status_header = "STATUS";
-    let target_header = "TARGET_OID";
-    let incoming_header = "INCOMING_OID";
-    let merge_base_header = "MERGE_BASE_OID";
-
-    let ref_width = std::cmp::max(
-        ref_header.len(),
-        plan.iter()
-            .map(|row| row.target_ref.len())
-            .max()
-            .unwrap_or(0),
-    );
-    let status_width = std::cmp::max(
-        status_header.len(),
-        plan.iter()
-            .map(|row| row.status.as_str().len())
-            .max()
-            .unwrap_or(0),
-    );
-
-    println!(
-        "{:<ref_width$}  {:<status_width$}  {:<40}  {:<40}  {:<40}",
-        ref_header, status_header, target_header, incoming_header, merge_base_header
-    );
+    println!("preflight checks:");
 
     if plan.is_empty() {
         println!("(no advertised heads)");
         return;
     }
 
-    for row in plan {
-        let target_oid = row
-            .target_oid
-            .map(|oid| oid.to_string())
-            .unwrap_or_else(|| "-".to_string());
-        let merge_base_oid = row
-            .merge_base_oid
-            .map(|oid| oid.to_string())
-            .unwrap_or_else(|| "-".to_string());
+    for (index, row) in plan.iter().enumerate() {
+        println!("[{}/{}] {}", index + 1, plan.len(), row.target_ref);
         println!(
-            "{:<ref_width$}  {:<status_width$}  {:<40}  {:<40}  {:<40}",
-            row.target_ref,
-            row.status.as_str(),
-            target_oid,
-            row.incoming_oid,
-            merge_base_oid,
+            "  status       : {} ({})",
+            receive_plan_status_label(row.status),
+            row.status.as_str()
         );
+        println!(
+            "  target oid   : {}",
+            format_optional_short_oid(row.target_oid)
+        );
+        println!("  incoming oid : {}", short_oid(row.incoming_oid));
+        println!(
+            "  merge base   : {}",
+            format_optional_short_oid(row.merge_base_oid)
+        );
+        println!("  preserved ref: {}", row.preserved_incoming_ref);
+    }
+}
+
+fn short_oid(oid: git2::Oid) -> String {
+    let full = oid.to_string();
+    full.chars().take(12).collect()
+}
+
+fn format_optional_short_oid(oid: Option<git2::Oid>) -> String {
+    oid.map(short_oid).unwrap_or_else(|| "-".to_string())
+}
+
+fn receive_plan_status_label(status: crate::git::ReceivePlanStatus) -> &'static str {
+    match status {
+        crate::git::ReceivePlanStatus::AlreadyPresent => "already present",
+        crate::git::ReceivePlanStatus::TargetMissing => "target missing",
+        crate::git::ReceivePlanStatus::FastForwardOk => "fast-forward ok",
+        crate::git::ReceivePlanStatus::DivergedMergeRequired => "diverged, merge required",
+    }
+}
+
+fn render_plan_outcome(
+    plan: &[ReceivePlanEntry],
+    policy: ReceiveIntegratePolicy,
+    dry_run: bool,
+    can_apply_without_conflicts: bool,
+) {
+    let mut already_present = 0usize;
+    let mut target_missing = 0usize;
+    let mut fast_forward_ok = 0usize;
+    let mut diverged_merge_required = 0usize;
+
+    for row in plan {
+        match row.status {
+            crate::git::ReceivePlanStatus::AlreadyPresent => already_present += 1,
+            crate::git::ReceivePlanStatus::TargetMissing => target_missing += 1,
+            crate::git::ReceivePlanStatus::FastForwardOk => fast_forward_ok += 1,
+            crate::git::ReceivePlanStatus::DivergedMergeRequired => diverged_merge_required += 1,
+        }
+    }
+
+    let policy_label = match policy {
+        ReceiveIntegratePolicy::CreateRefsOnly => "create-refs-only",
+        ReceiveIntegratePolicy::FastForwardOnly => "fast-forward-only",
+    };
+    println!();
+    println!(
+        "plan summary: total={}, already_present={}, target_missing={}, fast_forward_ok={}, diverged_merge_required={}",
+        plan.len(),
+        already_present,
+        target_missing,
+        fast_forward_ok,
+        diverged_merge_required,
+    );
+
+    if dry_run {
+        if can_apply_without_conflicts {
+            println!("plan result : dry-run check passed");
+        } else {
+            println!("plan result : dry-run check failed (manual merge required)");
+        }
+        return;
+    }
+
+    match policy {
+        ReceiveIntegratePolicy::FastForwardOnly => {
+            println!(
+                "plan result : receive applied with policy {} (strict fast-forward integration)",
+                policy_label
+            );
+        }
+        ReceiveIntegratePolicy::CreateRefsOnly => {
+            println!(
+                "plan result : receive applied with policy {} (target refs preserved)",
+                policy_label
+            );
+        }
     }
 }
 
