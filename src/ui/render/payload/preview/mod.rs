@@ -9,11 +9,13 @@
 mod clip;
 mod syntax;
 
-use super::util::{payload_entry_base_ref_label, payload_entry_kind_label, payload_kind_label};
+use super::util::{
+    payload_entry_base_ref_label, payload_entry_kind_label, payload_kind_label, payload_kind_style,
+};
 use crate::ui::types::{AppState, AuditModel, PayloadModel};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 /// Renders selected pack object preview (commit/tree/blob/tag) on payload page.
@@ -127,13 +129,20 @@ pub(super) fn render_pack_preview(
                     let prefix_len = raw_lines.len();
                     raw_lines.extend(preview.lines.iter().cloned());
                     let syntax_start = preview.syntax_start_index.map(|index| index + prefix_len);
-                    clip::render_preview_lines_to_area(
+                    let mut rendered = clip::render_preview_lines_to_area(
                         raw_lines,
                         area,
                         preview.syntax_path_hint.as_deref(),
                         syntax_start,
                         &model.syntax_highlighter,
-                    )
+                    );
+                    if rendered
+                        .first()
+                        .is_some_and(|line| line.to_string().starts_with("selected: "))
+                    {
+                        rendered[0] = selected_object_header_line(preview.oid, preview.kind);
+                    }
+                    rendered
                 }
                 None => vec![
                     Line::from("No preview loaded."),
@@ -147,4 +156,16 @@ pub(super) fn render_pack_preview(
     let preview = Paragraph::new(ratatui::text::Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title("Pack Preview"));
     frame.render_widget(preview, area);
+}
+
+/// Builds the selected-object header line with semantic color on the object kind.
+fn selected_object_header_line(
+    oid: git2::Oid,
+    kind: crate::git::PayloadObjectKind,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(format!("selected: {oid} (")),
+        Span::styled(payload_kind_label(kind), payload_kind_style(kind)),
+        Span::raw(")"),
+    ])
 }

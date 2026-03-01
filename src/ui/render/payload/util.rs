@@ -7,6 +7,7 @@
 //! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::git::{PackEntryBaseRef, PackEntryKind, PayloadObjectKind};
+use ratatui::style::{Color, Style};
 
 /// Returns compact display label for payload object kind.
 pub(in crate::ui::render::payload) fn payload_kind_label(kind: PayloadObjectKind) -> &'static str {
@@ -16,6 +17,17 @@ pub(in crate::ui::render::payload) fn payload_kind_label(kind: PayloadObjectKind
         PayloadObjectKind::Blob => "blob",
         PayloadObjectKind::Tag => "tag",
         PayloadObjectKind::Unknown => "unknown",
+    }
+}
+
+/// Returns semantic style for payload object kind labels.
+pub(in crate::ui::render::payload) fn payload_kind_style(kind: PayloadObjectKind) -> Style {
+    match kind {
+        PayloadObjectKind::Commit => Style::default().fg(Color::Yellow),
+        PayloadObjectKind::Tree => Style::default().fg(Color::White),
+        PayloadObjectKind::Blob => Style::default().fg(Color::Blue),
+        PayloadObjectKind::Tag => Style::default().fg(Color::Magenta),
+        PayloadObjectKind::Unknown => Style::default(),
     }
 }
 
@@ -30,6 +42,17 @@ pub(in crate::ui::render::payload) fn payload_entry_kind_label(
         PackEntryKind::Tag => "tag",
         PackEntryKind::OfsDelta => "ofs-delta",
         PackEntryKind::RefDelta => "ref-delta",
+    }
+}
+
+/// Returns semantic style for pack-entry kind labels.
+pub(in crate::ui::render::payload) fn payload_entry_kind_style(kind: PackEntryKind) -> Style {
+    match kind {
+        PackEntryKind::Commit => payload_kind_style(PayloadObjectKind::Commit),
+        PackEntryKind::Tree => payload_kind_style(PayloadObjectKind::Tree),
+        PackEntryKind::Blob => payload_kind_style(PayloadObjectKind::Blob),
+        PackEntryKind::Tag => payload_kind_style(PayloadObjectKind::Tag),
+        PackEntryKind::OfsDelta | PackEntryKind::RefDelta => Style::default(),
     }
 }
 

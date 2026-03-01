@@ -6,7 +6,7 @@
 //! Part of the read-only review UI that projects verified evidence for operators.
 //! Keeps interaction and rendering concerns separate from proof computation.
 
-use super::super::util::{payload_kind_label, short_oid};
+use super::super::util::{payload_kind_label, payload_kind_style, short_oid};
 use crate::ui::types::AppState;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -36,7 +36,8 @@ pub(in crate::ui::render::payload) fn render_objects_table(
             .map(|entry| {
                 Row::new(vec![
                     Cell::from(short_oid(entry.oid)),
-                    Cell::from(payload_kind_label(entry.kind)),
+                    Cell::from(payload_kind_label(entry.kind))
+                        .style(payload_kind_style(entry.kind)),
                     Cell::from(entry.size_bytes.to_string()),
                     Cell::from(if entry.reachable_from_heads {
                         "yes".to_string()
