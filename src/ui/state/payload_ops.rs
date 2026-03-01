@@ -29,43 +29,37 @@ impl AppState {
         self.action_message = None;
     }
 
-    /// Refreshes cached payload preview content for the selected object row.
+    /// Refreshes cached payload preview content for the selected payload row.
     pub(crate) fn refresh_payload_preview(&mut self, model: &AuditModel) {
-        if self.payload_sub_view != PayloadSubView::Objects {
-            self.payload_preview = None;
-            return;
-        }
         let PayloadModel::Ok(payload) = &model.payload else {
             self.payload_preview = None;
             return;
         };
-        let sorted = self.payload_sorted_objects(payload);
-        if sorted.is_empty() {
+        let Some((object_id, object_kind, reachable_from_heads)) =
+            self.selected_preview_target(payload)
+        else {
             self.payload_preview = None;
             return;
-        }
+        };
 
-        let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
-        self.payload_selected_index = index;
-        let selected = sorted[index];
-        if let Some(cached) = self.payload_preview_cache.get(&selected.oid).cloned() {
+        if let Some(cached) = self.payload_preview_cache.get(&object_id).cloned() {
             self.payload_preview = Some(cached);
             return;
         }
 
-        match self.load_payload_object_detail_cached(model, selected.oid) {
+        match self.load_payload_object_detail_cached(model, object_id) {
             Ok(detail) => {
-                let preview = build_payload_preview_state(&detail, selected.reachable_from_heads);
+                let preview = build_payload_preview_state(&detail, reachable_from_heads);
                 self.payload_preview_cache
-                    .insert(selected.oid, preview.clone());
+                    .insert(object_id, preview.clone());
                 self.payload_preview = Some(preview);
             }
             Err(err) => {
                 self.payload_preview = Some(PayloadPreviewState {
-                    oid: selected.oid,
-                    kind: selected.kind,
+                    oid: object_id,
+                    kind: object_kind,
                     lines: vec![
-                        format!("preview unavailable for object {}", selected.oid),
+                        format!("preview unavailable for object {object_id}"),
                         format!("error: {}", single_line_error(&err)),
                     ],
                     syntax_path_hint: None,
@@ -102,38 +96,43 @@ impl AppState {
             self.payload_selected_index.saturating_add(step),
             sorted_len - 1,
         );
-        if self.payload_sub_view == PayloadSubView::Objects {
-            self.refresh_payload_preview(model);
-        }
+        self.refresh_payload_preview(model);
     }
 
     /// Moves payload object selection up by `step` rows.
     pub(crate) fn move_payload_selection_up_by(&mut self, model: &AuditModel, step: usize) {
         self.payload_selected_index = self.payload_selected_index.saturating_sub(step);
-        if self.payload_sub_view == PayloadSubView::Objects {
-            self.refresh_payload_preview(model);
-        }
+        self.refresh_payload_preview(model);
     }
 
     /// Opens detail view for the currently selected payload object row.
     pub(crate) fn open_selected_payload_object(&mut self, model: &AuditModel) {
-        if self.payload_sub_view != PayloadSubView::Objects {
-            self.action_message = Some("Enter opens detail only in Objects view".to_string());
-            return;
-        }
         let PayloadModel::Ok(payload) = &model.payload else {
             self.action_message = Some("payload audit data is unavailable".to_string());
             return;
         };
-        let sorted = self.payload_sorted_objects(payload);
-        if sorted.is_empty() {
-            self.action_message = Some("payload contains no importable objects".to_string());
-            return;
-        }
+        let object_id = if self.payload_sub_view == PayloadSubView::Entries {
+            let Some(entry) = self.payload_selected_entry(payload) else {
+                self.action_message = Some("payload contains no ledger entries".to_string());
+                return;
+            };
+            let Some(oid) = entry.result_oid else {
+                self.action_message =
+                    Some("selected entry is unresolved; object detail is unavailable".to_string());
+                return;
+            };
+            oid
+        } else {
+            let sorted = self.payload_sorted_objects(payload);
+            if sorted.is_empty() {
+                self.action_message = Some("payload contains no importable objects".to_string());
+                return;
+            }
+            let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
+            sorted[index].oid
+        };
 
-        let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
-        let selected = sorted[index];
-        match self.load_payload_object_detail_cached(model, selected.oid) {
+        match self.load_payload_object_detail_cached(model, object_id) {
             Ok(detail) => {
                 let (lines, syntax_name) =
                     if let Some(path_hint) = detail.syntax_path_hint.as_deref() {
@@ -310,11 +309,7 @@ impl AppState {
         };
         self.payload_selected_index = std::cmp::min(self.payload_selected_index, max_index);
         self.action_message = None;
-        if self.payload_sub_view == PayloadSubView::Objects {
-            self.refresh_payload_preview(model);
-        } else {
-            self.payload_preview = None;
-        }
+        self.refresh_payload_preview(model);
     }
 
     /// Returns selected ledger entry row while in payload entries subview.
@@ -355,6 +350,33 @@ impl AppState {
             PayloadSortMode::Canonical => "canonical",
             PayloadSortMode::Context => "context",
         }
+    }
+
+    /// Resolves the currently selected row into a previewable object target.
+    fn selected_preview_target(
+        &mut self,
+        payload: &git::PayloadAudit,
+    ) -> Option<(git2::Oid, git::PayloadObjectKind, bool)> {
+        if self.payload_sub_view == PayloadSubView::Entries {
+            let entry = self.payload_selected_entry(payload)?;
+            let oid = entry.result_oid?;
+            let kind = entry.result_kind.unwrap_or(git::PayloadObjectKind::Unknown);
+            let reachable = payload
+                .objects
+                .iter()
+                .find(|object| object.oid == oid)
+                .is_some_and(|object| object.reachable_from_heads);
+            return Some((oid, kind, reachable));
+        }
+
+        let sorted = self.payload_sorted_objects(payload);
+        if sorted.is_empty() {
+            return None;
+        }
+        let index = std::cmp::min(self.payload_selected_index, sorted.len() - 1);
+        self.payload_selected_index = index;
+        let selected = sorted[index];
+        Some((selected.oid, selected.kind, selected.reachable_from_heads))
     }
 }
 
@@ -545,20 +567,22 @@ mod tests {
     }
 
     #[test]
-    fn refresh_payload_preview_clears_cached_preview_outside_objects_subview() {
-        let model = sample_model(1, 1);
-        let mut state = AppState::new(&model);
-        let selected_oid = match &model.payload {
-            PayloadModel::Ok(payload) => payload.objects[0].oid,
-            PayloadModel::Failed(_) => panic!("fixture model must include payload data"),
+    fn refresh_payload_preview_clears_preview_for_unresolved_entries_row() {
+        let mut model = sample_model(1, 1);
+        let PayloadModel::Ok(payload) = &mut model.payload else {
+            panic!("fixture model must include payload data");
         };
-        state.payload_preview = Some(preview_state_for(selected_oid, PayloadObjectKind::Blob));
+        payload.entry_ledger.entries[0].result_oid = None;
+        payload.entry_ledger.entries[0].result_kind = None;
+        payload.entry_ledger.entries[0].resolved = false;
+
+        let mut state = AppState::new(&model);
         state.payload_sub_view = PayloadSubView::Entries;
 
         state.refresh_payload_preview(&model);
         assert!(
             state.payload_preview.is_none(),
-            "preview must be cleared when subview is not objects"
+            "preview should be absent when selected entry has no resolved object id"
         );
     }
 
@@ -580,8 +604,15 @@ mod tests {
     }
 
     #[test]
-    fn open_selected_payload_object_requires_objects_subview() {
-        let model = sample_model(1, 1);
+    fn open_selected_payload_object_in_entries_reports_unresolved_row() {
+        let mut model = sample_model(1, 1);
+        let PayloadModel::Ok(payload) = &mut model.payload else {
+            panic!("fixture model must include payload data");
+        };
+        payload.entry_ledger.entries[0].result_oid = None;
+        payload.entry_ledger.entries[0].result_kind = None;
+        payload.entry_ledger.entries[0].resolved = false;
+
         let mut state = AppState::new(&model);
         state.payload_sub_view = PayloadSubView::Entries;
 
@@ -590,8 +621,44 @@ mod tests {
             state
                 .action_message
                 .as_deref()
-                .is_some_and(|message| message.contains("Enter opens detail only in Objects view")),
-            "enter should be rejected outside payload objects subview"
+                .is_some_and(|message| message.contains("selected entry is unresolved")),
+            "entries subview should explain when selected row has no resolved object detail"
+        );
+    }
+
+    #[test]
+    fn open_selected_payload_object_in_entries_opens_detail_for_resolved_row() {
+        let model = sample_model(1, 1);
+        let mut state = AppState::new(&model);
+        state.payload_sub_view = PayloadSubView::Entries;
+
+        let PayloadModel::Ok(payload) = &model.payload else {
+            panic!("fixture model must include payload data");
+        };
+        let oid = payload.entry_ledger.entries[0]
+            .result_oid
+            .expect("first entry should resolve to object id");
+        state.payload_detail_cache.insert(
+            oid,
+            PayloadObjectDetail {
+                oid,
+                kind: PayloadObjectKind::Commit,
+                size_bytes: 32,
+                syntax_path_hint: None,
+                blob_paths: Vec::new(),
+                text_line_count: Some(1),
+                lines: vec!["commit".to_string(), String::new(), "body".to_string()],
+            },
+        );
+
+        state.open_selected_payload_object(&model);
+        assert!(
+            state.payload_object_view.is_some(),
+            "entries subview should open detail for resolved rows"
+        );
+        assert!(
+            state.action_message.is_none(),
+            "resolved entries should not produce an action error"
         );
     }
 

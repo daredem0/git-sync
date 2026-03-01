@@ -52,7 +52,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     } else if state.is_payload_object_open() {
         "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | q quit"
     } else if state.main_view == MainView::Payload && state.is_payload_entries_view() {
-        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nv toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | v toggle history/payload | ? help | q quit"
     } else if state.main_view == MainView::Payload {
         "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | v toggle history/payload | ? help | q quit"
     } else if state.page_index == 0 {
@@ -107,7 +107,7 @@ pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
          - 3: open first commit detail page for selected head\n\
          - g: first page\n\
          - G: last page\n\
-         - Enter: open selected head (overview) or selected file diff (commit page)\n\
+         - Enter: open selected head (overview), selected file diff (commit page), or selected payload detail\n\
          - Esc: return to overview or quit from overview\n\
          - ?: toggle this help\n\
          - q: quit"

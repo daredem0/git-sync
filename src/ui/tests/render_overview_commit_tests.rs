@@ -351,6 +351,39 @@ fn entries_table_renders_expected_headers() {
     );
 }
 
+// Verifies that entries subview preview includes reconstructed object preview when entry is resolved.
+#[test]
+fn entries_subview_shows_materialized_object_preview_for_resolved_entry() {
+    let fixture = create_diff_fixture();
+    let model = build_model_from_fixture(&fixture);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = super::super::types::MainView::Payload;
+    state.payload_sub_view = PayloadSubView::Entries;
+    let super::super::types::PayloadModel::Ok(payload) = &model.payload else {
+        panic!("fixture model must include payload audit");
+    };
+    state.payload_selected_index = payload
+        .entry_ledger
+        .entries
+        .iter()
+        .position(|entry| matches!(entry.result_kind, Some(crate::git::PayloadObjectKind::Blob)))
+        .expect("fixture payload should include at least one resolved blob entry");
+    state.refresh_payload_preview(&model);
+
+    let output = render_and_capture_text(160, 44, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("materialized object:"),
+        "entries preview should include materialized object header for resolved rows"
+    );
+    assert!(
+        output.contains("content preview:"),
+        "entries preview should include reconstructed object content section"
+    );
+}
+
 // Verifies that payload blob selection renders blob-specific preview metadata.
 #[test]
 fn render_page_in_payload_view_shows_blob_preview_metadata() {
