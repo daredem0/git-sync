@@ -769,3 +769,109 @@ fn handle_diff_keys_unmapped_input_does_not_change_scroll_state() {
     assert_eq!(diff_view.scroll_y, 0);
     assert_eq!(diff_view.scroll_x, 0);
 }
+
+// Verifies that global quit action has precedence over active diff-mode key routing.
+#[test]
+fn handle_key_press_global_quit_precedes_diff_mode_routing() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 1;
+    state.diff_view = Some(DiffViewState {
+        commit_index: 0,
+        commit_total: 1,
+        file_index: 0,
+        commit_id: git2::Oid::from_str("1111111111111111111111111111111111111111")
+            .expect("valid oid"),
+        commit_subject: "subject".to_string(),
+        file_path: "main.rs".to_string(),
+        syntax_name: "Rust".to_string(),
+        lines: vec![Line::from("line 1")],
+        max_line_width: 10,
+        scroll_y: 0,
+        scroll_x: 0,
+    });
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Char('q'));
+    assert!(
+        should_exit,
+        "global quit should request exit even when diff mode is active"
+    );
+}
+
+// Verifies that diff-mode key routing consumes navigation keys before page-mode routing.
+#[test]
+fn handle_key_press_diff_mode_consumes_horizontal_navigation_keys() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.page_index = 2;
+    state.diff_view = Some(DiffViewState {
+        commit_index: 1,
+        commit_total: 2,
+        file_index: 0,
+        commit_id: git2::Oid::from_str("2222222222222222222222222222222222222222")
+            .expect("valid oid"),
+        commit_subject: "subject".to_string(),
+        file_path: "main.rs".to_string(),
+        syntax_name: "Rust".to_string(),
+        lines: vec![Line::from("line 1")],
+        max_line_width: 20,
+        scroll_y: 0,
+        scroll_x: 6,
+    });
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Left);
+    assert!(!should_exit, "diff navigation should not request app exit");
+    assert_eq!(
+        state.page_index, 2,
+        "diff-mode key routing must not run history page navigation"
+    );
+    let diff_view = state
+        .diff_view
+        .as_ref()
+        .expect("diff view should remain open");
+    assert_eq!(
+        diff_view.scroll_x, 4,
+        "left key in diff mode should apply diff horizontal scroll step"
+    );
+}
+
+// Verifies that payload-object detail key routing consumes scroll keys before page-mode routing.
+#[test]
+fn handle_key_press_payload_object_mode_consumes_scroll_keys() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+    state.page_index = 1;
+    state.payload_object_view = Some(super::super::types::PayloadObjectViewState {
+        oid: git2::Oid::from_str("3333333333333333333333333333333333333333").expect("valid oid"),
+        kind: PayloadObjectKind::Blob,
+        syntax_name: "Rust".to_string(),
+        lines: vec![Line::from("line 1"), Line::from("line 2")],
+        max_line_width: 20,
+        scroll_y: 0,
+        scroll_x: 0,
+    });
+    state.payload_selected_index = 0;
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Down);
+    assert!(
+        !should_exit,
+        "payload-object scrolling should not request app exit"
+    );
+    assert_eq!(
+        state.page_index, 1,
+        "payload-object key routing must not trigger history page navigation"
+    );
+    let view = state
+        .payload_object_view
+        .as_ref()
+        .expect("payload-object detail view should remain open");
+    assert_eq!(
+        view.scroll_y, 1,
+        "down key in payload-object mode should scroll detail view"
+    );
+    assert_eq!(
+        state.payload_selected_index, 0,
+        "payload-object scroll keys should not mutate payload row selection"
+    );
+}

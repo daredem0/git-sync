@@ -9,4 +9,4 @@ mod render_overview_commit_tests;
 mod state_diff_open_tests;
 mod state_diff_scroll_tests;
 mod state_navigation_tests;
-mod support;
+pub(crate) mod support;
