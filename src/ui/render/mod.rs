@@ -86,12 +86,14 @@ pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, state: &AppState) {
     frame.render_widget(Clear, area);
     let context = active_help_context(state);
     let page_index = std::cmp::min(state.help_page_index, HELP_PAGE_COUNT - 1);
-    let (page_label, page_text) = match page_index {
-        0 => ("Hotkeys", help_hotkeys_text(context)),
-        1 => ("Context", help_context_text(context)),
-        _ => ("How to Audit", help_audit_text(context)),
+    let page_label = help_page_label(page_index);
+    let page_text = match page_index {
+        0 => help_hotkeys_text(context),
+        1 => help_context_text(context),
+        _ => help_audit_text(context),
     };
-    let mut lines = style_help_text(page_text);
+    let mut lines = vec![help_page_nav_line(page_index), Line::from(String::new())];
+    lines.extend(style_help_text(page_text));
     lines.push(Line::from(String::new()));
     lines.push(help_footer_line(page_index));
 
@@ -330,6 +332,33 @@ fn help_audit_text(context: HelpContext) -> &'static str {
 
 fn style_help_text(text: &str) -> Vec<Line<'static>> {
     text.lines().map(style_help_line).collect()
+}
+
+fn help_page_label(page_index: usize) -> &'static str {
+    match page_index {
+        0 => "Hotkeys",
+        1 => "Glossary",
+        _ => "Audit Guide",
+    }
+}
+
+fn help_page_nav_line(page_index: usize) -> Line<'static> {
+    let active_style = help_key_style();
+    let inactive_style = Style::default().fg(Color::Gray);
+    let labels = ["Hotkeys", "Glossary", "Audit Guide"];
+    let mut spans = Vec::new();
+    for (index, label) in labels.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" | ", inactive_style));
+        }
+        let style = if index == page_index {
+            active_style
+        } else {
+            inactive_style
+        };
+        spans.push(Span::styled(format!("{} {}", index + 1, label), style));
+    }
+    Line::from(spans)
 }
 
 fn style_help_line(line: &str) -> Line<'static> {

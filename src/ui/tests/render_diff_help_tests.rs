@@ -169,6 +169,10 @@ fn render_help_overlay_page_mode_renders_page_navigation_hints() {
         output.contains("Hotkeys (Overview)"),
         "page help overlay should include overview hotkey hints"
     );
+    assert!(
+        output.contains("1 Hotkeys | 2 Glossary | 3 Audit Guide"),
+        "help overlay should list all available help pages in a persistent header"
+    );
 }
 
 // Verifies that rendering help overlay in diff mode prints diff-navigation hints.
