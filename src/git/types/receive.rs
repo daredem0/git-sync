@@ -27,10 +27,21 @@ pub struct ReceiveBundleResult {
     pub imported_heads: Vec<BundleHead>,
     /// Whether the import can be applied cleanly.
     pub can_apply_without_conflicts: bool,
+    /// Backend used for target-ref updates during non-dry-run receive.
+    pub apply_backend: Option<ReceiveApplyBackend>,
     /// Deterministic preflight integration plan for each imported head.
     pub preflight_plan: Vec<ReceivePlanEntry>,
     /// Per-file additions/deletions produced during dry-run analysis.
     pub line_stats: Vec<FileLineStat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Execution backend used for applying receive target-ref updates.
+pub enum ReceiveApplyBackend {
+    /// Uses libgit2 reference transactions.
+    RefTransaction,
+    /// Uses sequential compare-and-swap updates with rollback-on-failure.
+    ManualCasRollback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

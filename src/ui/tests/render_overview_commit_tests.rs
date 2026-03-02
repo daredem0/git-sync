@@ -26,6 +26,7 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
                 reference: "refs/heads/main".to_string(),
             }],
             can_apply_without_conflicts: true,
+            apply_backend: None,
             preflight_plan: Vec::new(),
             line_stats: vec![git::FileLineStat {
                 path: "file.txt".to_string(),

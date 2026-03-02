@@ -33,9 +33,9 @@ pub(crate) use types::{
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
     OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit,
     PayloadAuditDocument, PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry,
-    PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveBundleOptions,
-    ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry, ReceivePlanStatus,
-    ResolutionSource,
+    PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveApplyBackend,
+    ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry,
+    ReceivePlanStatus, ResolutionSource,
 };
 
 #[cfg(test)]

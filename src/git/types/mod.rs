@@ -36,8 +36,9 @@ pub use payload_model::{
 };
 pub use payload_proof::PayloadPackProof;
 pub use receive::{
-    CommitAuditEntry, CommitAuditIdentity, FileLineStat, HeadAuditEntry, ReceiveBundleOptions,
-    ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry, ReceivePlanStatus,
+    CommitAuditEntry, CommitAuditIdentity, FileLineStat, HeadAuditEntry, ReceiveApplyBackend,
+    ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry,
+    ReceivePlanStatus,
 };
 
 pub(crate) use core::DiffEntry;

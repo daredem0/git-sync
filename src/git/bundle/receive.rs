@@ -14,14 +14,20 @@ use crate::git::metadata::verify_bundle_metadata_integrity_input;
 use crate::git::util::path_to_string;
 use crate::git::{
     BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
-    HeadAuditEntry, ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy,
-    ReceivePlanEntry, ReceivePlanStatus,
+    HeadAuditEntry, ReceiveApplyBackend, ReceiveBundleOptions, ReceiveBundleResult,
+    ReceiveIntegratePolicy, ReceivePlanEntry, ReceivePlanStatus,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Clone)]
+struct ApplyBundleToRepoResult {
+    preflight_plan: Vec<ReceivePlanEntry>,
+    apply_backend: Option<ReceiveApplyBackend>,
+}
 
 /// Receives a bundle input using default receive options.
 ///
@@ -206,6 +212,7 @@ fn receive_bundle(
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
             can_apply_without_conflicts: true,
+            apply_backend: None,
             preflight_plan,
             line_stats: Vec::new(),
         });
@@ -215,13 +222,14 @@ fn receive_bundle(
         // Dry-run operates on a temporary mirror so we can safely import and diff.
         let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
         let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
-        let preflight_plan = apply_bundle_to_repo(
+        let apply_result = apply_bundle_to_repo(
             &dry_run_repo,
             bundle_path,
             &inspection.heads,
             integrate_policy,
             incoming_as_branches,
         )?;
+        let preflight_plan = apply_result.preflight_plan;
         let line_stats = collect_bundle_line_stats(&dry_run_repo, &inspection)?;
         let can_apply_without_conflicts = !preflight_plan
             .iter()
@@ -231,18 +239,20 @@ fn receive_bundle(
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
             can_apply_without_conflicts,
+            apply_backend: None,
             preflight_plan,
             line_stats,
         });
     }
 
-    let preflight_plan = apply_bundle_to_repo(
+    let apply_result = apply_bundle_to_repo(
         &repo,
         bundle_path,
         &inspection.heads,
         integrate_policy,
         incoming_as_branches,
     )?;
+    let preflight_plan = apply_result.preflight_plan;
     let can_apply_without_conflicts = !preflight_plan
         .iter()
         .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
@@ -251,6 +261,7 @@ fn receive_bundle(
         bundle_version: inspection.version,
         imported_heads: inspection.heads,
         can_apply_without_conflicts,
+        apply_backend: apply_result.apply_backend,
         preflight_plan,
         line_stats: Vec::new(),
     })
@@ -268,7 +279,7 @@ fn apply_bundle_to_repo(
     heads: &[BundleHead],
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
-) -> Result<Vec<ReceivePlanEntry>> {
+) -> Result<ApplyBundleToRepoResult> {
     let bundle_bytes = fs::read(bundle_path)?;
     let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
     let pack_data = parsed_bundle.pack_data;
@@ -294,9 +305,12 @@ fn apply_bundle_to_repo(
         write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
     let preflight_plan = compute_receive_plan(repo, &incoming_refs)?;
     validate_receive_plan(&preflight_plan, integrate_policy)?;
-    apply_receive_plan(repo, &preflight_plan, integrate_policy)?;
+    let apply_backend = apply_receive_plan(repo, &preflight_plan, integrate_policy)?;
 
-    Ok(preflight_plan)
+    Ok(ApplyBundleToRepoResult {
+        preflight_plan,
+        apply_backend,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -430,28 +444,332 @@ fn apply_receive_plan(
     repo: &git2::Repository,
     preflight_plan: &[ReceivePlanEntry],
     integrate_policy: ReceiveIntegratePolicy,
-) -> Result<()> {
+) -> Result<Option<ReceiveApplyBackend>> {
     if matches!(integrate_policy, ReceiveIntegratePolicy::CreateRefsOnly) {
-        return Ok(());
+        return Ok(None);
     }
 
-    for entry in preflight_plan {
-        match entry.status {
+    let updates = planned_ref_updates_from_plan(preflight_plan)?;
+    if updates.is_empty() {
+        return Ok(None);
+    }
+
+    match repo.transaction() {
+        Ok(tx) => {
+            apply_ref_updates_with_transaction(repo, tx, &updates)?;
+            Ok(Some(ReceiveApplyBackend::RefTransaction))
+        }
+        Err(_transaction_error) => {
+            apply_ref_updates_with_manual_cas(repo, &updates)?;
+            Ok(Some(ReceiveApplyBackend::ManualCasRollback))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlannedRefUpdate {
+    ref_name: String,
+    expected_old_oid: Option<git2::Oid>,
+    new_oid: git2::Oid,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RollbackOutcome {
+    restored_refs: Vec<String>,
+    deleted_refs: Vec<String>,
+    failed_refs: Vec<(String, String)>,
+}
+
+/// Builds deterministic target-ref update rows from the validated preflight plan.
+fn planned_ref_updates_from_plan(
+    preflight_plan: &[ReceivePlanEntry],
+) -> Result<Vec<PlannedRefUpdate>> {
+    let mut updates = Vec::new();
+    for row in preflight_plan {
+        match row.status {
             ReceivePlanStatus::TargetMissing | ReceivePlanStatus::FastForwardOk => {
-                repo.reference(
-                    &entry.target_ref,
-                    entry.incoming_oid,
-                    true,
-                    "receive bundle import (fast-forward)",
-                )?;
+                updates.push(PlannedRefUpdate {
+                    ref_name: row.target_ref.clone(),
+                    expected_old_oid: row.target_oid,
+                    new_oid: row.incoming_oid,
+                });
             }
-            ReceivePlanStatus::AlreadyPresent | ReceivePlanStatus::DivergedMergeRequired => {
-                // Already-present rows require no update; diverged rows are rejected in validation.
+            ReceivePlanStatus::AlreadyPresent => {}
+            ReceivePlanStatus::DivergedMergeRequired => {
+                bail!(
+                    "internal receive plan error: diverged row '{}' reached apply stage",
+                    row.target_ref
+                );
             }
         }
     }
+    Ok(updates)
+}
+
+/// Applies updates using a libgit2 reference transaction with pre-commit CAS checks.
+fn apply_ref_updates_with_transaction(
+    repo: &git2::Repository,
+    mut transaction: git2::Transaction<'_>,
+    updates: &[PlannedRefUpdate],
+) -> Result<()> {
+    for update in updates {
+        transaction.lock_ref(&update.ref_name).map_err(|err| {
+            anyhow!(
+                "unable to lock target ref '{}' for transactional update: {err}",
+                update.ref_name
+            )
+        })?;
+    }
+
+    for update in updates {
+        ensure_expected_ref_target(repo, update)?;
+        transaction
+            .set_target(
+                &update.ref_name,
+                update.new_oid,
+                None,
+                "receive bundle import (fast-forward)",
+            )
+            .map_err(|err| {
+                anyhow!(
+                    "unable to stage transactional target update for '{}': {err}",
+                    update.ref_name
+                )
+            })?;
+    }
+
+    if let Err(err) = transaction.commit() {
+        let applied_updates = detect_applied_updates(repo, updates);
+        let rollback = rollback_applied_updates(repo, &applied_updates);
+        bail!(format_apply_failure(
+            "ref_transaction",
+            "transaction commit failed",
+            None,
+            &err.to_string(),
+            &applied_updates,
+            &rollback,
+        ));
+    }
 
     Ok(())
+}
+
+/// Applies updates one by one via CAS-aware direct ref updates and rolls back on failure.
+fn apply_ref_updates_with_manual_cas(
+    repo: &git2::Repository,
+    updates: &[PlannedRefUpdate],
+) -> Result<()> {
+    let mut applied_updates = Vec::<PlannedRefUpdate>::new();
+    for update in updates {
+        if let Err(err) = ensure_expected_ref_target(repo, update) {
+            let rollback = rollback_applied_updates(repo, &applied_updates);
+            bail!(format_apply_failure(
+                "manual_cas_rollback",
+                "CAS precondition failed",
+                Some(&update.ref_name),
+                &err.to_string(),
+                &applied_updates,
+                &rollback,
+            ));
+        }
+
+        let update_result = match update.expected_old_oid {
+            Some(expected_old) => repo
+                .reference_matching(
+                    &update.ref_name,
+                    update.new_oid,
+                    true,
+                    expected_old,
+                    "receive bundle import (fast-forward)",
+                )
+                .map(|_| ()),
+            None => repo
+                .reference(
+                    &update.ref_name,
+                    update.new_oid,
+                    false,
+                    "receive bundle import (fast-forward)",
+                )
+                .map(|_| ()),
+        };
+
+        if let Err(err) = update_result {
+            let rollback = rollback_applied_updates(repo, &applied_updates);
+            bail!(format_apply_failure(
+                "manual_cas_rollback",
+                "target update failed",
+                Some(&update.ref_name),
+                &err.to_string(),
+                &applied_updates,
+                &rollback,
+            ));
+        }
+
+        applied_updates.push(update.clone());
+    }
+
+    Ok(())
+}
+
+/// Verifies that the target ref still matches the expected old OID before update.
+fn ensure_expected_ref_target(repo: &git2::Repository, update: &PlannedRefUpdate) -> Result<()> {
+    let current = resolve_reference_target(repo, &update.ref_name)?;
+    if current == update.expected_old_oid {
+        return Ok(());
+    }
+
+    bail!(
+        "expected old target {} but found {}",
+        format_optional_oid(update.expected_old_oid),
+        format_optional_oid(current),
+    )
+}
+
+/// Detects updates that are currently materialized at their expected new OID.
+fn detect_applied_updates(
+    repo: &git2::Repository,
+    updates: &[PlannedRefUpdate],
+) -> Vec<PlannedRefUpdate> {
+    updates
+        .iter()
+        .filter_map(
+            |update| match resolve_reference_target(repo, &update.ref_name) {
+                Ok(Some(current)) if current == update.new_oid => Some(update.clone()),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+/// Rolls back applied target updates to their old OIDs (or deletes newly created refs).
+fn rollback_applied_updates(
+    repo: &git2::Repository,
+    applied_updates: &[PlannedRefUpdate],
+) -> RollbackOutcome {
+    let mut outcome = RollbackOutcome::default();
+
+    for update in applied_updates.iter().rev() {
+        let current = match resolve_reference_target(repo, &update.ref_name) {
+            Ok(current) => current,
+            Err(err) => {
+                outcome.failed_refs.push((
+                    update.ref_name.clone(),
+                    format!("unable to resolve current target before rollback: {err}"),
+                ));
+                continue;
+            }
+        };
+
+        if current != Some(update.new_oid) {
+            continue;
+        }
+
+        match update.expected_old_oid {
+            Some(old_oid) => {
+                if let Err(err) = repo.reference(
+                    &update.ref_name,
+                    old_oid,
+                    true,
+                    "receive bundle rollback after failed update",
+                ) {
+                    outcome
+                        .failed_refs
+                        .push((update.ref_name.clone(), err.to_string()));
+                } else {
+                    outcome.restored_refs.push(update.ref_name.clone());
+                }
+            }
+            None => match repo.find_reference(&update.ref_name) {
+                Ok(mut reference) => {
+                    if let Err(err) = reference.delete() {
+                        outcome
+                            .failed_refs
+                            .push((update.ref_name.clone(), err.to_string()));
+                    } else {
+                        outcome.deleted_refs.push(update.ref_name.clone());
+                    }
+                }
+                Err(err) if err.code() == git2::ErrorCode::NotFound => {}
+                Err(err) => {
+                    outcome
+                        .failed_refs
+                        .push((update.ref_name.clone(), err.to_string()));
+                }
+            },
+        }
+    }
+
+    outcome
+}
+
+/// Formats a detailed failure report for receive target-update failures.
+fn format_apply_failure(
+    backend: &str,
+    stage: &str,
+    failed_ref: Option<&str>,
+    reason: &str,
+    applied_updates: &[PlannedRefUpdate],
+    rollback: &RollbackOutcome,
+) -> String {
+    let mut message = format!(
+        "unable to apply receive target updates ({backend}) at stage '{stage}': {reason}\n"
+    );
+    if let Some(ref_name) = failed_ref {
+        let _ = std::fmt::Write::write_fmt(&mut message, format_args!("failed ref: {ref_name}\n"));
+    }
+
+    if applied_updates.is_empty() {
+        message.push_str("updated refs before failure: (none)\n");
+    } else {
+        message.push_str("updated refs before failure:\n");
+        for update in applied_updates {
+            let _ = std::fmt::Write::write_fmt(
+                &mut message,
+                format_args!(
+                    "- {}: {} -> {}\n",
+                    update.ref_name,
+                    format_optional_oid(update.expected_old_oid),
+                    update.new_oid
+                ),
+            );
+        }
+    }
+
+    if rollback.restored_refs.is_empty()
+        && rollback.deleted_refs.is_empty()
+        && rollback.failed_refs.is_empty()
+    {
+        message.push_str("rollback: no ref changes required\n");
+        return message;
+    }
+
+    if !rollback.restored_refs.is_empty() {
+        message.push_str("rollback restored refs:\n");
+        for ref_name in &rollback.restored_refs {
+            let _ = std::fmt::Write::write_fmt(&mut message, format_args!("- {ref_name}\n"));
+        }
+    }
+    if !rollback.deleted_refs.is_empty() {
+        message.push_str("rollback deleted refs:\n");
+        for ref_name in &rollback.deleted_refs {
+            let _ = std::fmt::Write::write_fmt(&mut message, format_args!("- {ref_name}\n"));
+        }
+    }
+    if !rollback.failed_refs.is_empty() {
+        message.push_str("rollback failures:\n");
+        for (ref_name, err) in &rollback.failed_refs {
+            let _ =
+                std::fmt::Write::write_fmt(&mut message, format_args!("- {}: {}\n", ref_name, err));
+        }
+    }
+
+    message
+}
+
+/// Formats optional OIDs in diagnostics.
+fn format_optional_oid(oid: Option<git2::Oid>) -> String {
+    oid.map(|value| value.to_string())
+        .unwrap_or_else(|| "<none>".to_string())
 }
 
 /// Resolves a reference name to its peeled direct target OID.
@@ -711,7 +1029,7 @@ fn with_imported_bundle_input_repo<T>(
     let inspection = if is_zip_bundle_input_path(bundle_input_path) {
         let extracted = extract_bundle_archive(bundle_input_path)?;
         let inspection = inspect_bundle(&extracted.bundle_path)?;
-        apply_bundle_to_repo(
+        let _ = apply_bundle_to_repo(
             &repo,
             &extracted.bundle_path,
             &inspection.heads,
@@ -721,7 +1039,7 @@ fn with_imported_bundle_input_repo<T>(
         inspection
     } else {
         let inspection = inspect_bundle(bundle_input_path)?;
-        apply_bundle_to_repo(
+        let _ = apply_bundle_to_repo(
             &repo,
             bundle_input_path,
             &inspection.heads,
@@ -859,6 +1177,120 @@ fn is_non_text_delta(delta: &git2::DiffDelta<'_>) -> bool {
 /// Returns `true` for standard git regular-file modes.
 fn is_regular_blob_mode(mode: u32) -> bool {
     mode == 0o100644 || mode == 0o100755
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_bare_repo_path(suffix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "git-sync-receive-rollback-{suffix}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn commit_from_content(
+        repo: &git2::Repository,
+        message: &str,
+        content: &str,
+        parents: &[git2::Oid],
+    ) -> git2::Oid {
+        let mut tree_builder = repo.treebuilder(None).expect("must create tree builder");
+        let blob = repo.blob(content.as_bytes()).expect("must create blob");
+        tree_builder
+            .insert("f.txt", blob, 0o100644)
+            .expect("must insert tree entry");
+        let tree_oid = tree_builder.write().expect("must write tree");
+        let tree = repo.find_tree(tree_oid).expect("must resolve tree");
+
+        let parent_commits = parents
+            .iter()
+            .map(|oid| repo.find_commit(*oid).expect("must resolve parent commit"))
+            .collect::<Vec<_>>();
+        let parent_refs = parent_commits.iter().collect::<Vec<_>>();
+        let sig = git2::Signature::now("Test User", "test@example.com").expect("must build sig");
+        repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+            .expect("must create commit")
+    }
+
+    #[test]
+    fn rollback_applied_updates_restores_existing_target_refs() {
+        let repo_path = temp_bare_repo_path("restore-existing");
+        std::fs::create_dir_all(&repo_path).expect("must create repo path");
+        let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+        let old_oid = commit_from_content(&repo, "old", "old", &[]);
+        let new_oid = commit_from_content(&repo, "new", "new", &[old_oid]);
+        repo.reference("refs/heads/main", old_oid, true, "seed old")
+            .expect("must create old ref");
+        repo.reference("refs/heads/main", new_oid, true, "simulate applied update")
+            .expect("must update ref to new oid");
+
+        let update = PlannedRefUpdate {
+            ref_name: "refs/heads/main".to_string(),
+            expected_old_oid: Some(old_oid),
+            new_oid,
+        };
+        let rollback = rollback_applied_updates(&repo, &[update]);
+
+        let current = resolve_reference_target(&repo, "refs/heads/main")
+            .expect("must resolve restored ref target");
+        assert_eq!(
+            current,
+            Some(old_oid),
+            "rollback should restore old ref target for existing refs"
+        );
+        assert!(
+            rollback
+                .restored_refs
+                .iter()
+                .any(|ref_name| ref_name == "refs/heads/main"),
+            "rollback should record restored refs"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn rollback_applied_updates_deletes_newly_created_refs() {
+        let repo_path = temp_bare_repo_path("delete-created");
+        std::fs::create_dir_all(&repo_path).expect("must create repo path");
+        let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+        let new_oid = commit_from_content(&repo, "new", "new", &[]);
+        repo.reference(
+            "refs/heads/new-target",
+            new_oid,
+            true,
+            "simulate created ref",
+        )
+        .expect("must create new ref");
+
+        let update = PlannedRefUpdate {
+            ref_name: "refs/heads/new-target".to_string(),
+            expected_old_oid: None,
+            new_oid,
+        };
+        let rollback = rollback_applied_updates(&repo, &[update]);
+
+        let current = resolve_reference_target(&repo, "refs/heads/new-target")
+            .expect("must resolve deleted ref target");
+        assert_eq!(current, None, "rollback should delete newly created refs");
+        assert!(
+            rollback
+                .deleted_refs
+                .iter()
+                .any(|ref_name| ref_name == "refs/heads/new-target"),
+            "rollback should record deleted refs"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
 }
 
 struct TempBareRepo {

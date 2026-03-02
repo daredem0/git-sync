@@ -402,12 +402,22 @@ Payload page:
 - `receive --dry-run` applies into an isolated temporary bare mirror and does not mutate the receiver repo.
 
 ## For Developers
-
 Development tasks are grouped into tiers:
 - `core`: build and test
 - `quality`: coverage, docs, and license reports
 - `release`: manpages and Linux packaging
 - `all`: everything above
+
+### Committing 
+Commit Message Shape Rules (git-sync)
+
+1. First line format: "<Prefix>: Imperative Title Case Summary" (no trailing period).
+2. Allowed prefixes: Add:, Change:, Fix:, Refactor:, Doc:, chore.
+3. Leave exactly one blank line after the first line.
+4. Body uses dash bullets ("- "), one change per line, no extra blank lines between bullets.
+5. Keep bullets short and parallel in structure; wrap only if needed and indent continuation lines.
+6. Use bullets to state what changed and why; avoid long prose paragraphs.
+7. Only use more than 3 bullets for very large commits
 
 ### Developer Setup and Task Runner (`just`)
 

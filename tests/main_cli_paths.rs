@@ -818,6 +818,14 @@ fn receive_dry_run_prints_would_change_table_for_pending_import() {
         "dry-run output should include the computed per-ref plan status"
     );
     assert!(
+        text.contains("changes:"),
+        "dry-run output should include per-ref planned actions"
+    );
+    assert!(
+        text.contains("would update"),
+        "dry-run output should mark ref updates as would-update actions"
+    );
+    assert!(
         text.contains("PATH") && text.contains("+LINES") && text.contains("-LINES"),
         "dry-run output should include line-stat table headers"
     );
@@ -1040,6 +1048,18 @@ fn receive_integrate_fast_forward_only_passes_when_target_can_be_advanced() {
     assert!(
         text.contains("receive completed successfully."),
         "successful receive should end with a clear success message"
+    );
+    assert!(
+        text.contains("changes:"),
+        "successful receive should include per-ref action logs"
+    );
+    assert!(
+        text.contains("updated"),
+        "successful receive should include performed update actions"
+    );
+    assert!(
+        text.contains("safety: target refs were updated through a locked ref transaction"),
+        "successful receive should describe the applied safety mechanism"
     );
 
     let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
@@ -1495,6 +1515,15 @@ fn receive_integrate_create_refs_only_passes_without_updating_target_ref() {
         None,
     );
     assert_success(&output, "receive create-refs-only pass");
+    let text = output_text(&output);
+    assert!(
+        text.contains("changes:"),
+        "create-refs-only receive should include per-ref action logs"
+    );
+    assert!(
+        text.contains("keep") || text.contains("kept"),
+        "create-refs-only receive should log skipped target updates"
+    );
 
     let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
     assert_eq!(
