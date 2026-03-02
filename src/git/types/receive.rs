@@ -104,6 +104,8 @@ pub enum ReceivePlanStatus {
     TargetMissing,
     /// Target ref can be advanced via strict fast-forward.
     FastForwardOk,
+    /// Target ref is already ahead and contains the incoming object.
+    TargetAhead,
     /// Target and incoming have diverged; manual merge is required.
     DivergedMergeRequired,
 }
@@ -115,6 +117,7 @@ impl ReceivePlanStatus {
             Self::AlreadyPresent => "already_present",
             Self::TargetMissing => "target_missing",
             Self::FastForwardOk => "fast_forward_ok",
+            Self::TargetAhead => "target_ahead",
             Self::DivergedMergeRequired => "diverged_merge_required",
         }
     }

@@ -465,6 +465,99 @@ fn receive_fast_forward_only_rejects_diverged_target_and_preserves_incoming_name
     let _ = std::fs::remove_dir_all(receiver_dir);
 }
 
+// Verifies that fast-forward-only integration treats older incoming heads as no-op when target already contains them.
+#[test]
+fn receive_fast_forward_only_accepts_target_ahead_and_keeps_target_ref_unchanged() {
+    let (repo_dir, bundle_result, _base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-fast-forward-target-ahead", false);
+    let receiver_dir = temp_repo_dir("receive-fast-forward-target-ahead-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(
+            &[
+                "refs/heads/base:refs/heads/base",
+                "refs/heads/tip:refs/heads/tip",
+            ],
+            None,
+            None,
+        )
+        .expect("must fetch base and tip prerequisite commits into receiver");
+
+    let receiver_ahead_oid = commit_from_files(
+        &receiver_repo,
+        "receiver ahead tip",
+        &[
+            ("f.txt", "receiver newer change"),
+            ("ahead.txt", "local only"),
+        ],
+        &[tip_commit_id],
+    );
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            receiver_ahead_oid,
+            true,
+            "seed target ahead",
+        )
+        .expect("must seed receiver tip ref to an ancestor-descendant newer commit");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::FastForwardOnly,
+    )
+    .expect("fast-forward-only receive should succeed when target already contains incoming");
+
+    assert!(
+        receive_result.can_apply_without_conflicts,
+        "target-ahead status should be treated as safely applicable"
+    );
+    assert!(
+        receive_result.apply_backend.is_none(),
+        "no target update backend should run when all rows are no-op"
+    );
+    assert_eq!(
+        receive_result.preflight_plan.len(),
+        1,
+        "single-head fixture should produce one preflight row"
+    );
+    assert_eq!(
+        receive_result.preflight_plan[0].status,
+        ReceivePlanStatus::TargetAhead,
+        "incoming ancestor should be classified as target_ahead"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("target tip ref should still exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(receiver_ahead_oid),
+        "target-ahead fast-forward receive must not move target ref backwards"
+    );
+
+    let incoming_ref = find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming namespace ref for tip should be created");
+    assert_eq!(
+        incoming_ref.1, tip_commit_id,
+        "incoming namespace ref must still point at imported bundle head oid"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
 // Verifies that create-refs-only integration never updates target refs and still writes incoming namespace refs.
 #[test]
 fn receive_create_refs_only_preserves_target_ref_even_when_fast_forward_is_possible() {

@@ -471,6 +471,8 @@ fn compute_receive_plan(
             Some(current) => {
                 if repo.graph_descendant_of(incoming.incoming_oid, current)? {
                     ReceivePlanStatus::FastForwardOk
+                } else if repo.graph_descendant_of(current, incoming.incoming_oid)? {
+                    ReceivePlanStatus::TargetAhead
                 } else {
                     ReceivePlanStatus::DivergedMergeRequired
                 }
@@ -795,7 +797,7 @@ fn planned_ref_updates_from_plan(
                     new_oid: row.incoming_oid,
                 });
             }
-            ReceivePlanStatus::AlreadyPresent => {}
+            ReceivePlanStatus::AlreadyPresent | ReceivePlanStatus::TargetAhead => {}
             ReceivePlanStatus::DivergedMergeRequired => match integrate_policy {
                 ReceiveIntegratePolicy::CreateRefsOnly => {}
                 ReceiveIntegratePolicy::FastForwardOnly => {

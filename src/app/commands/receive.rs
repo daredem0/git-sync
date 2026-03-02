@@ -237,6 +237,7 @@ fn receive_plan_status_label(status: crate::git::ReceivePlanStatus) -> &'static 
         crate::git::ReceivePlanStatus::AlreadyPresent => "already present",
         crate::git::ReceivePlanStatus::TargetMissing => "target missing",
         crate::git::ReceivePlanStatus::FastForwardOk => "fast-forward ok",
+        crate::git::ReceivePlanStatus::TargetAhead => "target ahead (incoming already contained)",
         crate::git::ReceivePlanStatus::DivergedMergeRequired => "diverged, merge required",
     }
 }
@@ -252,6 +253,7 @@ fn render_plan_outcome(
     let mut already_present = 0usize;
     let mut target_missing = 0usize;
     let mut fast_forward_ok = 0usize;
+    let mut target_ahead = 0usize;
     let mut diverged_merge_required = 0usize;
 
     for row in plan {
@@ -259,6 +261,7 @@ fn render_plan_outcome(
             crate::git::ReceivePlanStatus::AlreadyPresent => already_present += 1,
             crate::git::ReceivePlanStatus::TargetMissing => target_missing += 1,
             crate::git::ReceivePlanStatus::FastForwardOk => fast_forward_ok += 1,
+            crate::git::ReceivePlanStatus::TargetAhead => target_ahead += 1,
             crate::git::ReceivePlanStatus::DivergedMergeRequired => diverged_merge_required += 1,
         }
     }
@@ -270,11 +273,12 @@ fn render_plan_outcome(
     };
     println!();
     println!(
-        "summary: checked {} ref(s): {} fast-forwardable, {} missing target(s), {} already up to date, {} requiring manual merge.",
+        "summary: checked {} ref(s): {} fast-forwardable, {} missing target(s), {} already up to date, {} target-ahead no-op, {} requiring manual merge.",
         plan.len(),
         fast_forward_ok,
         target_missing,
         already_present,
+        target_ahead,
         diverged_merge_required,
     );
 
@@ -474,6 +478,13 @@ fn render_plan_actions(plan: &[ReceivePlanEntry], policy: ReceiveIntegratePolicy
                         row.target_ref
                     );
                 }
+                crate::git::ReceivePlanStatus::TargetAhead => {
+                    println!(
+                        "- {} {} unchanged (target already ahead of incoming)",
+                        if dry_run { "would keep" } else { "kept" },
+                        row.target_ref
+                    );
+                }
                 crate::git::ReceivePlanStatus::DivergedMergeRequired => {
                     println!(
                         "- cannot auto-update {} (diverged history, manual merge required)",
@@ -495,6 +506,13 @@ fn render_plan_actions(plan: &[ReceivePlanEntry], policy: ReceiveIntegratePolicy
                 crate::git::ReceivePlanStatus::AlreadyPresent => {
                     println!(
                         "- {} {} unchanged (already up to date)",
+                        if dry_run { "would keep" } else { "kept" },
+                        row.target_ref
+                    );
+                }
+                crate::git::ReceivePlanStatus::TargetAhead => {
+                    println!(
+                        "- {} {} unchanged (target already ahead; merge commit not needed)",
                         if dry_run { "would keep" } else { "kept" },
                         row.target_ref
                     );
