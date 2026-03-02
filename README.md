@@ -546,7 +546,7 @@ sudo pacman -S --needed pandoc base-devel
 cargo install --locked cargo-deb
 ```
 
-Generate man pages from documentation (`README.md` and `SDD_SAD.md` -> section 7 man pages):
+Generate man pages from documentation (`README.md` and `docs/SDD_SAD.md` -> section 7 man pages):
 
 ```bash
 just release-manpages
@@ -694,7 +694,7 @@ Notes:
 
 ### Additional Project Documentation
 
-- Architecture/design: [`SDD_SAD.md`](SDD_SAD.md)
+- Architecture/design: [`docs/SDD_SAD.md`](docs/SDD_SAD.md)
 - Metadata schema (create sidecar): `schemas/sync.bundle.caudit.schema.json`
 - Payload audit schema (non-interactive JSON): `schemas/sync.bundle.paudit.schema.json`
 

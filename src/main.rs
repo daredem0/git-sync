@@ -8,7 +8,9 @@
 
 #![doc = include_str!("../README.md")]
 #![doc = "\n\n---\n\n"]
-#![doc = include_str!("../SDD_SAD.md")]
+#![doc = include_str!("../docs/GIT_FUNDAMENTALS.md")]
+#![doc = "\n\n---\n\n"]
+#![doc = include_str!("../docs/SDD_SAD.md")]
 
 mod app;
 mod cli;

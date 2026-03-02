@@ -342,7 +342,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - CI publication of packaging artifacts and generated documentation via GitHub Pages.
 
 ### Changed
-- Expanded developer documentation with `SDD_SAD.md`.
+- Expanded developer documentation with `docs/SDD_SAD.md`.
 - Improved rustdoc output to include project docs and Mermaid diagram rendering.
 
 ### Fixed

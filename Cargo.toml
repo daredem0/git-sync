@@ -20,7 +20,7 @@ assets = [
     ["target/man/git-sync-readme.7.gz", "usr/share/man/man7/git-sync-readme.7.gz", "644"],
     ["target/man/git-sync-architecture.7.gz", "usr/share/man/man7/git-sync-architecture.7.gz", "644"],
     ["README.md", "usr/share/doc/git-sync/README.md", "644"],
-    ["SDD_SAD.md", "usr/share/doc/git-sync/SDD_SAD.md", "644"],
+    ["docs/SDD_SAD.md", "usr/share/doc/git-sync/SDD_SAD.md", "644"],
     ["LICENSE", "usr/share/doc/git-sync/LICENSE", "644"],
 ]
 

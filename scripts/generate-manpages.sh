@@ -30,7 +30,7 @@ pandoc -s -f gfm -t man \
   -V title=git-sync-architecture \
   -V section=7 \
   -V source=git-sync \
-  SDD_SAD.md \
+  docs/SDD_SAD.md \
   -o target/man/git-sync-architecture.7
 
 gzip -9 -f \
