@@ -34,7 +34,7 @@ Primary command surfaces:
 - `audit --verify-metadata`: explicit metadata-to-repo verification check
 - `ui`: explicit interactive entrypoint
 - `receive`: import package into receiver repo with explicit integration policy
-  - optional `--dry-run`, `--integrate`, `--incoming-as-branches`, `--check-mergeability`, `--format table|json`
+  - optional `--dry-run`, `--integrate`, `--incoming-as-branches`, `--check-mergeability`, `--verbose`, `--format table|json`
 
 High-level workflow:
 
@@ -126,6 +126,7 @@ The following decisions capture deliberate architectural trade-offs that shape b
 | `pack-only` as strict default resolve policy | Makes hidden external dependencies fail closed | Some payloads require explicit baseline mode | Keep baseline as explicit operator choice with recorded provenance |
 | UI is presentation-only for proof data | Prevents renderer changes from altering proof semantics | Additional model/projection layer needed | Continue exposing proof tuple consistently across surfaces |
 | Dry-run through temporary mirror | Mirrors receive behavior while preserving receiver state | Extra temporary repo setup cost | Keep parity tests to prevent drift from apply path |
+| Strict-first receive import with guarded compatibility fallback | Keeps maximum import verification by default while handling environment-specific libgit2 thin-pack behavior | Additional fallback complexity and diagnostic surface | Keep fallback narrowly scoped and preserve fail-closed connectivity validation before ref updates |
 
 ## 4. Static View
 
@@ -194,7 +195,7 @@ This is the explicit direct TUI entrypoint.
 
 #### `receive`
 
-`git-sync receive --repo --bundle [--verify-metadata] [--dry-run] [--integrate create-refs-only|fast-forward-only|merge] [--incoming-as-branches] [--check-mergeability] [--format table|json]`
+`git-sync receive --repo --bundle [--verify-metadata] [--dry-run] [--integrate create-refs-only|fast-forward-only|merge] [--incoming-as-branches] [--check-mergeability] [--verbose] [--format table|json]`
 
 `receive` supports `.bundle` and `.zip` inputs, can verify metadata integrity before import, and computes a deterministic per-ref preflight plan before any target ref update.
 
@@ -208,6 +209,7 @@ Implementation-level receive behavior:
 - `--integrate merge` only updates diverged refs when merge simulation is clean
 - `--format table|json` is supported for dry-run/check-mergeability output surfaces (`table` is default human output)
 - `--check-mergeability` reports per-ref merge context (target/incoming/base), compact graph context, and conflict file paths
+- `--verbose` emits receive import diagnostics that include prerequisite/object-format/alternates/shallow context on import failures
 
 ### 4.3 Module decomposition
 
@@ -392,6 +394,7 @@ sequenceDiagram
     participant CP as collect_head_audit_entries
     participant PS as open_payload_session
 
+    UI->>UI: render loading screen
     UI->>M: build model
     M->>RV: receive_bundle_input_with_options(dry_run=true)
     M->>CP: collect_head_audit_entries_for_bundle_input(...)
@@ -405,6 +408,7 @@ The model is intentionally mixed-source:
 - overview combines metadata status, dry-run applicability, and payload proof summary
 - history pages explain expected change intent by commit/file evolution
 - payload pages expose full PACK-level proof context and object details
+- startup draws a loading screen before model construction so large-bundle initialization remains explicit to the operator
 
 The payload page also differentiates between derived and authoritative views:
 
@@ -466,11 +470,15 @@ The important behavioral property is that all downstream representations (table 
 
 Receive is implemented as a plan-first workflow. The import path first materializes incoming heads into a safe namespace, then computes a deterministic preflight plan, and only then applies policy-specific target updates. This design keeps behavior explainable and non-destructive by default.
 
+The receive import stage itself is strict-first. It attempts object import with connectivity verification enabled, and only if a known libgit2 thin-pack edge case is detected it enters compatibility fallback paths. Compatibility fallback imports are followed by an explicit post-import connectivity traversal before any ref updates are allowed.
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant R as receive
     participant B as bundle parse and import
+    participant I as import strategy
+    participant C as connectivity validator
     participant P as preflight planner
     participant V as policy validator
     participant A as apply backend
@@ -479,13 +487,31 @@ sequenceDiagram
 
     U->>R: receive --repo --bundle [options]
     alt dry-run or check-mergeability
-        R->>TMP: init mirror plus fetch refs from REPO
+        R->>TMP: init mirror plus fetch refs from REPO and mirror alternates
         R->>B: import package into TMP mirror
+        B->>I: strict indexer import verify=true
+        alt strict import fails with missing-object indexer case
+            I->>I: retry indexer import verify=false
+            alt verify=false import also fails
+                I->>I: retry via libgit2 fetch fallback
+            end
+            I->>C: run post-import connectivity traversal for imported heads
+            C-->>I: pass or fail closed
+        end
         R->>P: compute per-ref preflight statuses
         R->>V: validate selected integration policy
         R-->>U: would-change summary plus plan output
     else apply mode
         R->>B: import package into REPO
+        B->>I: strict indexer import verify=true
+        alt strict import fails with missing-object indexer case
+            I->>I: retry indexer import verify=false
+            alt verify=false import also fails
+                I->>I: retry via libgit2 fetch fallback
+            end
+            I->>C: run post-import connectivity traversal for imported heads
+            C-->>I: pass or fail closed
+        end
         R->>P: compute per-ref preflight statuses
         R->>V: validate selected integration policy
         V->>A: apply validated target updates
@@ -499,7 +525,7 @@ The following flowchart presents the same receive path as a single decision-orie
 ```mermaid
 flowchart TD
     START["receive --repo --bundle [options]"] --> TARGET{"Mode"}
-    TARGET -->|"dry-run or check-mergeability"| MIRROR["Create temporary bare mirror and fetch receiver refs"]
+    TARGET -->|"dry-run or check-mergeability"| MIRROR["Create temporary bare mirror, fetch receiver refs, and mirror alternates object paths"]
     TARGET -->|"apply"| REPO["Open real receiver repository"]
 
     MIRROR --> IMPORT["Import bundle and map incoming heads"]
@@ -508,7 +534,11 @@ flowchart TD
     VERIFY -->|"no"| IMPORT
     VMETA --> IMPORT
 
-    IMPORT --> PRESERVE["Write preserved incoming refs under refs/sync/incoming/<bundle-id>/...<br/>optional branch mirrors under refs/heads/incoming/<bundle-id>/..."]
+    IMPORT --> STRATEGY["Import strategy<br/>1 strict indexer verify=true<br/>2 fallback indexer verify=false on specific missing-object failures<br/>3 final fallback libgit2 fetch with path and file URL candidates"]
+    STRATEGY --> COMPAT{"Compatibility fallback used"}
+    COMPAT -->|"yes"| CONNECT["Run post-import connectivity traversal for imported heads and trees<br/>fail closed on missing object reachability"]
+    COMPAT -->|"no"| PRESERVE["Write preserved incoming refs under refs/sync/incoming/<bundle-id>/...<br/>optional branch mirrors under refs/heads/incoming/<bundle-id>/..."]
+    CONNECT --> PRESERVE
     PRESERVE --> PLAN["Compute preflight plan per incoming ref<br/>status: target_missing, fast_forward_ok, already_present, target_ahead, diverged_merge_required"]
     PLAN --> CHECKMERGE{"check-mergeability flag"}
 
@@ -557,9 +587,12 @@ Safety and non-destructive controls:
 
 - incoming refs are preserved under `refs/sync/incoming/<bundle-id>/...` before target updates
 - optional incoming branch mirrors are written under `refs/heads/incoming/<bundle-id>/...`
+- dry-run mirrors inherit receiver alternates configuration so import/connectivity checks run against the same object universe
 - target updates use ref-transaction backend when available
 - fallback apply path uses CAS checks with rollback on failure
 - mixed-plan fast-forward failures fail before applying partial target updates
+- import path is strict-first (`indexer verify=true`), with compatibility fallback only on known missing-object indexer failures
+- compatibility fallback imports must pass post-import connectivity validation before planning or apply continues
 
 Behavioral points:
 
@@ -570,6 +603,7 @@ Behavioral points:
 - check-mergeability mode reports clean/conflicted/unknown status per diverged ref without target mutation
 - operator-facing output is structured in deterministic sections (`preflight checks`, `changes`, `summary`, `result`)
 - mergeability diagnostics include commit summaries and explicit `conflict files` lists per diverged ref
+- `receive --verbose` enriches import failure diagnostics with receiver object-store context (alternates, prerequisites visibility, object format, shallow marker)
 
 ### 5.6 Evidence derivation and consumption flow
 
@@ -856,6 +890,8 @@ The guarantees listed here are the guarantees the current implementation can def
 - receive-time preservation of incoming heads in a stable safe namespace
 - fast-forward-only non-rewind behavior (`target_ahead` is treated as a no-op)
 - rollback-protected target updates (ref transaction or CAS with rollback fallback)
+- strict-first receive import with compatibility fallbacks only on specific indexer missing-object failures
+- mandatory post-fallback connectivity traversal before any receive ref update path continues
 
 ### 8.2 Limits
 
@@ -888,6 +924,7 @@ The architectural invariants that tie these surfaces together are:
 | I5 | Receive idempotency and no-op classification (`already_present` and `target_ahead`) | receive preflight classification and apply planning |
 | I6 | Dry-run/check-mergeability isolation (same import logic, isolated target) | mirror execution model for non-mutating receive analysis |
 | I7 | Non-destructive receive policy safety (no backward fast-forward updates, no partial mixed-plan target mutation) | receive plan validation + target update backend behavior |
+| I8 | Compatibility fallback import safety (fallback allowed only for narrow failures, with post-import connectivity fail-closed gate) | receive import strategy and connectivity validation before planning/apply |
 
 ### 8.4 Claim-to-implementation traceability matrix
 
@@ -900,8 +937,9 @@ This matrix links the document's assurance claims to concrete implementation fil
 | Metadata claims match repository truth when verified | I3 | `src/git/metadata/collect.rs`, `src/git/metadata/verify.rs` | `verify_bundle_metadata_against_repo_rejects_commit_chain_mismatch`, `verify_bundle_metadata_against_repo_rejects_changed_files_mismatch` |
 | Payload completeness and integrity are enforced fail-closed | I4 | `src/git/bundle/parse.rs`, `src/git/bundle/payload/verify/*`, `src/git/bundle/payload/verify/proof.rs` | `bundle_pack_offset_is_read_from_header_not_scanned`, `verify_pack_payload_validates_trailer_checksum`, `pack_ledger_contains_exactly_declared_entry_count`, `strict_mode_blocks_when_unresolved_entries_remain` |
 | Re-applying same package is idempotent and incoming-older bundles are non-destructive no-ops | I5 | `src/git/bundle/receive.rs`, `src/git/types/receive.rs` | `receive_bundle_input_is_idempotent_when_same_package_is_applied_twice`, `receive_fast_forward_only_accepts_target_ahead_and_keeps_target_ref_unchanged` |
-| Dry-run and check-mergeability mirror receive logic without mutating target repo | I6 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo`, `receive_dry_run_prints_would_change_table_for_pending_import`, `receive_check_mergeability_reports_diverged_ref_merge_status_without_mutating_receiver` |
+| Dry-run and check-mergeability mirror receive logic without mutating target repo | I6 | `src/git/bundle/receive.rs`, `src/git/bundle/receive/tests.rs`, `src/app/commands/receive.rs` | `receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo`, `receive_dry_run_prints_would_change_table_for_pending_import`, `receive_check_mergeability_reports_diverged_ref_merge_status_without_mutating_receiver`, `temp_bare_repo_from_existing_inherits_unreachable_source_objects` |
 | Fast-forward receive rejects diverged/mixed plans without partial target mutation | I7 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_integrate_fast_forward_only_rejects_mixed_plan_without_partial_target_updates`, `receive_fast_forward_only_rejects_diverged_target_and_preserves_incoming_namespace_refs` |
+| Receive compatibility fallback remains fail-closed by explicit connectivity validation after fallback import | I8 | `src/git/bundle/receive.rs`, `src/git/bundle/receive/tests.rs` | `missing_objects_indexer_error_enables_fetch_import_fallback`, `connectivity_validation_accepts_simple_head_history`, `connectivity_validation_rejects_missing_head_commit` |
 
 ## 9. Build and Versioning
 
@@ -935,6 +973,8 @@ Representative covered areas:
 - receive and dry-run applicability/idempotency paths
 - receive integration policy paths (`create-refs-only`, `fast-forward-only`, `merge`) including target-ahead no-op and diverged failure handling
 - receive update safety paths (ref-transaction and CAS rollback fallback, including fault-injection coverage)
+- dry-run mirror object-visibility parity via inherited alternates wiring
+- receive import compatibility paths (`indexer verify=true` then guarded fallback chain) and post-fallback connectivity-validation gate behavior
 - receive mergeability simulation output paths (status, merge context, and conflict-file reporting)
 - commit and file-level extraction for review pages
 - payload session/object detail behaviors

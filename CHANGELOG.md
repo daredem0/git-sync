@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
 ## [Unreleased]
+
+## [0.8.2] - 2026-03-02
+
+### Added
+- Added `receive --verbose` to emit import-path diagnostics for difficult bundle/applicability failures (prerequisites, object format, alternates, shallow marker, pack size/context).
+
+### Changed
+- Hardened receive import robustness for environment-specific thin-pack behavior:
+  - keep strict indexer import as primary path (`verify=true`)
+  - on indexer missing-object failures, retry with indexer compatibility mode (`verify=false`)
+  - keep a final libgit2 fetch-based import fallback with local-path and `file://` URL candidate handling.
+- Added post-import connectivity validation after compatibility fallback imports so refs are updated only when imported head histories remain fully traversable.
+- Improved receive dry-run/applicability diagnostics in the UI and CLI for indexer/import failures, with clearer human-readable error context.
+
+### Tests
+- Added receive regression coverage for fallback trigger detection and fallback URL candidate normalization behavior.
+- Added connectivity-validation regression tests for compatibility-import success and fail-closed missing-head behavior.
 
 ## [0.8.1] - 2026-03-02
 
@@ -383,7 +401,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/daredem0/git-sync/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/daredem0/git-sync/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/daredem0/git-sync/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/daredem0/git-sync/compare/v0.7.2...v0.7.3
