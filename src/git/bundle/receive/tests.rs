@@ -746,3 +746,51 @@ fn bundle_fetch_remote_candidates_keep_existing_schemes() {
         "pre-schemed bundle URL should remain unchanged"
     );
 }
+
+#[test]
+fn connectivity_validation_accepts_simple_head_history() {
+    let repo_path = temp_bare_repo_path("connectivity-validation-ok");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+    let root = commit_from_content(&repo, "root", "root", &[]);
+    let tip = commit_from_content(&repo, "tip", "tip", &[root]);
+    let heads = vec![BundleHead {
+        oid: tip,
+        reference: "refs/heads/main".to_string(),
+    }];
+    validate_import_connectivity_for_heads(
+        &repo,
+        &heads,
+        &[],
+        ImportPath::CompatIndexerVerifyFalse,
+    )
+    .expect("connectivity validation should accept complete reachable history");
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn connectivity_validation_rejects_missing_head_commit() {
+    let repo_path = temp_bare_repo_path("connectivity-validation-missing-head");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+    let missing_head = git2::Oid::from_str("1111111111111111111111111111111111111111")
+        .expect("must parse fixed missing OID");
+    let heads = vec![BundleHead {
+        oid: missing_head,
+        reference: "refs/heads/main".to_string(),
+    }];
+    let error =
+        validate_import_connectivity_for_heads(&repo, &heads, &[], ImportPath::CompatFetchFallback)
+            .expect_err("missing head should fail connectivity validation");
+    let text = error.to_string();
+    assert!(
+        text.contains("post-import connectivity check")
+            && (text.contains("failed to push head") || text.contains("missing commit")),
+        "connectivity diagnostics should explain missing head failure: {text}"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}

@@ -37,6 +37,27 @@ struct ApplyBundleToRepoResult {
     apply_backend: Option<ReceiveApplyBackend>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportPath {
+    StrictIndexer,
+    CompatIndexerVerifyFalse,
+    CompatFetchFallback,
+}
+
+impl ImportPath {
+    fn is_compatibility_fallback(self) -> bool {
+        !matches!(self, Self::StrictIndexer)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::StrictIndexer => "strict-indexer",
+            Self::CompatIndexerVerifyFalse => "compat-indexer-verify-false",
+            Self::CompatFetchFallback => "compat-fetch-fallback",
+        }
+    }
+}
+
 /// Receives a bundle input using default receive options.
 ///
 /// Equivalent to calling [`receive_bundle_input_with_options`] with
@@ -359,6 +380,7 @@ fn apply_bundle_to_repo(
         true,
         verbose,
     );
+    let mut import_path = ImportPath::StrictIndexer;
     if let Err(indexer_error) = indexer_result {
         if should_try_fetch_import_fallback(&indexer_error) {
             import_bundle_pack_with_indexer(
@@ -371,8 +393,14 @@ fn apply_bundle_to_repo(
                 false,
                 verbose,
             )
+            .map(|_| {
+                import_path = ImportPath::CompatIndexerVerifyFalse;
+            })
             .or_else(|verify_disabled_error| {
                 import_bundle_pack_with_libgit2_fetch(repo, bundle_path, heads, &bundle_id)
+                    .map(|_| {
+                        import_path = ImportPath::CompatFetchFallback;
+                    })
                     .map_err(|fetch_error| {
                         anyhow!(
                             "{indexer_error}\n\
@@ -384,6 +412,14 @@ fn apply_bundle_to_repo(
         } else {
             return Err(indexer_error);
         }
+    }
+    if import_path.is_compatibility_fallback() {
+        validate_import_connectivity_for_heads(
+            repo,
+            heads,
+            &parsed_bundle.inspection.prerequisites,
+            import_path,
+        )?;
     }
 
     for head in heads {
@@ -422,6 +458,145 @@ fn apply_bundle_to_repo(
         mergeability_checks,
         apply_backend,
     })
+}
+
+/// Validates imported object connectivity for bundle heads after compatibility fallback paths.
+///
+/// This is a fail-closed guard to keep receive safety properties aligned with the strict import
+/// path even when we had to import with compatibility fallbacks.
+fn validate_import_connectivity_for_heads(
+    repo: &git2::Repository,
+    heads: &[BundleHead],
+    prerequisites: &[git2::Oid],
+    import_path: ImportPath,
+) -> Result<()> {
+    let prerequisite_set = prerequisites.iter().copied().collect::<BTreeSet<_>>();
+    let mut visited_commits = BTreeSet::<git2::Oid>::new();
+    let mut visited_trees = BTreeSet::<git2::Oid>::new();
+
+    for head in heads {
+        let mut revwalk = repo.revwalk().map_err(|err| {
+            anyhow!(
+                "post-import connectivity check ({}) failed to create revwalk for '{}': {err}",
+                import_path.label(),
+                head.reference
+            )
+        })?;
+        revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
+        revwalk.push(head.oid).map_err(|err| {
+            anyhow!(
+                "post-import connectivity check ({}) failed to push head '{}' ({}): {err}",
+                import_path.label(),
+                head.reference,
+                head.oid
+            )
+        })?;
+        for prerequisite in prerequisites {
+            revwalk.hide(*prerequisite).map_err(|err| {
+                anyhow!(
+                    "post-import connectivity check ({}) failed to hide prerequisite '{}' for '{}': {err}",
+                    import_path.label(),
+                    prerequisite,
+                    head.reference
+                )
+            })?;
+        }
+
+        for oid_result in revwalk {
+            let commit_oid = oid_result.map_err(|err| {
+                anyhow!(
+                    "post-import connectivity check ({}) failed while walking '{}' history: {err}",
+                    import_path.label(),
+                    head.reference
+                )
+            })?;
+            if !visited_commits.insert(commit_oid) {
+                continue;
+            }
+            let commit = repo.find_commit(commit_oid).map_err(|err| {
+                anyhow!(
+                    "post-import connectivity check ({}) missing commit '{}' in '{}' history: {err}",
+                    import_path.label(),
+                    commit_oid,
+                    head.reference
+                )
+            })?;
+            for parent_index in 0..commit.parent_count() {
+                let parent_oid = commit.parent_id(parent_index)?;
+                if prerequisite_set.contains(&parent_oid) {
+                    continue;
+                }
+                repo.find_commit(parent_oid).map_err(|err| {
+                    anyhow!(
+                        "post-import connectivity check ({}) missing parent commit '{}' referenced by '{}' in '{}': {err}",
+                        import_path.label(),
+                        parent_oid,
+                        commit_oid,
+                        head.reference
+                    )
+                })?;
+            }
+            validate_tree_connectivity(
+                repo,
+                commit.tree_id(),
+                &mut visited_trees,
+                &head.reference,
+                import_path,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively validates that all tree/blob/tag objects referenced from one tree are present.
+fn validate_tree_connectivity(
+    repo: &git2::Repository,
+    tree_oid: git2::Oid,
+    visited_trees: &mut BTreeSet<git2::Oid>,
+    head_ref: &str,
+    import_path: ImportPath,
+) -> Result<()> {
+    if !visited_trees.insert(tree_oid) {
+        return Ok(());
+    }
+    let tree = repo.find_tree(tree_oid).map_err(|err| {
+        anyhow!(
+            "post-import connectivity check ({}) missing tree '{}' in '{}': {err}",
+            import_path.label(),
+            tree_oid,
+            head_ref
+        )
+    })?;
+    for entry in &tree {
+        let entry_oid = entry.id();
+        match entry.kind() {
+            Some(git2::ObjectType::Tree) => {
+                validate_tree_connectivity(repo, entry_oid, visited_trees, head_ref, import_path)?;
+            }
+            Some(_) => {
+                repo.find_object(entry_oid, None).map_err(|err| {
+                    anyhow!(
+                        "post-import connectivity check ({}) missing object '{}' in '{}': {err}",
+                        import_path.label(),
+                        entry_oid,
+                        head_ref
+                    )
+                })?;
+            }
+            None => {
+                let path = entry.name().unwrap_or("<unknown>");
+                bail!(
+                    "post-import connectivity check ({}) encountered unknown object type for tree entry '{}' ({}) in '{}'",
+                    import_path.label(),
+                    path,
+                    entry_oid,
+                    head_ref
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Imports one bundle pack stream into the repository object database via libgit2 indexer.
