@@ -70,9 +70,7 @@ pub fn run(config: &AppConfig) -> Result<()> {
 
 fn render_loading_screen(frame: &mut ratatui::Frame<'_>) {
     let area = frame.area();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("git-sync");
+    let block = Block::default().borders(Borders::ALL).title("git-sync");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

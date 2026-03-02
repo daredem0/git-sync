@@ -19,6 +19,7 @@ use crate::git::{
     ReceivePlanStatus,
 };
 use anyhow::{Result, anyhow, bail};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1676,13 +1677,77 @@ impl TempBareRepo {
         ));
         fs::create_dir_all(&temp_path)?;
 
+        let source_repo = git2::Repository::open(source_repo_path)?;
         let repo = git2::Repository::init_bare(&temp_path)?;
+        configure_temp_repo_alternates(&temp_path, &source_repo)?;
         let source = source_repo_path.to_string_lossy();
         let mut remote = repo.remote_anonymous(source.as_ref())?;
         remote.fetch(&["+refs/*:refs/*"], None, None)?;
 
         Ok(Self { path: temp_path })
     }
+}
+
+/// Configures alternates so the dry-run mirror can read all objects from source ODB.
+///
+/// This preserves object visibility parity with the live receiver, including
+/// local objects not reachable from any current ref.
+fn configure_temp_repo_alternates(
+    temp_repo_git_dir: &Path,
+    source_repo: &git2::Repository,
+) -> Result<()> {
+    let source_objects_dir = source_repo.path().join("objects");
+    if !source_objects_dir.is_dir() {
+        bail!(
+            "source repository objects directory is missing: {}",
+            source_objects_dir.display()
+        );
+    }
+
+    let mut alternate_dirs = BTreeSet::<PathBuf>::new();
+    alternate_dirs.insert(source_objects_dir.clone());
+
+    let source_alternates = source_objects_dir.join("info").join("alternates");
+    if source_alternates.is_file() {
+        let content = fs::read_to_string(&source_alternates)?;
+        for raw_line in content.lines() {
+            let trimmed = raw_line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            alternate_dirs.insert(resolve_source_alternate_path(&source_objects_dir, trimmed));
+        }
+    }
+
+    let temp_alternates = temp_repo_git_dir
+        .join("objects")
+        .join("info")
+        .join("alternates");
+    if let Some(parent) = temp_alternates.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut serialized = String::new();
+    for alternate in alternate_dirs {
+        let _ = std::fmt::Write::write_fmt(
+            &mut serialized,
+            format_args!("{}\n", alternate.to_string_lossy()),
+        );
+    }
+    fs::write(temp_alternates, serialized.as_bytes())?;
+
+    Ok(())
+}
+
+/// Resolves one alternate entry from source ODB metadata to an absolute path.
+fn resolve_source_alternate_path(source_objects_dir: &Path, entry: &str) -> PathBuf {
+    let raw = Path::new(entry);
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        source_objects_dir.join(raw)
+    };
+    joined.canonicalize().unwrap_or(joined)
 }
 
 impl Drop for TempBareRepo {

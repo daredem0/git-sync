@@ -210,6 +210,37 @@ fn manual_cas_injected_second_update_failure_rolls_back_first_update() {
 }
 
 #[test]
+fn temp_bare_repo_from_existing_inherits_unreachable_source_objects() {
+    let _test_lock = test_fault_injection_lock();
+    let source_repo_path = temp_bare_repo_path("temp-mirror-alternates");
+    std::fs::create_dir_all(&source_repo_path).expect("must create source repo path");
+    let source_repo = git2::Repository::init_bare(&source_repo_path).expect("must init source");
+
+    let main_oid = commit_from_content(&source_repo, "main", "main", &[]);
+    source_repo
+        .reference("refs/heads/main", main_oid, true, "seed main ref")
+        .expect("must create source main ref");
+
+    // This object is intentionally left unreachable from refs; dry-run mirror must still see it.
+    let dangling_blob = source_repo
+        .blob(b"unreachable source object")
+        .expect("must create dangling blob");
+    source_repo
+        .find_blob(dangling_blob)
+        .expect("source repo must resolve dangling blob");
+
+    let temp_repo = TempBareRepo::from_existing(&source_repo_path)
+        .expect("must create temp mirror from source repository");
+    let mirror_repo = git2::Repository::open_bare(&temp_repo.path).expect("must open temp mirror");
+    mirror_repo
+        .find_blob(dangling_blob)
+        .expect("dry-run mirror must resolve source-only unreachable blob via alternates");
+
+    drop(temp_repo);
+    let _ = std::fs::remove_dir_all(source_repo_path);
+}
+
+#[test]
 fn manual_cas_injected_first_update_failure_keeps_all_targets_unchanged() {
     let _test_lock = test_fault_injection_lock();
     let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
