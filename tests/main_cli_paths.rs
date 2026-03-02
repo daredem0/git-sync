@@ -1242,8 +1242,24 @@ fn receive_check_mergeability_reports_diverged_ref_merge_status_without_mutating
         "mergeability mode should render mergeability checks section"
     );
     assert!(
+        text.contains("merge context:"),
+        "mergeability mode should include compact merge context details"
+    );
+    assert!(
+        text.contains("graph    :"),
+        "mergeability mode should include a compact graph-like merge view"
+    );
+    assert!(
         text.contains("(conflicted)") || text.contains("(clean)") || text.contains("(unknown)"),
         "mergeability checks should include a machine-stable mergeability status"
+    );
+    assert!(
+        text.contains("conflict files:"),
+        "mergeability mode should explicitly list conflict file details"
+    );
+    assert!(
+        text.contains("- base.txt"),
+        "fixture should report the conflicting file path"
     );
     assert!(
         text.contains("result : mergeability analysis finished; target refs were not updated."),

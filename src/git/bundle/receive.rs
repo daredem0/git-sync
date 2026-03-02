@@ -487,32 +487,49 @@ fn compute_receive_mergeability_checks(
             checks.push(ReceiveMergeabilityCheck {
                 target_ref: row.target_ref.clone(),
                 target_oid: None,
+                target_summary: None,
                 incoming_oid: row.incoming_oid,
+                incoming_summary: commit_summary(repo, row.incoming_oid),
                 merge_base_oid: row.merge_base_oid,
+                merge_base_summary: row.merge_base_oid.and_then(|oid| commit_summary(repo, oid)),
                 status: ReceiveMergeabilityStatus::Unknown,
                 detail: Some("target oid unavailable for merge simulation".to_string()),
+                conflict_paths: Vec::new(),
             });
             continue;
         };
 
-        let (status, detail) = match evaluate_mergeability(repo, target_oid, row.incoming_oid) {
-            Ok((status, detail)) => (status, detail),
-            Err(err) => (
-                ReceiveMergeabilityStatus::Unknown,
-                Some(format!("merge simulation failed: {err}")),
-            ),
-        };
+        let (status, detail, conflict_paths) =
+            match evaluate_mergeability(repo, target_oid, row.incoming_oid) {
+                Ok((status, detail, conflict_paths)) => (status, detail, conflict_paths),
+                Err(err) => (
+                    ReceiveMergeabilityStatus::Unknown,
+                    Some(format!("merge simulation failed: {err}")),
+                    Vec::new(),
+                ),
+            };
         checks.push(ReceiveMergeabilityCheck {
             target_ref: row.target_ref.clone(),
             target_oid: Some(target_oid),
+            target_summary: commit_summary(repo, target_oid),
             incoming_oid: row.incoming_oid,
+            incoming_summary: commit_summary(repo, row.incoming_oid),
             merge_base_oid: row.merge_base_oid,
+            merge_base_summary: row.merge_base_oid.and_then(|oid| commit_summary(repo, oid)),
             status,
             detail,
+            conflict_paths,
         });
     }
 
     Ok(checks)
+}
+
+/// Returns the commit subject line for an OID if available.
+fn commit_summary(repo: &git2::Repository, oid: git2::Oid) -> Option<String> {
+    repo.find_commit(oid)
+        .ok()
+        .and_then(|commit| commit.summary().map(ToOwned::to_owned))
 }
 
 /// Evaluates mergeability for two commits without creating a merge commit.
@@ -520,21 +537,39 @@ fn evaluate_mergeability(
     repo: &git2::Repository,
     target_oid: git2::Oid,
     incoming_oid: git2::Oid,
-) -> Result<(ReceiveMergeabilityStatus, Option<String>)> {
+) -> Result<(ReceiveMergeabilityStatus, Option<String>, Vec<String>)> {
     let target_commit = repo.find_commit(target_oid)?;
     let incoming_commit = repo.find_commit(incoming_oid)?;
     let index = repo.merge_commits(&target_commit, &incoming_commit, None)?;
     if index.has_conflicts() {
+        let conflict_paths = collect_conflict_paths(&index)?;
         Ok((
             ReceiveMergeabilityStatus::Conflicted,
             Some("merge simulation produced index conflicts".to_string()),
+            conflict_paths,
         ))
     } else {
         Ok((
             ReceiveMergeabilityStatus::Clean,
             Some("merge simulation completed without conflicts".to_string()),
+            Vec::new(),
         ))
     }
+}
+
+/// Collects unique conflict paths from an in-memory merge index.
+fn collect_conflict_paths(index: &git2::Index) -> Result<Vec<String>> {
+    let mut paths = std::collections::BTreeSet::<String>::new();
+    for conflict in index.conflicts()? {
+        let conflict = conflict?;
+        for entry in [conflict.ancestor, conflict.our, conflict.their]
+            .into_iter()
+            .flatten()
+        {
+            paths.insert(String::from_utf8_lossy(&entry.path).to_string());
+        }
+    }
+    Ok(paths.into_iter().collect())
 }
 
 /// Validates an integration plan under the selected policy.

@@ -75,14 +75,22 @@ pub struct ReceiveMergeabilityCheck {
     pub target_ref: String,
     /// Current target OID.
     pub target_oid: Option<git2::Oid>,
+    /// First-line summary of the current target commit when available.
+    pub target_summary: Option<String>,
     /// Incoming OID.
     pub incoming_oid: git2::Oid,
+    /// First-line summary of the incoming commit when available.
+    pub incoming_summary: Option<String>,
     /// Merge-base OID if one was found.
     pub merge_base_oid: Option<git2::Oid>,
+    /// First-line summary of the merge-base commit when available.
+    pub merge_base_summary: Option<String>,
     /// Mergeability outcome.
     pub status: ReceiveMergeabilityStatus,
     /// Optional diagnostic detail for unknown/error cases.
     pub detail: Option<String>,
+    /// Paths that conflict during merge simulation for this ref pair.
+    pub conflict_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

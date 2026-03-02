@@ -7,6 +7,7 @@
 //! Keeps command flow boundaries explicit and user-facing output predictable.
 
 use anyhow::{Result, bail};
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use crate::cli::{OutputFormat, ReceiveIntegratePolicy as CliReceiveIntegratePolicy};
@@ -169,10 +170,14 @@ fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) 
             serde_json::json!({
                 "target_ref": row.target_ref,
                 "target_oid": row.target_oid.map(|oid| oid.to_string()),
+                "target_summary": row.target_summary,
                 "incoming_oid": row.incoming_oid.to_string(),
+                "incoming_summary": row.incoming_summary,
                 "merge_base_oid": row.merge_base_oid.map(|oid| oid.to_string()),
+                "merge_base_summary": row.merge_base_summary,
                 "status": row.status.as_str(),
                 "detail": row.detail,
+                "conflict_paths": row.conflict_paths,
             })
         })
         .collect::<Vec<_>>();
@@ -335,17 +340,57 @@ fn render_mergeability_checks(checks: &[ReceiveMergeabilityCheck], check_request
             receive_mergeability_status_label(row.status),
             row.status.as_str()
         );
-        println!(
-            "  target oid   : {}",
-            format_optional_short_oid(row.target_oid)
-        );
-        println!("  incoming oid : {}", short_oid(row.incoming_oid));
-        println!(
-            "  merge base   : {}",
-            format_optional_short_oid(row.merge_base_oid)
-        );
+        let target_display = format_commit_display(row.target_oid, row.target_summary.as_deref());
+        let incoming_display =
+            format_commit_display(Some(row.incoming_oid), row.incoming_summary.as_deref());
+        let merge_base_display =
+            format_commit_display(row.merge_base_oid, row.merge_base_summary.as_deref());
+
+        println!("  merge context:");
+        println!("    target   : {target_display}");
+        println!("    incoming : {incoming_display}");
+        println!("    base     : {merge_base_display}");
+        println!("    graph    :");
+        if let (Some(target_oid), Some(base_oid)) = (row.target_oid, row.merge_base_oid) {
+            let target_oid = colorize(&short_oid(target_oid), "31");
+            let incoming_oid = colorize(&short_oid(row.incoming_oid), "32");
+            let base_oid = colorize(&short_oid(base_oid), "36");
+            println!(
+                "      * {} {}",
+                target_oid,
+                row.target_summary
+                    .as_deref()
+                    .unwrap_or("(subject unavailable)")
+            );
+            println!(
+                "      | * {} {}",
+                incoming_oid,
+                row.incoming_summary
+                    .as_deref()
+                    .unwrap_or("(subject unavailable)")
+            );
+            println!("      |/");
+            println!(
+                "      * {} {}",
+                base_oid,
+                row.merge_base_summary
+                    .as_deref()
+                    .unwrap_or("(subject unavailable)")
+            );
+        } else {
+            println!("      (graph unavailable: merge base or target oid missing)");
+        }
+
         if let Some(detail) = &row.detail {
             println!("  detail       : {}", detail);
+        }
+        if row.conflict_paths.is_empty() {
+            println!("  conflict files: none");
+        } else {
+            println!("  conflict files:");
+            for path in &row.conflict_paths {
+                println!("    - {path}");
+            }
         }
     }
 }
@@ -358,6 +403,31 @@ fn receive_mergeability_status_label(
         crate::git::ReceiveMergeabilityStatus::Conflicted => "would conflict",
         crate::git::ReceiveMergeabilityStatus::Unknown => "unknown (check failed)",
     }
+}
+
+fn format_commit_display(oid: Option<git2::Oid>, summary: Option<&str>) -> String {
+    match oid {
+        Some(oid) => {
+            let short = short_oid(oid);
+            match summary {
+                Some(subject) if !subject.trim().is_empty() => format!("{short} {subject}"),
+                _ => short,
+            }
+        }
+        None => "-".to_string(),
+    }
+}
+
+fn colorize(text: &str, code: &str) -> String {
+    if colors_enabled() {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn colors_enabled() -> bool {
+    io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
 
 fn render_plan_actions(plan: &[ReceivePlanEntry], policy: ReceiveIntegratePolicy, dry_run: bool) {
