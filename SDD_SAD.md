@@ -33,7 +33,8 @@ Primary command surfaces:
   - `--resolve pack-only|baseline` (non-interactive)
 - `audit --verify-metadata`: explicit metadata-to-repo verification check
 - `ui`: explicit interactive entrypoint
-- `receive` (optional `--dry-run`): import package into receiver repo
+- `receive`: import package into receiver repo with explicit integration policy
+  - optional `--dry-run`, `--integrate`, `--incoming-as-branches`, `--check-mergeability`, `--format table|json`
 
 High-level workflow:
 
@@ -193,9 +194,20 @@ This is the explicit direct TUI entrypoint.
 
 #### `receive`
 
-`git-sync receive --repo --bundle [--verify-metadata] [--dry-run]`
+`git-sync receive --repo --bundle [--verify-metadata] [--dry-run] [--integrate create-refs-only|fast-forward-only|merge] [--incoming-as-branches] [--check-mergeability] [--format table|json]`
 
-`receive` supports `.bundle` and `.zip` inputs, can verify metadata integrity before import, and can run in dry-run mode against an isolated mirror to avoid receiver mutation.
+`receive` supports `.bundle` and `.zip` inputs, can verify metadata integrity before import, and computes a deterministic per-ref preflight plan before any target ref update.
+
+Implementation-level receive behavior:
+
+- imported heads are always preserved under `refs/sync/incoming/<bundle-id>/...`
+- optional incoming branch mirrors can be written under `refs/heads/incoming/<bundle-id>/...`
+- dry-run and `--check-mergeability` execute against an isolated temporary bare mirror
+- `--integrate fast-forward-only` blocks diverged updates and never rewinds target refs
+- `--integrate create-refs-only` never mutates target refs
+- `--integrate merge` only updates diverged refs when merge simulation is clean
+- `--format table|json` is supported for dry-run/check-mergeability output surfaces (`table` is default human output)
+- `--check-mergeability` reports per-ref merge context (target/incoming/base), compact graph context, and conflict file paths
 
 ### 4.3 Module decomposition
 
@@ -204,7 +216,7 @@ This decomposition is organized by **authority**. The command layer decides *wha
 | Layer | Main files | Responsibility | Boundary |
 |---|---|---|---|
 | Entrypoint + command orchestration | `src/main.rs`, `src/cli.rs`, `src/app.rs`, `src/app/commands/*`, `src/app/output/*`, `src/version.rs`, `build.rs` | Parse CLI input, route mode-specific workflows, format non-interactive output, expose runtime/tool version | Must not implement payload proof logic itself; delegates truth computation to git domain |
-| Git domain (authoritative logic) | `src/git/bundle/*`, `src/git/bundle/payload/*`, `src/git/metadata/*`, `src/git/archive.rs`, `src/git/context.rs`, `src/git/diff.rs`, `src/git/range.rs`, `src/git/manifest.rs`, `src/git/digest.rs`, `src/git/util.rs`, `src/git/types/*` | Bundle lifecycle, strict framing, payload verification, metadata collection/verification, receive/dry-run operations, domain data models | Owns proof semantics, fail-closed checks, and transfer gating inputs |
+| Git domain (authoritative logic) | `src/git/bundle/*`, `src/git/bundle/payload/*`, `src/git/metadata/*`, `src/git/archive.rs`, `src/git/context.rs`, `src/git/diff.rs`, `src/git/digest.rs`, `src/git/util.rs`, `src/git/types/*` | Bundle lifecycle, strict framing, payload verification, metadata collection/verification, receive/dry-run operations, domain data models | Owns proof semantics, fail-closed checks, and transfer gating inputs |
 | UI domain (read-only review) | `src/ui/runtime.rs`, `src/ui/model.rs`, `src/ui/input/*`, `src/ui/state/*`, `src/ui/render/*`, `src/ui/diff/*`, `src/ui/syntax.rs`, `src/ui/tests/*` | Build interactive review model, manage navigation/input state, render overview/history/payload/diff pages | Consumes verified and derived data; does not parse/prove payload bytes |
 
 ### 4.4 Concrete source module map
@@ -234,11 +246,11 @@ This map is intentionally explicit so developers can quickly locate responsibili
 | `src/git/bundle/payload.rs` | Payload audit API surface |
 | `src/git/bundle/payload/verify/{core,preflight,entry,delta,materialized,proof}.rs` | PACK proof pipeline (parse, materialize, invariants) |
 | `src/git/bundle/receive.rs` | Receive import path and dry-run analysis |
+| `src/git/bundle/receive/{test_hooks,tests}.rs` | Receive fault-injection hooks and module-scoped regression tests |
 | `src/git/metadata/{collect,load,patch,verify}.rs` | Metadata sidecar collection, loading, patch support, verification |
 | `src/git/archive.rs` | Archive read/write and extraction IO |
 | `src/git/context.rs` | Context resolution and precondition checks |
-| `src/git/range.rs` | Range validation and resolution utilities |
-| `src/git/manifest.rs` | Manifest/table helper logic |
+| `src/git/diff.rs` | Changed-file extraction and deterministic diff-entry ordering |
 | `src/git/types/*.rs` | Domain and document data models |
 | `src/git/digest.rs` | Cryptographic digest helpers |
 | `src/git/util.rs` | Generic support helpers |
@@ -256,6 +268,7 @@ This map is intentionally explicit so developers can quickly locate responsibili
 | `src/ui/render/diff_view.rs` | Diff page rendering |
 | `src/ui/render/payload/{mod,layout,tables/*,preview/*,detail,util}.rs` | Payload page rendering stack |
 | `src/ui/diff/{parse,render,style}.rs` | Diff parse/render/style helpers |
+| `src/ui/{input,render,diff}/test_api.rs` | Test-only adapter surfaces that keep production API boundaries narrow |
 
 ### 4.5 Artifact model and static data flow
 
@@ -451,53 +464,112 @@ The important behavioral property is that all downstream representations (table 
 
 ### 5.5 Receive and dry-run sequence
 
-Dry-run is designed as operationally faithful but non-mutating.
+Receive is implemented as a plan-first workflow. The import path first materializes incoming heads into a safe namespace, then computes a deterministic preflight plan, and only then applies policy-specific target updates. This design keeps behavior explainable and non-destructive by default.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant R as receive
+    participant B as bundle parse and import
+    participant P as preflight planner
+    participant V as policy validator
+    participant A as apply backend
     participant TMP as temp bare mirror
-    participant REPO as receiver repo
+    participant REPO as receiver
 
-    U->>R: receive --repo --bundle --dry-run
-    R->>TMP: init mirror + fetch refs from REPO
-    R->>TMP: apply bundle PACK + ref updates (mirror only)
-    R->>TMP: compute head-scoped line stats
-    TMP-->>R: would-change summary
-    R-->>U: applicability + line table
+    U->>R: receive --repo --bundle [options]
+    alt dry-run or check-mergeability
+        R->>TMP: init mirror plus fetch refs from REPO
+        R->>B: import package into TMP mirror
+        R->>P: compute per-ref preflight statuses
+        R->>V: validate selected integration policy
+        R-->>U: would-change summary plus plan output
+    else apply mode
+        R->>B: import package into REPO
+        R->>P: compute per-ref preflight statuses
+        R->>V: validate selected integration policy
+        V->>A: apply validated target updates
+        A-->>R: backend and outcome details
+        R-->>U: apply summary and safety report
+    end
 ```
 
-Dry-run and apply are intentionally parallel in logic but different in target:
+The following flowchart presents the same receive path as a single decision-oriented control flow, including preflight classification and policy gates.
 
 ```mermaid
-flowchart LR
-    subgraph DRY["Dry-run path: receive --dry-run"]
-        D1[Create temp bare mirror]
-        D2[Fetch receiver refs into mirror]
-        D3[Apply bundle in mirror]
-        D4[Compute would-change stats]
-        D5[Return applicability + report]
-        D1 --> D2 --> D3 --> D4 --> D5
-    end
+flowchart TD
+    START["receive --repo --bundle [options]"] --> TARGET{"Mode"}
+    TARGET -->|"dry-run or check-mergeability"| MIRROR["Create temporary bare mirror and fetch receiver refs"]
+    TARGET -->|"apply"| REPO["Open real receiver repository"]
 
-    subgraph APPLY["Apply path: receive"]
-        A1[Open receiver repository]
-        A2[Optional metadata integrity verify]
-        A3[Apply bundle to receiver]
-        A4[Update heads: skip already-applied]
-        A5[Persist imported state]
-        A1 --> A2 --> A3 --> A4 --> A5
-    end
+    MIRROR --> IMPORT["Import bundle and map incoming heads"]
+    REPO --> VERIFY{"verify metadata flag"}
+    VERIFY -->|"yes"| VMETA["Run metadata integrity verification"]
+    VERIFY -->|"no"| IMPORT
+    VMETA --> IMPORT
+
+    IMPORT --> PRESERVE["Write preserved incoming refs under refs/sync/incoming/<bundle-id>/...<br/>optional branch mirrors under refs/heads/incoming/<bundle-id>/..."]
+    PRESERVE --> PLAN["Compute preflight plan per incoming ref<br/>status: target_missing, fast_forward_ok, already_present, target_ahead, diverged_merge_required"]
+    PLAN --> CHECKMERGE{"check-mergeability flag"}
+
+    CHECKMERGE -->|"yes"| MSIM["Run merge simulation for diverged refs<br/>collect clean/conflicted/unknown and conflict files"]
+    MSIM --> MEND["Report mergeability diagnostics<br/>No target ref updates"]
+
+    CHECKMERGE -->|"no"| DRY{"dry-run flag"}
+    DRY -->|"yes"| DEND["Report preflight plan plus would-change summary<br/>No target ref updates"]
+    DRY -->|"no"| POLICY{"integrate policy"}
+
+    POLICY -->|"create-refs-only"| CREATESAFE["Write preserved incoming refs only<br/>Leave target refs unchanged"]
+    CREATESAFE --> APPLYDONE["Success result"]
+
+    POLICY -->|"fast-forward-only"| FFGATE{"Any diverged_merge_required row"}
+    FFGATE -->|"yes"| FFFAIL["Fail with merge-required diagnostics<br/>No target ref updates"]
+    FFGATE -->|"no"| APPLYTARGET["Apply allowed target updates"]
+
+    POLICY -->|"merge"| MGATE["Simulate merges for diverged rows"]
+    MGATE --> MOK{"All diverged rows clean"}
+    MOK -->|"no"| MFAIL["Fail with conflict diagnostics<br/>No target ref updates"]
+    MOK -->|"yes"| MERGEAPPLY["Create merge commits where needed<br/>Prepare target updates and merge-test refs"]
+    MERGEAPPLY --> APPLYTARGET
+
+    APPLYTARGET --> BACKEND{"Apply backend"}
+    BACKEND -->|"ref transaction"| TXN["Atomic ref update transaction"]
+    BACKEND -->|"manual CAS fallback"| CAS["CAS updates with rollback protection"]
+    TXN --> APPLYDONE
+    CAS --> APPLYDONE
 ```
+
+Preflight statuses are:
+
+- `target_missing`: target ref does not exist
+- `fast_forward_ok`: target can advance strictly forward
+- `already_present`: target already equals incoming
+- `target_ahead`: incoming is older and already contained by target
+- `diverged_merge_required`: target/incoming histories diverged
+
+Integration-policy behavior:
+
+- `create-refs-only`: never updates target refs; writes preserved incoming refs only
+- `fast-forward-only`: updates only `target_missing` and `fast_forward_ok`; rejects diverged rows
+- `merge`: requires clean mergeability for diverged rows; writes merge-test refs and updates targets with resulting merge commits
+
+Safety and non-destructive controls:
+
+- incoming refs are preserved under `refs/sync/incoming/<bundle-id>/...` before target updates
+- optional incoming branch mirrors are written under `refs/heads/incoming/<bundle-id>/...`
+- target updates use ref-transaction backend when available
+- fallback apply path uses CAS checks with rollback on failure
+- mixed-plan fast-forward failures fail before applying partial target updates
 
 Behavioral points:
 
 - optional metadata integrity checks can run before import
 - header framing is parsed strictly (same framing rules as payload audit)
-- head existence is verified after import
-- ref updates skip already-applied heads (idempotency)
+- imported head commit existence is verified after object import
 - dry-run computes impact without mutating receiver state
+- check-mergeability mode reports clean/conflicted/unknown status per diverged ref without target mutation
+- operator-facing output is structured in deterministic sections (`preflight checks`, `changes`, `summary`, `result`)
+- mergeability diagnostics include commit summaries and explicit `conflict files` lists per diverged ref
 
 ### 5.6 Evidence derivation and consumption flow
 
@@ -775,11 +847,15 @@ The guarantees listed here are the guarantees the current implementation can def
 - metadata integrity binding (hash/size checks)
 - metadata-vs-repository truth verification path
 - dry-run isolation from receiver mutation
+- check-mergeability isolation from receiver mutation with explicit conflict-path reporting
 - fail-closed PACK proof pipeline
 - authoritative ledger surfaced to UI and JSON
 - explicit transfer gate (`transfer_allowed`, `blocked_reason`)
 - unreachable-object visibility as context fields
 - idempotent receive behavior for already-applied heads
+- receive-time preservation of incoming heads in a stable safe namespace
+- fast-forward-only non-rewind behavior (`target_ahead` is treated as a no-op)
+- rollback-protected target updates (ref transaction or CAS with rollback fallback)
 
 ### 8.2 Limits
 
@@ -799,7 +875,7 @@ For design reviews and audits, the most important discipline is to avoid mixing 
 | Payload audit (`audit` payload table/json, interactive payload views) | Strict bundle framing + PACK verifier + ledger/proof invariants | PACK payload completeness and integrity under resolve policy | Metadata correctness or producer authenticity |
 | Metadata verification (`audit --verify-metadata`) | Sidecar integrity checks + repository recomputation equivalence | Sidecar claims match package and repository truth | PACK completeness by itself |
 | History views (interactive commit/file pages) | Imported graph traversal + commit/file extraction | Human-readable change intent/context | Full payload coverage |
-| Receive / dry-run | Import/apply behavior in receiver or mirror | Operational applicability and impact | Replacement for payload proof checks |
+| Receive / dry-run / check-mergeability | Import/apply behavior in receiver or mirror | Operational applicability, mergeability diagnostics, and impact | Replacement for payload proof checks |
 
 The architectural invariants that tie these surfaces together are:
 
@@ -809,8 +885,9 @@ The architectural invariants that tie these surfaces together are:
 | I2 | Metadata transport integrity (bundle/patch hash-size bindings) | metadata integrity verification |
 | I3 | Metadata-vs-repo equivalence (`commit_chain` / `changed_files`) | metadata verify against repository recomputation |
 | I4 | Payload proof tuple consistency (framing, checksum, declared/parsed/materialized counters) | PACK verifier + proof boundary checks |
-| I5 | Receive idempotency (already-applied heads skipped deterministically) | receive/import head application logic |
-| I6 | Dry-run/apply parity (same import logic, isolated target) | dry-run mirror execution model |
+| I5 | Receive idempotency and no-op classification (`already_present` and `target_ahead`) | receive preflight classification and apply planning |
+| I6 | Dry-run/check-mergeability isolation (same import logic, isolated target) | mirror execution model for non-mutating receive analysis |
+| I7 | Non-destructive receive policy safety (no backward fast-forward updates, no partial mixed-plan target mutation) | receive plan validation + target update backend behavior |
 
 ### 8.4 Claim-to-implementation traceability matrix
 
@@ -818,12 +895,13 @@ This matrix links the document's assurance claims to concrete implementation fil
 
 | Claim | Invariant(s) | Primary code locations | Representative tests |
 |---|---|---|---|
-| Create rejects non-linear ranges | I1 | `src/git/bundle/create.rs`, `src/git/range.rs` | `create_bundle_fails_when_to_commit_is_not_descendant_of_from_commit`, `open_context_fails_when_tip_ref_is_not_descendant_of_base_ref` |
+| Create rejects non-linear ranges | I1 | `src/git/bundle/create.rs`, `src/git/context.rs` | `create_bundle_fails_when_to_commit_is_not_descendant_of_from_commit`, `open_context_fails_when_tip_ref_is_not_descendant_of_base_ref` |
 | Metadata integrity binds claims to transport artifacts | I2 | `src/git/metadata/verify.rs`, `src/git/metadata/load.rs` | `verify_bundle_metadata_integrity_rejects_header_version_mismatch`, `verify_bundle_metadata_integrity_rejects_patch_sidecar_sha_mismatch` |
 | Metadata claims match repository truth when verified | I3 | `src/git/metadata/collect.rs`, `src/git/metadata/verify.rs` | `verify_bundle_metadata_against_repo_rejects_commit_chain_mismatch`, `verify_bundle_metadata_against_repo_rejects_changed_files_mismatch` |
 | Payload completeness and integrity are enforced fail-closed | I4 | `src/git/bundle/parse.rs`, `src/git/bundle/payload/verify/*`, `src/git/bundle/payload/verify/proof.rs` | `bundle_pack_offset_is_read_from_header_not_scanned`, `verify_pack_payload_validates_trailer_checksum`, `pack_ledger_contains_exactly_declared_entry_count`, `strict_mode_blocks_when_unresolved_entries_remain` |
-| Re-applying same package is idempotent | I5 | `src/git/bundle/receive.rs` | `receive_bundle_input_is_idempotent_when_same_package_is_applied_twice`, `receive_dry_run_prints_no_changes_when_head_already_applied` |
-| Dry-run mirrors receive logic without mutating target repo | I6 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo`, `receive_dry_run_prints_would_change_table_for_pending_import` |
+| Re-applying same package is idempotent and incoming-older bundles are non-destructive no-ops | I5 | `src/git/bundle/receive.rs`, `src/git/types/receive.rs` | `receive_bundle_input_is_idempotent_when_same_package_is_applied_twice`, `receive_fast_forward_only_accepts_target_ahead_and_keeps_target_ref_unchanged` |
+| Dry-run and check-mergeability mirror receive logic without mutating target repo | I6 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_bundle_input_with_options_dry_run_does_not_modify_receiver_repo`, `receive_dry_run_prints_would_change_table_for_pending_import`, `receive_check_mergeability_reports_diverged_ref_merge_status_without_mutating_receiver` |
+| Fast-forward receive rejects diverged/mixed plans without partial target mutation | I7 | `src/git/bundle/receive.rs`, `src/app/commands/receive.rs` | `receive_integrate_fast_forward_only_rejects_mixed_plan_without_partial_target_updates`, `receive_fast_forward_only_rejects_diverged_target_and_preserves_incoming_namespace_refs` |
 
 ## 9. Build and Versioning
 
@@ -847,7 +925,7 @@ The suite is structured to preserve command behavior, proof invariants, and UI c
 
 Test layers:
 
-- unit tests in `src/git/tests/*` and `src/ui/tests/*`
+- module-scoped unit tests are colocated with implementation (`src/**/tests.rs`, `src/**/tests/*`, and focused domain suites like `src/git/tests/*`, `src/ui/tests/*`)
 - integration tests in `tests/*`
 
 Representative covered areas:
@@ -855,11 +933,16 @@ Representative covered areas:
 - create/inspect/archive behavior
 - metadata integrity and metadata-vs-repo verification behavior
 - receive and dry-run applicability/idempotency paths
+- receive integration policy paths (`create-refs-only`, `fast-forward-only`, `merge`) including target-ahead no-op and diverged failure handling
+- receive update safety paths (ref-transaction and CAS rollback fallback, including fault-injection coverage)
+- receive mergeability simulation output paths (status, merge context, and conflict-file reporting)
 - commit and file-level extraction for review pages
 - payload session/object detail behaviors
 - PACK mismatch and unresolved-delta rejection paths
 - CLI path contracts (`tests/main_cli_paths.rs`)
 - end-to-end workflow (`tests/bundle_workflow_integration.rs`)
+- scripted receive matrix execution (`tests/receive_matrix_script_integration.rs`)
+- reproducible mergeability-warning fixture generation (`scripts/generate-mergeability-warning-repos.sh`)
 
 ## 11. Operational Auditor Checklist
 

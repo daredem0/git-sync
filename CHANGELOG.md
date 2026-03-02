@@ -7,6 +7,64 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-02
+
+### Added
+- Added explicit receive integration policies via `--integrate`:
+  - `create-refs-only`
+  - `fast-forward-only`
+  - `merge`
+- Added deterministic receive preflight planning with per-ref status, merge-base context, and machine-readable status labels.
+- Added receive dry-run structured output support:
+  - human-readable plan/actions/summary output
+  - `--format json` for automation/CI parsing
+- Added `--check-mergeability` analysis mode to simulate merge outcomes without updating target refs.
+- Added merge-policy receive integration (`--integrate merge`) that only updates targets when clean merge commits can be created.
+- Added stable incoming preservation refs for imported heads under `refs/sync/incoming/<bundle-id>/...`.
+- Added optional incoming branch mirrors via `--incoming-as-branches` under `refs/heads/incoming/<bundle-id>/...`.
+- Added explicit receive preflight status `target_ahead` for incoming refs that are already contained by newer target refs.
+- Added operational scripts for receive-path diagnostics and reproducible scenario generation:
+  - `scripts/test-receive-integration-matrix.sh`
+  - `scripts/generate-mergeability-warning-repos.sh`
+
+### Changed
+- Hardened receive target updates to prioritize non-destructive behavior:
+  - ref-transaction backend when available
+  - manual CAS + rollback fallback with precondition checks
+- Improved receive CLI diagnostics to be operator-oriented:
+  - preflight checks
+  - planned actions
+  - policy-aware summaries
+  - backend safety reporting
+  - mergeability conflict-path reporting
+- Updated receive handling for older incoming bundles:
+  - no longer reported as merge-required divergence
+  - now treated as safe no-op (`target_ahead`) with clear messaging
+- Improved interactive audit UI dry-run failure presentation in `Would Change`:
+  - concise human summary
+  - readable multiline diagnostics
+  - clearer guidance for failed applicability checks
+- Improved UI dry-run applicability wording to distinguish:
+  - normal clean apply
+  - already-applied no-op
+  - incoming-older/contained no-op
+- Refactored test organization to better separate implementation and tests:
+  - moved large inline receive tests into dedicated module files
+  - moved test-only hook/helper APIs into dedicated `test_api`/test-hook modules
+
+### Tests
+- Expanded receive integration coverage for non-destructive and policy paths, including:
+  - fast-forward success/failure
+  - create-refs-only behavior
+  - merge policy success/failure
+  - target-ahead no-op behavior
+- Added/extended receive fault-injection tests for rollback and transaction failure modes.
+- Added receive matrix script integration coverage (`tests/receive_matrix_script_integration.rs`).
+- Expanded CLI path regression tests for receive output and policy behaviors (`tests/main_cli_paths.rs`).
+
+### Documentation
+- Updated README developer guidance with commit-message shape rules.
+
 ## [0.7.3] - 2026-03-01
 
 ### Added
