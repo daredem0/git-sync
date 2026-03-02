@@ -24,6 +24,7 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 fn run_command(program: &str, args: &[&str], current_dir: Option<&Path>) -> Output {
     let mut command = Command::new(program);
     command.args(args);
+    apply_test_git_identity_env(&mut command);
     if let Some(dir) = current_dir {
         command.current_dir(dir);
     }
@@ -32,6 +33,14 @@ fn run_command(program: &str, args: &[&str], current_dir: Option<&Path>) -> Outp
 
 fn run_bin(args: &[&str], current_dir: Option<&Path>) -> Output {
     run_command(binary_path(), args, current_dir)
+}
+
+fn apply_test_git_identity_env(command: &mut Command) {
+    command
+        .env("GIT_AUTHOR_NAME", "git-sync-tests")
+        .env("GIT_AUTHOR_EMAIL", "git-sync-tests@example.invalid")
+        .env("GIT_COMMITTER_NAME", "git-sync-tests")
+        .env("GIT_COMMITTER_EMAIL", "git-sync-tests@example.invalid");
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -334,6 +343,7 @@ fn find_merge_test_ref_target(receiver_repo: &Path, target_ref: &str) -> Option<
 
 fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &str) -> String {
     let mut command = Command::new("git");
+    apply_test_git_identity_env(&mut command);
     command.args([
         "-C",
         repo.to_string_lossy().as_ref(),
@@ -369,6 +379,7 @@ fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &
         .to_string();
     let mktree_input = format!("100644 blob {blob_oid}\tbase.txt\n");
     let mut mktree = Command::new("git");
+    apply_test_git_identity_env(&mut mktree);
     mktree.args(["-C", repo.to_string_lossy().as_ref(), "mktree"]);
     mktree
         .stdin(std::process::Stdio::piped())
@@ -396,6 +407,7 @@ fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &
         .to_string();
 
     let mut commit_tree = Command::new("git");
+    apply_test_git_identity_env(&mut commit_tree);
     commit_tree.args([
         "-C",
         repo.to_string_lossy().as_ref(),
@@ -451,6 +463,7 @@ fn create_non_conflicting_diverged_commit_on_bare_repo(repo: &Path, parent_oid: 
         .to_string();
 
     let mut hash_blob = Command::new("git");
+    apply_test_git_identity_env(&mut hash_blob);
     hash_blob.args([
         "-C",
         repo.to_string_lossy().as_ref(),
@@ -484,6 +497,7 @@ fn create_non_conflicting_diverged_commit_on_bare_repo(repo: &Path, parent_oid: 
         "100644 blob {base_blob_oid}\tbase.txt\n100644 blob {side_blob_oid}\treceiver-only.txt\n"
     );
     let mut mktree = Command::new("git");
+    apply_test_git_identity_env(&mut mktree);
     mktree.args(["-C", repo.to_string_lossy().as_ref(), "mktree"]);
     mktree
         .stdin(std::process::Stdio::piped())
@@ -507,6 +521,7 @@ fn create_non_conflicting_diverged_commit_on_bare_repo(repo: &Path, parent_oid: 
         .to_string();
 
     let mut commit_tree = Command::new("git");
+    apply_test_git_identity_env(&mut commit_tree);
     commit_tree.args([
         "-C",
         repo.to_string_lossy().as_ref(),
