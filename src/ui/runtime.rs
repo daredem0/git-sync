@@ -18,6 +18,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::backend::{Backend, CrosstermBackend};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use std::io;
 use std::time::Duration;
 
@@ -44,13 +46,15 @@ impl EventSource for CrosstermEventSource {
 ///
 /// Returns an error when terminal setup, rendering, or event handling fails.
 pub fn run(config: &AppConfig) -> Result<()> {
-    let model = build_audit_model(config);
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+
+    terminal.draw(render_loading_screen)?;
+
+    let model = build_audit_model(config);
     let mut app_state = AppState::new(&model);
     let event_source = CrosstermEventSource;
 
@@ -62,6 +66,30 @@ pub fn run(config: &AppConfig) -> Result<()> {
     let _ = terminal.show_cursor();
 
     loop_result
+}
+
+fn render_loading_screen(frame: &mut ratatui::Frame<'_>) {
+    let area = frame.area();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("git-sync");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Min(6),
+            Constraint::Percentage(40),
+        ])
+        .split(inner);
+
+    let text = "Loading audit view...\n\nThis can take a while on large bundles.\n\nTip: `git-sync audit --format table` is a fast non-interactive proof run.";
+    let paragraph = Paragraph::new(text)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, chunks[1]);
 }
 
 /// Runs the terminal event/render loop until user exit.
