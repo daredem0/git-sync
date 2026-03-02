@@ -36,6 +36,10 @@ static MANUAL_CAS_FAIL_AT_UPDATE_INDEX: AtomicUsize = AtomicUsize::new(usize::MA
 #[cfg(test)]
 static TRANSACTION_INJECT_COMMIT_FAILURE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static TRANSACTION_FAIL_AT_LOCK_REF_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
+static TRANSACTION_FAIL_AT_SET_TARGET_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
 static FORCE_MANUAL_CAS_MUTEX: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 static MANUAL_CAS_MUTATE_BEFORE_CHECK: Mutex<Option<ManualCasMutationBeforeCheck>> =
@@ -63,6 +67,8 @@ impl Drop for ForcedManualCasGuard {
         FORCE_MANUAL_CAS_APPLY.store(false, Ordering::SeqCst);
         MANUAL_CAS_FAIL_AT_UPDATE_INDEX.store(usize::MAX, Ordering::SeqCst);
         TRANSACTION_INJECT_COMMIT_FAILURE.store(false, Ordering::SeqCst);
+        TRANSACTION_FAIL_AT_LOCK_REF_INDEX.store(usize::MAX, Ordering::SeqCst);
+        TRANSACTION_FAIL_AT_SET_TARGET_INDEX.store(usize::MAX, Ordering::SeqCst);
         *MANUAL_CAS_MUTATE_BEFORE_CHECK
             .lock()
             .expect("manual-cas mutation config mutex should not be poisoned") = None;
@@ -75,7 +81,7 @@ impl Drop for ForcedManualCasGuard {
 /// Enables manual-CAS backend forcing for deterministic fallback-path tests.
 #[cfg(test)]
 pub(crate) fn force_manual_cas_for_tests() -> ForcedManualCasGuard {
-    configure_fault_injection_for_tests(true, None, None, None, false)
+    configure_fault_injection_for_tests(true, None, None, None, false, None, None)
 }
 
 #[cfg(test)]
@@ -85,6 +91,8 @@ fn configure_fault_injection_for_tests(
     manual_cas_mutate_before_check: Option<ManualCasMutationBeforeCheck>,
     rollback_fail_for_ref: Option<String>,
     transaction_inject_commit_failure: bool,
+    transaction_fail_at_lock_ref_index: Option<usize>,
+    transaction_fail_at_set_target_index: Option<usize>,
 ) -> ForcedManualCasGuard {
     let lock = FORCE_MANUAL_CAS_MUTEX
         .lock()
@@ -95,6 +103,14 @@ fn configure_fault_injection_for_tests(
         Ordering::SeqCst,
     );
     TRANSACTION_INJECT_COMMIT_FAILURE.store(transaction_inject_commit_failure, Ordering::SeqCst);
+    TRANSACTION_FAIL_AT_LOCK_REF_INDEX.store(
+        transaction_fail_at_lock_ref_index.unwrap_or(usize::MAX),
+        Ordering::SeqCst,
+    );
+    TRANSACTION_FAIL_AT_SET_TARGET_INDEX.store(
+        transaction_fail_at_set_target_index.unwrap_or(usize::MAX),
+        Ordering::SeqCst,
+    );
     *MANUAL_CAS_MUTATE_BEFORE_CHECK
         .lock()
         .expect("manual-cas mutation config mutex should not be poisoned") =
@@ -926,7 +942,22 @@ fn apply_ref_updates_with_transaction(
     mut transaction: git2::Transaction<'_>,
     updates: &[PlannedRefUpdate],
 ) -> Result<()> {
-    for update in updates {
+    for (lock_index, update) in updates.iter().enumerate() {
+        #[cfg(not(test))]
+        let _ = lock_index;
+
+        #[cfg(test)]
+        if TRANSACTION_FAIL_AT_LOCK_REF_INDEX.load(Ordering::SeqCst) == lock_index {
+            bail!(format_apply_failure(
+                "ref_transaction",
+                "lock ref failed",
+                Some(&update.ref_name),
+                "injected transaction lock-ref failure",
+                &[],
+                &RollbackOutcome::default(),
+            ));
+        }
+
         transaction.lock_ref(&update.ref_name).map_err(|err| {
             anyhow!(
                 "unable to lock target ref '{}' for transactional update: {err}",
@@ -935,7 +966,22 @@ fn apply_ref_updates_with_transaction(
         })?;
     }
 
-    for update in updates {
+    for (set_index, update) in updates.iter().enumerate() {
+        #[cfg(not(test))]
+        let _ = set_index;
+
+        #[cfg(test)]
+        if TRANSACTION_FAIL_AT_SET_TARGET_INDEX.load(Ordering::SeqCst) == set_index {
+            bail!(format_apply_failure(
+                "ref_transaction",
+                "stage target update failed",
+                Some(&update.ref_name),
+                "injected transaction set-target failure",
+                &[],
+                &RollbackOutcome::default(),
+            ));
+        }
+
         ensure_expected_ref_target(repo, update)?;
         transaction
             .set_target(
@@ -1749,6 +1795,12 @@ fn is_regular_blob_mode(mode: u32) -> bool {
 mod tests {
     use super::*;
 
+    fn test_fault_injection_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock()
+            .expect("fault-injection test lock mutex should not be poisoned")
+    }
+
     fn temp_bare_repo_path(suffix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "git-sync-receive-rollback-{suffix}-{}-{}",
@@ -1829,6 +1881,7 @@ mod tests {
 
     #[test]
     fn rollback_applied_updates_restores_existing_target_refs() {
+        let _test_lock = test_fault_injection_lock();
         let repo_path = temp_bare_repo_path("restore-existing");
         std::fs::create_dir_all(&repo_path).expect("must create repo path");
         let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
@@ -1867,6 +1920,7 @@ mod tests {
 
     #[test]
     fn rollback_applied_updates_deletes_newly_created_refs() {
+        let _test_lock = test_fault_injection_lock();
         let repo_path = temp_bare_repo_path("delete-created");
         std::fs::create_dir_all(&repo_path).expect("must create repo path");
         let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
@@ -1903,10 +1957,12 @@ mod tests {
 
     #[test]
     fn manual_cas_injected_second_update_failure_rolls_back_first_update() {
+        let _test_lock = test_fault_injection_lock();
         let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
             build_two_ref_update_fixture("manual-cas-fail-index");
 
-        let _fault = configure_fault_injection_for_tests(true, Some(1), None, None, false);
+        let _fault =
+            configure_fault_injection_for_tests(true, Some(1), None, None, false, None, None);
         let result = apply_ref_updates_with_manual_cas(&repo, &updates);
         assert!(
             result.is_err(),
@@ -1939,7 +1995,47 @@ mod tests {
     }
 
     #[test]
+    fn manual_cas_injected_first_update_failure_keeps_all_targets_unchanged() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-fail-first-index");
+
+        let _fault =
+            configure_fault_injection_for_tests(true, Some(0), None, None, false, None, None);
+        let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+        assert!(
+            result.is_err(),
+            "injected first-update failure should fail manual-cas apply"
+        );
+        let err_text = result
+            .expect_err("manual-cas apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected manual-cas update failure"),
+            "diagnostics should include injected update-failure reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "first-update failure should leave main unchanged"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "first-update failure should leave side unchanged"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
     fn manual_cas_injected_precondition_race_rolls_back_applied_updates() {
+        let _test_lock = test_fault_injection_lock();
         let (repo_path, repo, updates, main_old, _main_new, _side_old, _side_new) =
             build_two_ref_update_fixture("manual-cas-precondition-race");
 
@@ -1949,7 +2045,15 @@ mod tests {
             ref_name: "refs/heads/side".to_string(),
             mutate_to_oid: Some(side_race),
         };
-        let _fault = configure_fault_injection_for_tests(true, None, Some(mutation), None, false);
+        let _fault = configure_fault_injection_for_tests(
+            true,
+            None,
+            Some(mutation),
+            None,
+            false,
+            None,
+            None,
+        );
         let result = apply_ref_updates_with_manual_cas(&repo, &updates);
         assert!(
             result.is_err(),
@@ -1982,7 +2086,62 @@ mod tests {
     }
 
     #[test]
+    fn manual_cas_injected_deleted_target_precondition_race_rolls_back_applied_updates() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, _side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-precondition-delete");
+
+        let mutation = ManualCasMutationBeforeCheck {
+            update_index: 1,
+            ref_name: "refs/heads/side".to_string(),
+            mutate_to_oid: None,
+        };
+        let _fault = configure_fault_injection_for_tests(
+            true,
+            None,
+            Some(mutation),
+            None,
+            false,
+            None,
+            None,
+        );
+        let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+        assert!(
+            result.is_err(),
+            "deleted-target precondition race should fail manual-cas apply"
+        );
+        let err_text = result
+            .expect_err("manual-cas apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("CAS precondition failed"),
+            "failure should be reported as CAS precondition violation"
+        );
+        assert!(
+            err_text.contains("expected old target"),
+            "diagnostics should include expected/actual target mismatch details"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "precondition failure should roll back already-applied main update"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target, None,
+            "deleted-target mutation should persist on non-applied ref"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
     fn manual_cas_injected_rollback_failure_is_reported_explicitly() {
+        let _test_lock = test_fault_injection_lock();
         let (repo_path, repo, updates, _main_old, main_new, side_old, _side_new) =
             build_two_ref_update_fixture("manual-cas-rollback-failure");
 
@@ -1992,6 +2151,8 @@ mod tests {
             None,
             Some("refs/heads/main".to_string()),
             false,
+            None,
+            None,
         );
         let result = apply_ref_updates_with_manual_cas(&repo, &updates);
         assert!(
@@ -2033,11 +2194,52 @@ mod tests {
     }
 
     #[test]
+    fn transaction_injected_lock_ref_first_update_failure_preserves_all_targets() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("transaction-lock-ref-first-failure");
+
+        let _fault =
+            configure_fault_injection_for_tests(false, None, None, None, false, Some(0), None);
+        let tx = repo.transaction().expect("must open transaction");
+        let result = apply_ref_updates_with_transaction(&repo, tx, &updates);
+        assert!(
+            result.is_err(),
+            "injected first lock-ref failure should fail transactional apply path"
+        );
+        let err_text = result
+            .expect_err("transaction apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected transaction lock-ref failure"),
+            "diagnostics should include injected lock-ref failure reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "first lock-ref failure should preserve main target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "first lock-ref failure should preserve side target"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
     fn transaction_injected_commit_failure_reports_and_preserves_targets() {
+        let _test_lock = test_fault_injection_lock();
         let (repo_path, repo, updates, main_old, _main_new, _side_old, _side_new) =
             build_two_ref_update_fixture("transaction-commit-failure");
 
-        let _fault = configure_fault_injection_for_tests(false, None, None, None, true);
+        let _fault = configure_fault_injection_for_tests(false, None, None, None, true, None, None);
         let tx = repo.transaction().expect("must open transaction");
         let result = apply_ref_updates_with_transaction(&repo, tx, &[updates[0].clone()]);
         assert!(
@@ -2063,6 +2265,197 @@ mod tests {
             Some(main_old),
             "injected transaction failure should preserve target refs"
         );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn transaction_injected_set_target_first_update_failure_preserves_all_targets() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("transaction-set-target-first-failure");
+
+        let _fault =
+            configure_fault_injection_for_tests(false, None, None, None, false, None, Some(0));
+        let tx = repo.transaction().expect("must open transaction");
+        let result = apply_ref_updates_with_transaction(&repo, tx, &updates);
+        assert!(
+            result.is_err(),
+            "injected first set-target failure should fail transactional apply path"
+        );
+        let err_text = result
+            .expect_err("transaction apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected transaction set-target failure"),
+            "diagnostics should include injected set-target failure reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "first set-target failure should preserve main target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "first set-target failure should preserve side target"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn transaction_injected_lock_ref_failure_preserves_all_targets() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("transaction-lock-ref-failure");
+
+        let _fault =
+            configure_fault_injection_for_tests(false, None, None, None, false, Some(1), None);
+        let tx = repo.transaction().expect("must open transaction");
+        let result = apply_ref_updates_with_transaction(&repo, tx, &updates);
+        assert!(
+            result.is_err(),
+            "injected transaction lock-ref failure should fail transactional apply path"
+        );
+        let err_text = result
+            .expect_err("transaction apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected transaction lock-ref failure"),
+            "diagnostics should include injected lock-ref failure reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "lock-ref failure should preserve main target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "lock-ref failure should preserve side target"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn transaction_injected_set_target_failure_preserves_all_targets() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("transaction-set-target-failure");
+
+        let _fault =
+            configure_fault_injection_for_tests(false, None, None, None, false, None, Some(1));
+        let tx = repo.transaction().expect("must open transaction");
+        let result = apply_ref_updates_with_transaction(&repo, tx, &updates);
+        assert!(
+            result.is_err(),
+            "injected transaction set-target failure should fail transactional apply path"
+        );
+        let err_text = result
+            .expect_err("transaction apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected transaction set-target failure"),
+            "diagnostics should include injected set-target failure reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "set-target failure should preserve main target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "set-target failure should preserve side target"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn manual_cas_fault_stress_repeated_failures_keep_refs_consistent() {
+        let _test_lock = test_fault_injection_lock();
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-fault-stress");
+
+        for attempt in 0..32 {
+            repo.reference("refs/heads/main", main_old, true, "reset main to old")
+                .expect("must reset main before stress attempt");
+            repo.reference("refs/heads/side", side_old, true, "reset side to old")
+                .expect("must reset side before stress attempt");
+
+            let _fault = if attempt % 2 == 0 {
+                configure_fault_injection_for_tests(true, Some(1), None, None, false, None, None)
+            } else {
+                let injected_side = commit_from_content(
+                    &repo,
+                    "side race injected",
+                    &format!("side-race-{attempt}"),
+                    &[main_old],
+                );
+                let mutation = ManualCasMutationBeforeCheck {
+                    update_index: 1,
+                    ref_name: "refs/heads/side".to_string(),
+                    mutate_to_oid: Some(injected_side),
+                };
+                configure_fault_injection_for_tests(
+                    true,
+                    None,
+                    Some(mutation),
+                    None,
+                    false,
+                    None,
+                    None,
+                )
+            };
+
+            let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+            assert!(
+                result.is_err(),
+                "stress attempt should fail due injected fault (attempt={attempt})"
+            );
+
+            let main_target =
+                resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+            assert_eq!(
+                main_target,
+                Some(main_old),
+                "stress attempt should preserve or restore main target (attempt={attempt})"
+            );
+
+            let side_target =
+                resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+            if attempt % 2 == 0 {
+                assert_eq!(
+                    side_target,
+                    Some(side_old),
+                    "update-fault attempts should preserve side old target (attempt={attempt})"
+                );
+            } else {
+                assert_ne!(
+                    side_target,
+                    Some(side_old),
+                    "race-injection attempts should leave externally mutated side target (attempt={attempt})"
+                );
+            }
+        }
 
         let _ = std::fs::remove_dir_all(repo_path);
     }
