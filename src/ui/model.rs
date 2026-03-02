@@ -80,7 +80,7 @@ fn build_overview_model(config: &AppConfig) -> OverviewModel {
         },
     ) {
         Ok(result) => DryRunLine::Ok(result),
-        Err(err) => DryRunLine::Failed(single_line_error(&err)),
+        Err(err) => DryRunLine::Failed(err.to_string()),
     };
 
     OverviewModel {

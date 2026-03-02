@@ -197,8 +197,49 @@ fn render_overview_page_with_dry_run_failed_shows_error_text() {
     });
 
     assert!(
-        output.contains("Dry-run failed"),
+        output.contains("Dry-run could not compute per-file summary."),
         "overview render should explain when dry-run data is unavailable"
+    );
+    assert!(
+        output.contains("Details:"),
+        "overview render should include a dedicated details section for dry-run failures"
+    );
+    assert!(
+        output.contains("dry-run failed"),
+        "overview render should preserve the underlying dry-run error text"
+    );
+}
+
+// Verifies that fast-forward integration diagnostics are rendered as readable summary + details.
+#[test]
+fn render_overview_page_with_fast_forward_failure_shows_human_summary() {
+    let diagnostics = "unable to integrate bundle heads with --integrate fast-forward-only:\n\
+- target ref: refs/heads/main\n\
+  target oid: 42b48259ce85022b62958ec356424b908ff6ed73\n\
+  incoming oid: 05b1f9a42fd3831e72f1487e760b635461956bae\n\
+  merge-base oid: 05b1f9a42fd3831e72f1487e760b635461956bae\n\
+  reason: diverged (non-fast-forward)\n\
+  next-step: merge required; incoming ref preserved at refs/sync/incoming/6bd8c0359321/heads/main\n";
+    let model = sample_overview_model(super::super::types::DryRunLine::Failed(
+        diagnostics.to_string(),
+    ));
+    let state = super::super::types::AppState::new(&model);
+
+    let output = render_and_capture_text(140, 44, |frame| {
+        render_overview_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("Integration result: at least one target ref requires manual merge."),
+        "overview should include a concise manual-merge summary for fast-forward policy failures"
+    );
+    assert!(
+        output.contains("Incoming refs were preserved under refs/sync/incoming/<bundle-id>/..."),
+        "overview should explain where preserved incoming refs are stored"
+    );
+    assert!(
+        output.contains("target ref: refs/heads/main"),
+        "overview should include per-ref diagnostics in details section"
     );
 }
 

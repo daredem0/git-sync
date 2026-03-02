@@ -171,11 +171,9 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
             );
         }
         DryRunLine::Failed(err) => {
-            let failure = Paragraph::new(format!(
-                "Dry-run failed, so no per-file summary is available.\nerror: {err}"
-            ))
-            .block(Block::default().borders(Borders::ALL).title("Would Change"))
-            .wrap(Wrap { trim: false });
+            let failure = Paragraph::new(Text::from(render_dry_run_failure_lines(err)))
+                .block(Block::default().borders(Borders::ALL).title("Would Change"))
+                .wrap(Wrap { trim: false });
             frame.render_widget(failure, chunks[2]);
         }
     }
@@ -183,6 +181,35 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[3]);
+}
+
+fn render_dry_run_failure_lines(err: &str) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from("Dry-run could not compute per-file summary."),
+        Line::from(""),
+    ];
+
+    if err.contains("unable to integrate bundle heads with --integrate fast-forward-only") {
+        lines.push(Line::from(
+            "Integration result: at least one target ref requires manual merge.",
+        ));
+        lines.push(Line::from(
+            "Incoming refs were preserved under refs/sync/incoming/<bundle-id>/...",
+        ));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from("Details:"));
+    for raw_line in err.lines() {
+        let line = raw_line.trim_end();
+        if line.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+        lines.push(Line::from(format!("  {line}")));
+    }
+
+    lines
 }
 
 /// Returns concise pack-proof status lines for overview's general section.

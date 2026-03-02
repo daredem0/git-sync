@@ -27,7 +27,7 @@ pub(crate) fn render_dry_run_status(status: &DryRunLine) -> String {
                 "bundle cannot be applied cleanly".to_string()
             }
         }
-        DryRunLine::Failed(err) => format!("FAILED ({err})"),
+        DryRunLine::Failed(_) => "FAILED (see details below)".to_string(),
     }
 }
 
