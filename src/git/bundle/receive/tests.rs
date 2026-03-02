@@ -678,3 +678,71 @@ fn manual_cas_fault_stress_repeated_failures_keep_refs_consistent() {
 
     let _ = std::fs::remove_dir_all(repo_path);
 }
+
+#[test]
+fn missing_objects_indexer_error_enables_fetch_import_fallback() {
+    let error = anyhow::anyhow!("packfile is missing 17 objects; class=Indexer(15)");
+    assert!(
+        should_try_fetch_import_fallback(&error),
+        "missing-object indexer failure should trigger fetch fallback"
+    );
+}
+
+#[test]
+fn fetch_staging_ref_name_uses_deterministic_sync_namespace() {
+    let refs_head = fetch_staging_ref_name("abcd1234ef00", "refs/heads/main");
+    assert_eq!(
+        refs_head, "refs/sync/fetch-staging/abcd1234ef00/heads/main",
+        "fetch staging refs should be derived from refs/* suffixes"
+    );
+
+    let head = fetch_staging_ref_name("abcd1234ef00", "HEAD");
+    assert_eq!(
+        head, "refs/sync/fetch-staging/abcd1234ef00/HEAD",
+        "HEAD inputs should still be represented in staging namespace"
+    );
+}
+
+#[test]
+fn bundle_fetch_remote_candidates_include_path_and_file_url_for_local_bundle() {
+    let repo_path = temp_bare_repo_path("bundle-fetch-remote-url");
+    std::fs::create_dir_all(&repo_path).expect("must create temp path for URL normalization");
+    let bundle_path = repo_path.join("example.bundle");
+    std::fs::write(&bundle_path, b"placeholder").expect("must write temporary bundle file");
+
+    let remotes = bundle_fetch_remote_candidates(&bundle_path)
+        .expect("local bundle paths should produce fallback URL candidates");
+    assert_eq!(
+        remotes.len(),
+        2,
+        "local bundle fallback should try both plain path and file:// URL forms"
+    );
+    let remote = remotes[1].clone();
+    assert!(
+        remote.starts_with("file://"),
+        "local fallback remote URL should use file:// scheme"
+    );
+    assert!(
+        remote.ends_with("example.bundle"),
+        "normalized URL should retain bundle filename"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn bundle_fetch_remote_candidates_keep_existing_schemes() {
+    let remotes =
+        bundle_fetch_remote_candidates(std::path::Path::new("https://example.com/sync.bundle"))
+            .expect("scheme-based input should be accepted unchanged");
+    assert_eq!(
+        remotes.len(),
+        1,
+        "pre-schemed inputs should produce one candidate"
+    );
+    let remote = remotes[0].clone();
+    assert_eq!(
+        remote, "https://example.com/sync.bundle",
+        "pre-schemed bundle URL should remain unchanged"
+    );
+}

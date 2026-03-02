@@ -209,3 +209,26 @@ fn receive_parses_check_mergeability_flag() {
         "receive --check-mergeability should enable mergeability simulation mode"
     );
 }
+
+// Verifies that `receive --verbose` enables expanded import diagnostics output.
+#[test]
+fn receive_parses_verbose_flag() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "receive",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--verbose",
+    ])
+    .expect("receive with --verbose should parse");
+
+    let Some(Command::Receive { verbose, .. }) = cli.command else {
+        panic!("expected parsed receive command");
+    };
+    assert!(
+        verbose,
+        "receive --verbose should enable detailed diagnostics"
+    );
+}

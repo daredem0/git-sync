@@ -78,6 +78,7 @@ pub fn receive_bundle_input_with_options(
         ReceiveIntegratePolicy::FastForwardOnly,
         false,
         false,
+        false,
     )
 }
 
@@ -102,6 +103,7 @@ pub fn receive_bundle_input_with_options_and_policy(
         receiver_repo_path,
         options,
         integrate_policy,
+        false,
         false,
         false,
     )
@@ -131,6 +133,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror(
         integrate_policy,
         incoming_as_branches,
         false,
+        false,
     )
 }
 
@@ -145,6 +148,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeabili
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
     check_mergeability: bool,
+    verbose: bool,
 ) -> Result<ReceiveBundleResult> {
     if options.verify_metadata {
         verify_bundle_metadata_integrity_input(bundle_input_path)?;
@@ -159,6 +163,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeabili
             integrate_policy,
             incoming_as_branches,
             check_mergeability,
+            verbose,
         )
     } else {
         receive_bundle(
@@ -168,6 +173,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeabili
             integrate_policy,
             incoming_as_branches,
             check_mergeability,
+            verbose,
         )
     }
 }
@@ -216,6 +222,7 @@ fn receive_bundle(
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
     check_mergeability: bool,
+    verbose: bool,
 ) -> Result<ReceiveBundleResult> {
     let analysis_only = dry_run || check_mergeability;
     let inspection = inspect_bundle(bundle_path)?;
@@ -274,6 +281,7 @@ fn receive_bundle(
             integrate_policy,
             incoming_as_branches,
             check_mergeability,
+            verbose,
         )?;
         let preflight_plan = apply_result.preflight_plan;
         let mergeability_checks = apply_result.mergeability_checks;
@@ -299,6 +307,7 @@ fn receive_bundle(
         integrate_policy,
         incoming_as_branches,
         check_mergeability,
+        verbose,
     )?;
     let preflight_plan = apply_result.preflight_plan;
     let mergeability_checks = apply_result.mergeability_checks;
@@ -329,8 +338,10 @@ fn apply_bundle_to_repo(
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
     check_mergeability: bool,
+    verbose: bool,
 ) -> Result<ApplyBundleToRepoResult> {
     let bundle_bytes = fs::read(bundle_path)?;
+    let bundle_id = bundle_receive_id(&bundle_bytes)?;
     let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
     let pack_data = parsed_bundle.pack_data;
 
@@ -338,9 +349,42 @@ fn apply_bundle_to_repo(
     add_repo_disk_alternates_to_odb(repo, &odb)?;
     let pack_dir = repo.path().join("objects").join("pack");
     fs::create_dir_all(&pack_dir)?;
-    let mut indexer = git2::Indexer::new(Some(&odb), &pack_dir, 0o644, true)?;
-    indexer.write_all(pack_data)?;
-    indexer.commit()?;
+    let indexer_result = import_bundle_pack_with_indexer(
+        repo,
+        &odb,
+        &pack_dir,
+        bundle_path,
+        &parsed_bundle.inspection,
+        pack_data,
+        true,
+        verbose,
+    );
+    if let Err(indexer_error) = indexer_result {
+        if should_try_fetch_import_fallback(&indexer_error) {
+            import_bundle_pack_with_indexer(
+                repo,
+                &odb,
+                &pack_dir,
+                bundle_path,
+                &parsed_bundle.inspection,
+                pack_data,
+                false,
+                verbose,
+            )
+            .or_else(|verify_disabled_error| {
+                import_bundle_pack_with_libgit2_fetch(repo, bundle_path, heads, &bundle_id)
+                    .map_err(|fetch_error| {
+                        anyhow!(
+                            "{indexer_error}\n\
+                             fallback import with indexer(verify=false) also failed: {verify_disabled_error}\n\
+                             fallback import via libgit2 fetch also failed: {fetch_error}"
+                        )
+                    })
+            })?;
+        } else {
+            return Err(indexer_error);
+        }
+    }
 
     for head in heads {
         repo.find_commit(head.oid).map_err(|err| {
@@ -351,7 +395,6 @@ fn apply_bundle_to_repo(
         })?;
     }
 
-    let bundle_id = bundle_receive_id(&bundle_bytes)?;
     let incoming_refs =
         write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
     let preflight_plan = compute_receive_plan(repo, &incoming_refs)?;
@@ -379,6 +422,164 @@ fn apply_bundle_to_repo(
         mergeability_checks,
         apply_backend,
     })
+}
+
+/// Imports one bundle pack stream into the repository object database via libgit2 indexer.
+fn import_bundle_pack_with_indexer(
+    repo: &git2::Repository,
+    odb: &git2::Odb<'_>,
+    pack_dir: &Path,
+    bundle_path: &Path,
+    inspection: &BundleInspection,
+    pack_data: &[u8],
+    verify: bool,
+    verbose: bool,
+) -> Result<()> {
+    let init_stage = if verify {
+        "indexer initialization (verify=true)"
+    } else {
+        "indexer initialization (verify=false)"
+    };
+    let write_stage = if verify {
+        "pack write (verify=true)"
+    } else {
+        "pack write (verify=false)"
+    };
+    let commit_stage = if verify {
+        "indexer commit (verify=true)"
+    } else {
+        "indexer commit (verify=false)"
+    };
+
+    let mut indexer = git2::Indexer::new(Some(odb), pack_dir, 0o644, verify).map_err(|err| {
+        with_verbose_indexer_diagnostics(
+            err,
+            verbose,
+            repo,
+            bundle_path,
+            inspection,
+            pack_data.len(),
+            init_stage,
+        )
+    })?;
+    indexer.write_all(pack_data).map_err(|err| {
+        with_verbose_indexer_diagnostics(
+            err,
+            verbose,
+            repo,
+            bundle_path,
+            inspection,
+            pack_data.len(),
+            write_stage,
+        )
+    })?;
+    indexer.commit().map_err(|err| {
+        with_verbose_indexer_diagnostics(
+            err,
+            verbose,
+            repo,
+            bundle_path,
+            inspection,
+            pack_data.len(),
+            commit_stage,
+        )
+    })?;
+    Ok(())
+}
+
+/// Returns whether fetch fallback should be attempted for this indexer import failure.
+fn should_try_fetch_import_fallback(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("packfile is missing")
+        || text.contains("class=indexer")
+        || text.contains("class=indexer(")
+}
+
+/// Imports bundle objects via libgit2 fetch into temporary staging refs as fallback.
+fn import_bundle_pack_with_libgit2_fetch(
+    repo: &git2::Repository,
+    bundle_path: &Path,
+    heads: &[BundleHead],
+    bundle_id: &str,
+) -> Result<()> {
+    let mut refspecs = BTreeSet::<String>::new();
+    let mut staging_refs = BTreeSet::<String>::new();
+    for head in heads {
+        let source_ref = head.reference.as_str();
+        let staging_ref = fetch_staging_ref_name(bundle_id, source_ref);
+        refspecs.insert(format!("+{source_ref}:{staging_ref}"));
+        staging_refs.insert(staging_ref);
+    }
+    if refspecs.is_empty() {
+        bail!("bundle fetch fallback requires at least one advertised head");
+    }
+
+    let refspec_list = refspecs.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut candidate_errors = Vec::<String>::new();
+    let mut imported = false;
+    for candidate in bundle_fetch_remote_candidates(bundle_path)? {
+        match repo.remote_anonymous(candidate.as_str()) {
+            Ok(mut remote) => match remote.fetch(&refspec_list, None, None) {
+                Ok(()) => {
+                    imported = true;
+                    break;
+                }
+                Err(err) => {
+                    candidate_errors.push(format!("{candidate} => fetch failed: {err}"));
+                }
+            },
+            Err(err) => {
+                candidate_errors.push(format!("{candidate} => remote init failed: {err}"));
+            }
+        }
+    }
+    if !imported {
+        bail!(
+            "libgit2 bundle fetch fallback failed for all URL candidates: {}",
+            candidate_errors.join(" | ")
+        );
+    }
+
+    cleanup_temporary_fetch_refs(repo, &staging_refs)?;
+    Ok(())
+}
+
+/// Removes temporary fetch-staging refs used only for object import fallback.
+fn cleanup_temporary_fetch_refs(repo: &git2::Repository, refs: &BTreeSet<String>) -> Result<()> {
+    for ref_name in refs {
+        match repo.find_reference(ref_name) {
+            Ok(mut reference) => {
+                reference.delete()?;
+            }
+            Err(err) if err.code() == git2::ErrorCode::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Converts bundle path input into a libgit2-compatible remote URL.
+///
+/// Local filesystem paths are normalized to `file://` URLs because some
+/// libgit2 builds reject plain path strings as unsupported protocols.
+fn bundle_fetch_remote_candidates(bundle_path: &Path) -> Result<Vec<String>> {
+    let bundle_text = bundle_path.to_string_lossy().to_string();
+    if bundle_text.contains("://") {
+        return Ok(vec![bundle_text]);
+    }
+
+    let absolute_path = if bundle_path.is_absolute() {
+        bundle_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(bundle_path)
+    };
+    let canonical = absolute_path
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_path.clone());
+    Ok(vec![
+        canonical.to_string_lossy().to_string(),
+        format!("file://{}", canonical.to_string_lossy()),
+    ])
 }
 
 #[derive(Debug, Clone)]
@@ -457,6 +658,14 @@ fn merge_test_ref_name(bundle_id: &str, head_reference: &str) -> String {
         .strip_prefix("refs/")
         .unwrap_or(head_reference);
     format!("refs/sync/merge-test/{bundle_id}/{suffix}")
+}
+
+/// Builds one temporary fetch-staging ref name for a bundle head reference.
+fn fetch_staging_ref_name(bundle_id: &str, head_reference: &str) -> String {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    format!("refs/sync/fetch-staging/{bundle_id}/{suffix}")
 }
 
 /// Computes a deterministic per-head preflight plan for receive integration.
@@ -1511,6 +1720,7 @@ fn with_imported_bundle_input_repo<T>(
             ReceiveIntegratePolicy::CreateRefsOnly,
             false,
             false,
+            false,
         )?;
         inspection
     } else {
@@ -1520,6 +1730,7 @@ fn with_imported_bundle_input_repo<T>(
             bundle_input_path,
             &inspection.heads,
             ReceiveIntegratePolicy::CreateRefsOnly,
+            false,
             false,
             false,
         )?;
@@ -1777,6 +1988,139 @@ fn add_repo_disk_alternates_to_odb(repo: &git2::Repository, odb: &git2::Odb<'_>)
         odb.add_disk_alternate(&resolved_text)?;
     }
     Ok(())
+}
+
+/// Enriches indexer errors with environment diagnostics when verbose mode is enabled.
+fn with_verbose_indexer_diagnostics(
+    err: impl std::fmt::Display,
+    verbose: bool,
+    repo: &git2::Repository,
+    bundle_path: &Path,
+    inspection: &BundleInspection,
+    pack_len: usize,
+    stage: &str,
+) -> anyhow::Error {
+    if !verbose {
+        return anyhow!(err.to_string());
+    }
+
+    let repo_git_dir = repo.path().to_string_lossy().to_string();
+    let repo_is_bare = repo.is_bare();
+    let workdir = repo
+        .workdir()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let bundle_path_text = bundle_path.to_string_lossy().to_string();
+    let bundle_version = match inspection.version {
+        crate::git::BundleVersion::V2 => "v2",
+        crate::git::BundleVersion::V3 => "v3",
+    };
+
+    let object_format = repo
+        .config()
+        .ok()
+        .and_then(|cfg| cfg.get_string("extensions.objectformat").ok())
+        .unwrap_or_else(|| "sha1".to_string());
+    let shallow_marker_exists = repo.path().join("shallow").is_file();
+
+    let (missing_prerequisites, missing_prerequisite_count) = repo
+        .odb()
+        .ok()
+        .map(|odb| {
+            let missing = inspection
+                .prerequisites
+                .iter()
+                .filter(|oid| !odb.exists(**oid))
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let count = missing.len();
+            (missing, count)
+        })
+        .unwrap_or_else(|| {
+            (
+                vec!["<unable to inspect receiver odb>".to_string()],
+                inspection.prerequisites.len(),
+            )
+        });
+
+    let objects_dir = repo.path().join("objects");
+    let alternates_path = objects_dir.join("info").join("alternates");
+    let alternates_entries = if alternates_path.is_file() {
+        read_alternates_file_entries(&objects_dir, &alternates_path)
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| entry.display().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|read_err| vec![format!("<unable to parse alternates: {read_err}>")])
+    } else {
+        Vec::new()
+    };
+    let alternates_summary = if alternates_entries.is_empty() {
+        "none".to_string()
+    } else {
+        alternates_entries.join(", ")
+    };
+
+    let missing_prereq_preview = if missing_prerequisites.is_empty() {
+        "none".to_string()
+    } else {
+        missing_prerequisites
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let missing_prereq_truncated = missing_prerequisites.len() > 8;
+    let truncated_suffix = if missing_prereq_truncated {
+        ", ..."
+    } else {
+        ""
+    };
+
+    anyhow!(
+        "unable to import bundle pack during {stage}: {err}\n\
+         verbose diagnostics:\n\
+         - receiver git dir: {repo_git_dir}\n\
+         - receiver workdir: {workdir}\n\
+         - receiver bare repo: {repo_is_bare}\n\
+         - bundle path: {bundle_path_text}\n\
+         - bundle version: {bundle_version}\n\
+         - bundle heads: {}\n\
+         - bundle prerequisites: {}\n\
+         - pack payload bytes: {pack_len}\n\
+         - object format: {object_format}\n\
+         - shallow marker present: {shallow_marker_exists}\n\
+         - alternates file: {}\n\
+         - alternates entries: {alternates_summary}\n\
+         - missing prerequisite objects in receiver odb: {missing_prerequisite_count}/{} [{}{}]\n\
+         hint: if this is 'packfile is missing N objects', the bundle is thin and requires base objects not visible in this repository/alternates.",
+        inspection.heads.len(),
+        inspection.prerequisites.len(),
+        alternates_path.display(),
+        inspection.prerequisites.len(),
+        missing_prereq_preview,
+        truncated_suffix
+    )
+}
+
+/// Reads and resolves one alternates file into canonical object-directory paths.
+fn read_alternates_file_entries(
+    base_objects_dir: &Path,
+    alternates_path: &Path,
+) -> Result<Vec<PathBuf>> {
+    let content = fs::read_to_string(alternates_path)?;
+    let mut entries = BTreeSet::<PathBuf>::new();
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        entries.insert(resolve_alternate_entry_path(base_objects_dir, trimmed));
+    }
+    Ok(entries.into_iter().collect())
 }
 
 impl Drop for TempBareRepo {

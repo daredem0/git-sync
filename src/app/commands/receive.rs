@@ -26,6 +26,7 @@ pub(super) fn run(
     integrate: CliReceiveIntegratePolicy,
     incoming_as_branches: bool,
     check_mergeability: bool,
+    verbose: bool,
     format: Option<OutputFormat>,
 ) -> Result<()> {
     let effective_dry_run = dry_run || check_mergeability;
@@ -43,9 +44,10 @@ pub(super) fn run(
         && !effective_dry_run
         && integrate_policy == ReceiveIntegratePolicy::FastForwardOnly
         && !check_mergeability
+        && !verbose
     {
         receive_bundle_input(&bundle, &repo)?
-    } else if check_mergeability {
+    } else if check_mergeability || verbose {
         receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
             &bundle,
             &repo,
@@ -55,7 +57,8 @@ pub(super) fn run(
             },
             integrate_policy,
             incoming_as_branches,
-            true,
+            check_mergeability,
+            verbose,
         )?
     } else if incoming_as_branches {
         receive_bundle_input_with_options_policy_and_branch_mirror(

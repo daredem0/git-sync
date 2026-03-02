@@ -58,6 +58,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             integrate,
             incoming_as_branches,
             check_mergeability,
+            verbose,
             format,
         }) => receive::run(
             repo,
@@ -67,6 +68,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             integrate,
             incoming_as_branches,
             check_mergeability,
+            verbose,
             format,
         ),
         None => {
