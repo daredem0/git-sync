@@ -684,12 +684,12 @@ RUSTDOCFLAGS="--html-in-header docs/mermaid-header.html" cargo doc --no-deps --b
 ```
 
 Notes:
-- PDF generation flattens the crate rustdoc into one document (landing page plus module and item pages).
-- Default entry is `git_sync/index.html` and the full crate tree is stitched automatically.
-- You can still choose a different start page by passing a third argument:
+- PDF generation exports only the selected rustdoc entry page.
+- Default entry is `git_sync/index.html` (crate landing page).
+- You can still choose a different entry page by passing a third argument:
 
 ```bash
-./scripts/generate-doc-pdf.sh target/doc target/docs-pdf/git_sync-rustdoc-all.pdf all.html
+./scripts/generate-doc-pdf.sh target/doc target/docs-pdf/git_sync-rustdoc-page.pdf all.html
 ```
 
 ### Additional Project Documentation

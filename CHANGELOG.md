@@ -16,6 +16,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Moved SDD/SAD into `docs/SDD_SAD.md` and updated packaging/documentation/manpage references accordingly.
 - Improved audit startup UX by rendering a loading screen before expensive model construction begins.
 - Hardened dry-run mirror fidelity by wiring source object-database alternates into temporary receive mirrors, so dry-run sees the same object universe as the receiver.
+- Updated rustdoc PDF generation to export only the selected entry page (default crate landing page) instead of flattening the full crate hierarchy, reducing CI runtime.
 
 ### Tests
 - Added a receive regression test that verifies temporary dry-run mirrors can resolve source-only unreachable objects via alternates.
