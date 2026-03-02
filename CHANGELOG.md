@@ -7,6 +7,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-03-02
+
+### Added
+- Added `docs/GIT_FUNDAMENTALS.md` and integrated it into generated rustdoc between README and SDD/SAD content.
+
+### Changed
+- Moved SDD/SAD into `docs/SDD_SAD.md` and updated packaging/documentation/manpage references accordingly.
+- Improved audit startup UX by rendering a loading screen before expensive model construction begins.
+- Hardened dry-run mirror fidelity by wiring source object-database alternates into temporary receive mirrors, so dry-run sees the same object universe as the receiver.
+
+### Tests
+- Added a receive regression test that verifies temporary dry-run mirrors can resolve source-only unreachable objects via alternates.
+
 ## [0.8.0] - 2026-03-02
 
 ### Added
@@ -369,7 +382,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/daredem0/git-sync/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/daredem0/git-sync/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/daredem0/git-sync/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/daredem0/git-sync/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/daredem0/git-sync/compare/v0.7.0...v0.7.1
