@@ -28,6 +28,7 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
             can_apply_without_conflicts: true,
             apply_backend: None,
             preflight_plan: Vec::new(),
+            mergeability_checks: Vec::new(),
             line_stats: vec![git::FileLineStat {
                 path: "file.txt".to_string(),
                 additions: 2,

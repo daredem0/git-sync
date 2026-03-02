@@ -244,6 +244,7 @@ pub(crate) fn sample_multi_head_model(commit_counts: &[usize]) -> AuditModel {
                 can_apply_without_conflicts: true,
                 apply_backend: None,
                 preflight_plan: Vec::new(),
+                mergeability_checks: Vec::new(),
                 line_stats: aggregated_line_stats,
             }),
         },

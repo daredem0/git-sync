@@ -32,6 +32,7 @@ pub use receive::{
     receive_bundle_input, receive_bundle_input_with_options,
     receive_bundle_input_with_options_and_policy,
     receive_bundle_input_with_options_policy_and_branch_mirror,
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check,
 };
 
 #[cfg(test)]

@@ -15,7 +15,8 @@ use crate::git::util::path_to_string;
 use crate::git::{
     BundleHead, BundleInspection, CommitAuditEntry, CommitAuditIdentity, FileLineStat,
     HeadAuditEntry, ReceiveApplyBackend, ReceiveBundleOptions, ReceiveBundleResult,
-    ReceiveIntegratePolicy, ReceivePlanEntry, ReceivePlanStatus,
+    ReceiveIntegratePolicy, ReceiveMergeabilityCheck, ReceiveMergeabilityStatus, ReceivePlanEntry,
+    ReceivePlanStatus,
 };
 use anyhow::{Result, anyhow, bail};
 use std::fs;
@@ -26,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone)]
 struct ApplyBundleToRepoResult {
     preflight_plan: Vec<ReceivePlanEntry>,
+    mergeability_checks: Vec<ReceiveMergeabilityCheck>,
     apply_backend: Option<ReceiveApplyBackend>,
 }
 
@@ -63,11 +65,12 @@ pub fn receive_bundle_input_with_options(
     receiver_repo_path: &Path,
     options: ReceiveBundleOptions,
 ) -> Result<ReceiveBundleResult> {
-    receive_bundle_input_with_options_policy_and_branch_mirror(
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
         bundle_input_path,
         receiver_repo_path,
         options,
         ReceiveIntegratePolicy::FastForwardOnly,
+        false,
         false,
     )
 }
@@ -88,11 +91,12 @@ pub fn receive_bundle_input_with_options_and_policy(
     options: ReceiveBundleOptions,
     integrate_policy: ReceiveIntegratePolicy,
 ) -> Result<ReceiveBundleResult> {
-    receive_bundle_input_with_options_policy_and_branch_mirror(
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
         bundle_input_path,
         receiver_repo_path,
         options,
         integrate_policy,
+        false,
         false,
     )
 }
@@ -114,6 +118,28 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror(
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
 ) -> Result<ReceiveBundleResult> {
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
+        bundle_input_path,
+        receiver_repo_path,
+        options,
+        integrate_policy,
+        incoming_as_branches,
+        false,
+    )
+}
+
+/// Receives a bundle input with explicit policy, incoming-branch mirroring, and optional mergeability checks.
+///
+/// When `check_mergeability` is enabled, receive runs in analysis-only mode and
+/// reports whether diverged refs would merge cleanly. Target refs are not updated.
+pub fn receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
+    bundle_input_path: &Path,
+    receiver_repo_path: &Path,
+    options: ReceiveBundleOptions,
+    integrate_policy: ReceiveIntegratePolicy,
+    incoming_as_branches: bool,
+    check_mergeability: bool,
+) -> Result<ReceiveBundleResult> {
     if options.verify_metadata {
         verify_bundle_metadata_integrity_input(bundle_input_path)?;
     }
@@ -126,6 +152,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror(
             options.dry_run,
             integrate_policy,
             incoming_as_branches,
+            check_mergeability,
         )
     } else {
         receive_bundle(
@@ -134,6 +161,7 @@ pub fn receive_bundle_input_with_options_policy_and_branch_mirror(
             options.dry_run,
             integrate_policy,
             incoming_as_branches,
+            check_mergeability,
         )
     }
 }
@@ -181,7 +209,9 @@ fn receive_bundle(
     dry_run: bool,
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
+    check_mergeability: bool,
 ) -> Result<ReceiveBundleResult> {
+    let analysis_only = dry_run || check_mergeability;
     let inspection = inspect_bundle(bundle_path)?;
     if inspection.heads.is_empty() {
         bail!("bundle does not contain any heads to import");
@@ -200,7 +230,12 @@ fn receive_bundle(
     if all_heads_already_applied {
         let incoming_refs = incoming_head_refs(&inspection.heads, &bundle_id);
         let preflight_plan = compute_receive_plan(&repo, &incoming_refs)?;
-        if !dry_run {
+        let mergeability_checks = if check_mergeability {
+            compute_receive_mergeability_checks(&repo, &preflight_plan)?
+        } else {
+            Vec::new()
+        };
+        if !analysis_only {
             write_incoming_namespace_refs(
                 &repo,
                 &inspection.heads,
@@ -214,11 +249,12 @@ fn receive_bundle(
             can_apply_without_conflicts: true,
             apply_backend: None,
             preflight_plan,
+            mergeability_checks,
             line_stats: Vec::new(),
         });
     }
 
-    if dry_run {
+    if analysis_only {
         // Dry-run operates on a temporary mirror so we can safely import and diff.
         let temp_repo = TempBareRepo::from_existing(receiver_repo_path)?;
         let dry_run_repo = git2::Repository::open_bare(&temp_repo.path)?;
@@ -228,8 +264,10 @@ fn receive_bundle(
             &inspection.heads,
             integrate_policy,
             incoming_as_branches,
+            check_mergeability,
         )?;
         let preflight_plan = apply_result.preflight_plan;
+        let mergeability_checks = apply_result.mergeability_checks;
         let line_stats = collect_bundle_line_stats(&dry_run_repo, &inspection)?;
         let can_apply_without_conflicts = !preflight_plan
             .iter()
@@ -241,6 +279,7 @@ fn receive_bundle(
             can_apply_without_conflicts,
             apply_backend: None,
             preflight_plan,
+            mergeability_checks,
             line_stats,
         });
     }
@@ -251,8 +290,10 @@ fn receive_bundle(
         &inspection.heads,
         integrate_policy,
         incoming_as_branches,
+        check_mergeability,
     )?;
     let preflight_plan = apply_result.preflight_plan;
+    let mergeability_checks = apply_result.mergeability_checks;
     let can_apply_without_conflicts = !preflight_plan
         .iter()
         .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
@@ -263,6 +304,7 @@ fn receive_bundle(
         can_apply_without_conflicts,
         apply_backend: apply_result.apply_backend,
         preflight_plan,
+        mergeability_checks,
         line_stats: Vec::new(),
     })
 }
@@ -279,6 +321,7 @@ fn apply_bundle_to_repo(
     heads: &[BundleHead],
     integrate_policy: ReceiveIntegratePolicy,
     incoming_as_branches: bool,
+    check_mergeability: bool,
 ) -> Result<ApplyBundleToRepoResult> {
     let bundle_bytes = fs::read(bundle_path)?;
     let parsed_bundle = parse_bundle_payload(&bundle_bytes)?;
@@ -304,11 +347,21 @@ fn apply_bundle_to_repo(
     let incoming_refs =
         write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
     let preflight_plan = compute_receive_plan(repo, &incoming_refs)?;
-    validate_receive_plan(&preflight_plan, integrate_policy)?;
-    let apply_backend = apply_receive_plan(repo, &preflight_plan, integrate_policy)?;
+    let mergeability_checks = if check_mergeability {
+        compute_receive_mergeability_checks(repo, &preflight_plan)?
+    } else {
+        Vec::new()
+    };
+    let apply_backend = if check_mergeability {
+        None
+    } else {
+        validate_receive_plan(&preflight_plan, integrate_policy)?;
+        apply_receive_plan(repo, &preflight_plan, integrate_policy)?
+    };
 
     Ok(ApplyBundleToRepoResult {
         preflight_plan,
+        mergeability_checks,
         apply_backend,
     })
 }
@@ -417,6 +470,71 @@ fn compute_receive_plan(
         });
     }
     Ok(plan)
+}
+
+/// Computes mergeability simulation results for diverged preflight rows.
+fn compute_receive_mergeability_checks(
+    repo: &git2::Repository,
+    preflight_plan: &[ReceivePlanEntry],
+) -> Result<Vec<ReceiveMergeabilityCheck>> {
+    let mut checks = Vec::new();
+    for row in preflight_plan {
+        if row.status != ReceivePlanStatus::DivergedMergeRequired {
+            continue;
+        }
+
+        let Some(target_oid) = row.target_oid else {
+            checks.push(ReceiveMergeabilityCheck {
+                target_ref: row.target_ref.clone(),
+                target_oid: None,
+                incoming_oid: row.incoming_oid,
+                merge_base_oid: row.merge_base_oid,
+                status: ReceiveMergeabilityStatus::Unknown,
+                detail: Some("target oid unavailable for merge simulation".to_string()),
+            });
+            continue;
+        };
+
+        let (status, detail) = match evaluate_mergeability(repo, target_oid, row.incoming_oid) {
+            Ok((status, detail)) => (status, detail),
+            Err(err) => (
+                ReceiveMergeabilityStatus::Unknown,
+                Some(format!("merge simulation failed: {err}")),
+            ),
+        };
+        checks.push(ReceiveMergeabilityCheck {
+            target_ref: row.target_ref.clone(),
+            target_oid: Some(target_oid),
+            incoming_oid: row.incoming_oid,
+            merge_base_oid: row.merge_base_oid,
+            status,
+            detail,
+        });
+    }
+
+    Ok(checks)
+}
+
+/// Evaluates mergeability for two commits without creating a merge commit.
+fn evaluate_mergeability(
+    repo: &git2::Repository,
+    target_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+) -> Result<(ReceiveMergeabilityStatus, Option<String>)> {
+    let target_commit = repo.find_commit(target_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+    let index = repo.merge_commits(&target_commit, &incoming_commit, None)?;
+    if index.has_conflicts() {
+        Ok((
+            ReceiveMergeabilityStatus::Conflicted,
+            Some("merge simulation produced index conflicts".to_string()),
+        ))
+    } else {
+        Ok((
+            ReceiveMergeabilityStatus::Clean,
+            Some("merge simulation completed without conflicts".to_string()),
+        ))
+    }
 }
 
 /// Validates an integration plan under the selected policy.
@@ -1035,6 +1153,7 @@ fn with_imported_bundle_input_repo<T>(
             &inspection.heads,
             ReceiveIntegratePolicy::CreateRefsOnly,
             false,
+            false,
         )?;
         inspection
     } else {
@@ -1044,6 +1163,7 @@ fn with_imported_bundle_input_repo<T>(
             bundle_input_path,
             &inspection.heads,
             ReceiveIntegratePolicy::CreateRefsOnly,
+            false,
             false,
         )?;
         inspection

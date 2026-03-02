@@ -11,9 +11,10 @@ use std::path::PathBuf;
 
 use crate::cli::{OutputFormat, ReceiveIntegratePolicy as CliReceiveIntegratePolicy};
 use crate::git::{
-    BundleVersion, ReceiveBundleOptions, ReceiveIntegratePolicy, ReceivePlanEntry,
-    receive_bundle_input, receive_bundle_input_with_options_and_policy,
+    BundleVersion, ReceiveBundleOptions, ReceiveIntegratePolicy, ReceiveMergeabilityCheck,
+    ReceivePlanEntry, receive_bundle_input, receive_bundle_input_with_options_and_policy,
     receive_bundle_input_with_options_policy_and_branch_mirror,
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check,
 };
 
 pub(super) fn run(
@@ -23,9 +24,11 @@ pub(super) fn run(
     dry_run: bool,
     integrate: CliReceiveIntegratePolicy,
     incoming_as_branches: bool,
+    check_mergeability: bool,
     format: Option<OutputFormat>,
 ) -> Result<()> {
-    if !dry_run && format.is_some() {
+    let effective_dry_run = dry_run || check_mergeability;
+    if !effective_dry_run && format.is_some() {
         bail!("receive --format is supported only with --dry-run");
     }
 
@@ -35,17 +38,30 @@ pub(super) fn run(
     };
     let result = if !incoming_as_branches
         && !verify_metadata
-        && !dry_run
+        && !effective_dry_run
         && integrate_policy == ReceiveIntegratePolicy::FastForwardOnly
+        && !check_mergeability
     {
         receive_bundle_input(&bundle, &repo)?
+    } else if check_mergeability {
+        receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check(
+            &bundle,
+            &repo,
+            ReceiveBundleOptions {
+                verify_metadata,
+                dry_run: effective_dry_run,
+            },
+            integrate_policy,
+            incoming_as_branches,
+            true,
+        )?
     } else if incoming_as_branches {
         receive_bundle_input_with_options_policy_and_branch_mirror(
             &bundle,
             &repo,
             ReceiveBundleOptions {
                 verify_metadata,
-                dry_run,
+                dry_run: effective_dry_run,
             },
             integrate_policy,
             incoming_as_branches,
@@ -56,7 +72,7 @@ pub(super) fn run(
             &repo,
             ReceiveBundleOptions {
                 verify_metadata,
-                dry_run,
+                dry_run: effective_dry_run,
             },
             integrate_policy,
         )?
@@ -67,12 +83,12 @@ pub(super) fn run(
         BundleVersion::V3 => "v3",
     };
 
-    if dry_run && matches!(format, Some(OutputFormat::Json)) {
+    if effective_dry_run && matches!(format, Some(OutputFormat::Json)) {
         println!("{}", render_dry_run_json(version, &result));
         return Ok(());
     }
 
-    if dry_run {
+    if effective_dry_run {
         println!(
             "bundle can be applied without conflicts: version={}, would_import_heads={}",
             version,
@@ -91,19 +107,25 @@ pub(super) fn run(
     }
 
     render_preflight_plan(&result.preflight_plan);
-    render_plan_actions(&result.preflight_plan, integrate_policy, dry_run);
+    render_plan_actions(&result.preflight_plan, integrate_policy, effective_dry_run);
+    render_mergeability_checks(&result.mergeability_checks, check_mergeability);
     render_plan_outcome(
         &result.preflight_plan,
         integrate_policy,
-        dry_run,
+        effective_dry_run,
         result.can_apply_without_conflicts,
         result.apply_backend,
+        check_mergeability,
     );
 
-    if dry_run {
+    if effective_dry_run {
         render_dry_run_line_stats(&result.line_stats);
         println!();
-        println!("dry-run completed successfully.");
+        if check_mergeability {
+            println!("mergeability check completed successfully.");
+        } else {
+            println!("dry-run completed successfully.");
+        }
     } else {
         println!();
         println!("receive completed successfully.");
@@ -140,11 +162,27 @@ fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) 
         })
         .collect::<Vec<_>>();
 
+    let mergeability_rows = result
+        .mergeability_checks
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "target_ref": row.target_ref,
+                "target_oid": row.target_oid.map(|oid| oid.to_string()),
+                "incoming_oid": row.incoming_oid.to_string(),
+                "merge_base_oid": row.merge_base_oid.map(|oid| oid.to_string()),
+                "status": row.status.as_str(),
+                "detail": row.detail,
+            })
+        })
+        .collect::<Vec<_>>();
+
     serde_json::to_string_pretty(&serde_json::json!({
         "bundle_version": version,
         "would_import_heads": result.imported_heads.len(),
         "can_apply_without_conflicts": result.can_apply_without_conflicts,
         "preflight_plan": plan_rows,
+        "mergeability_checks": mergeability_rows,
         "line_stats": line_rows,
     }))
     .expect("receive dry-run json rendering should always be serializable")
@@ -203,6 +241,7 @@ fn render_plan_outcome(
     dry_run: bool,
     can_apply_without_conflicts: bool,
     apply_backend: Option<crate::git::ReceiveApplyBackend>,
+    check_mergeability: bool,
 ) {
     let mut already_present = 0usize;
     let mut target_missing = 0usize;
@@ -233,7 +272,9 @@ fn render_plan_outcome(
     );
 
     if dry_run {
-        if can_apply_without_conflicts {
+        if check_mergeability {
+            println!("result : mergeability analysis finished; target refs were not updated.");
+        } else if can_apply_without_conflicts {
             println!("result : dry-run passed; the selected policy can be applied safely.");
         } else {
             println!(
@@ -271,6 +312,51 @@ fn render_plan_outcome(
                 policy_label
             );
         }
+    }
+}
+
+fn render_mergeability_checks(checks: &[ReceiveMergeabilityCheck], check_requested: bool) {
+    if !check_requested {
+        return;
+    }
+
+    println!();
+    println!("mergeability checks:");
+
+    if checks.is_empty() {
+        println!("no diverged refs detected; merge simulation was not needed.");
+        return;
+    }
+
+    for (index, row) in checks.iter().enumerate() {
+        println!("[{}/{}] {}", index + 1, checks.len(), row.target_ref);
+        println!(
+            "  status       : {} ({})",
+            receive_mergeability_status_label(row.status),
+            row.status.as_str()
+        );
+        println!(
+            "  target oid   : {}",
+            format_optional_short_oid(row.target_oid)
+        );
+        println!("  incoming oid : {}", short_oid(row.incoming_oid));
+        println!(
+            "  merge base   : {}",
+            format_optional_short_oid(row.merge_base_oid)
+        );
+        if let Some(detail) = &row.detail {
+            println!("  detail       : {}", detail);
+        }
+    }
+}
+
+fn receive_mergeability_status_label(
+    status: crate::git::ReceiveMergeabilityStatus,
+) -> &'static str {
+    match status {
+        crate::git::ReceiveMergeabilityStatus::Clean => "would merge cleanly",
+        crate::git::ReceiveMergeabilityStatus::Conflicted => "would conflict",
+        crate::git::ReceiveMergeabilityStatus::Unknown => "unknown (check failed)",
     }
 }
 

@@ -153,3 +153,29 @@ fn receive_parses_dry_run_json_output_format() {
         "receive --format json should map to OutputFormat::Json"
     );
 }
+
+// Verifies that `receive --check-mergeability` toggles mergeability simulation mode.
+#[test]
+fn receive_parses_check_mergeability_flag() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "receive",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--check-mergeability",
+    ])
+    .expect("receive with --check-mergeability should parse");
+
+    let Some(Command::Receive {
+        check_mergeability, ..
+    }) = cli.command
+    else {
+        panic!("expected parsed receive command");
+    };
+    assert!(
+        check_mergeability,
+        "receive --check-mergeability should enable mergeability simulation mode"
+    );
+}

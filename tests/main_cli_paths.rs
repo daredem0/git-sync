@@ -1180,6 +1180,91 @@ fn receive_integrate_fast_forward_only_fails_for_diverged_target() {
     );
 }
 
+// Verifies that `receive --check-mergeability` reports merge simulation results for diverged refs
+// without updating target refs.
+#[test]
+fn receive_check_mergeability_reports_diverged_ref_merge_status_without_mutating_receiver() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-mergeability-check");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init mergeability-check receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_diverged_commit_on_bare_repo(&receiver, &base_oid, "receiver-side diverged\n");
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "fast-forward-only",
+            "--check-mergeability",
+        ],
+        None,
+    );
+    assert_success(&output, "receive check-mergeability on diverged target");
+    let text = output_text(&output);
+    assert!(
+        text.contains("mergeability checks:"),
+        "mergeability mode should render mergeability checks section"
+    );
+    assert!(
+        text.contains("(conflicted)") || text.contains("(clean)") || text.contains("(unknown)"),
+        "mergeability checks should include a machine-stable mergeability status"
+    );
+    assert!(
+        text.contains("result : mergeability analysis finished; target refs were not updated."),
+        "mergeability mode should clearly state that target refs were not updated"
+    );
+    assert!(
+        text.contains("mergeability check completed successfully."),
+        "mergeability mode should end with a dedicated success message"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "mergeability mode must not modify the receiver target ref"
+    );
+    assert!(
+        find_incoming_ref_target(&receiver, "refs/tags/sync/tip").is_none(),
+        "mergeability mode should not write incoming namespace refs in the real receiver"
+    );
+}
+
 // Verifies that fast-forward-only validates all planned head updates before mutating target refs.
 // If any head is diverged, target refs are left untouched (all-or-none target integration),
 // while incoming namespace refs are still preserved for manual follow-up.

@@ -31,6 +31,8 @@ pub struct ReceiveBundleResult {
     pub apply_backend: Option<ReceiveApplyBackend>,
     /// Deterministic preflight integration plan for each imported head.
     pub preflight_plan: Vec<ReceivePlanEntry>,
+    /// Optional mergeability check results for diverged refs.
+    pub mergeability_checks: Vec<ReceiveMergeabilityCheck>,
     /// Per-file additions/deletions produced during dry-run analysis.
     pub line_stats: Vec<FileLineStat>,
 }
@@ -42,6 +44,45 @@ pub enum ReceiveApplyBackend {
     RefTransaction,
     /// Uses sequential compare-and-swap updates with rollback-on-failure.
     ManualCasRollback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Mergeability classification for a diverged target/incoming pair.
+pub enum ReceiveMergeabilityStatus {
+    /// Merge simulation completed without index conflicts.
+    Clean,
+    /// Merge simulation completed with index conflicts.
+    Conflicted,
+    /// Merge simulation could not be completed (for example due to missing base data).
+    Unknown,
+}
+
+impl ReceiveMergeabilityStatus {
+    /// Returns a stable machine-friendly label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Clean => "clean",
+            Self::Conflicted => "conflicted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Mergeability check result for one diverged receive target.
+pub struct ReceiveMergeabilityCheck {
+    /// Target ref evaluated by mergeability simulation.
+    pub target_ref: String,
+    /// Current target OID.
+    pub target_oid: Option<git2::Oid>,
+    /// Incoming OID.
+    pub incoming_oid: git2::Oid,
+    /// Merge-base OID if one was found.
+    pub merge_base_oid: Option<git2::Oid>,
+    /// Mergeability outcome.
+    pub status: ReceiveMergeabilityStatus,
+    /// Optional diagnostic detail for unknown/error cases.
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

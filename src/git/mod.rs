@@ -24,7 +24,9 @@ pub(crate) use bundle::{
     create_bundle, create_bundle_with_options, inspect_bundle, open_payload_session,
     payload_audit_from_session, receive_bundle_input, receive_bundle_input_with_options,
     receive_bundle_input_with_options_and_policy,
-    receive_bundle_input_with_options_policy_and_branch_mirror, remove_unarchived_bundle_artifacts,
+    receive_bundle_input_with_options_policy_and_branch_mirror,
+    receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check,
+    remove_unarchived_bundle_artifacts,
 };
 pub(crate) use context::open_context;
 pub(crate) use metadata::verify_bundle_metadata_against_repo_input;
@@ -34,8 +36,8 @@ pub(crate) use types::{
     OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit,
     PayloadAuditDocument, PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry,
     PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveApplyBackend,
-    ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy, ReceivePlanEntry,
-    ReceivePlanStatus, ResolutionSource,
+    ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy, ReceiveMergeabilityCheck,
+    ReceiveMergeabilityStatus, ReceivePlanEntry, ReceivePlanStatus, ResolutionSource,
 };
 
 #[cfg(test)]
