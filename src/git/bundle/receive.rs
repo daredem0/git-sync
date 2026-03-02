@@ -25,14 +25,31 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::{
     Mutex, MutexGuard,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 static FORCE_MANUAL_CAS_APPLY: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
+static MANUAL_CAS_FAIL_AT_UPDATE_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
+static TRANSACTION_INJECT_COMMIT_FAILURE: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
 static FORCE_MANUAL_CAS_MUTEX: Mutex<()> = Mutex::new(());
+#[cfg(test)]
+static MANUAL_CAS_MUTATE_BEFORE_CHECK: Mutex<Option<ManualCasMutationBeforeCheck>> =
+    Mutex::new(None);
+#[cfg(test)]
+static ROLLBACK_FAIL_FOR_REF: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+struct ManualCasMutationBeforeCheck {
+    update_index: usize,
+    ref_name: String,
+    mutate_to_oid: Option<git2::Oid>,
+}
 
 /// Test-only guard to force receive to use manual CAS apply backend.
 #[cfg(test)]
@@ -44,16 +61,47 @@ pub(crate) struct ForcedManualCasGuard {
 impl Drop for ForcedManualCasGuard {
     fn drop(&mut self) {
         FORCE_MANUAL_CAS_APPLY.store(false, Ordering::SeqCst);
+        MANUAL_CAS_FAIL_AT_UPDATE_INDEX.store(usize::MAX, Ordering::SeqCst);
+        TRANSACTION_INJECT_COMMIT_FAILURE.store(false, Ordering::SeqCst);
+        *MANUAL_CAS_MUTATE_BEFORE_CHECK
+            .lock()
+            .expect("manual-cas mutation config mutex should not be poisoned") = None;
+        *ROLLBACK_FAIL_FOR_REF
+            .lock()
+            .expect("rollback fault config mutex should not be poisoned") = None;
     }
 }
 
 /// Enables manual-CAS backend forcing for deterministic fallback-path tests.
 #[cfg(test)]
 pub(crate) fn force_manual_cas_for_tests() -> ForcedManualCasGuard {
+    configure_fault_injection_for_tests(true, None, None, None, false)
+}
+
+#[cfg(test)]
+fn configure_fault_injection_for_tests(
+    force_manual_cas: bool,
+    manual_cas_fail_at_update_index: Option<usize>,
+    manual_cas_mutate_before_check: Option<ManualCasMutationBeforeCheck>,
+    rollback_fail_for_ref: Option<String>,
+    transaction_inject_commit_failure: bool,
+) -> ForcedManualCasGuard {
     let lock = FORCE_MANUAL_CAS_MUTEX
         .lock()
         .expect("manual-cas test mutex should not be poisoned");
-    FORCE_MANUAL_CAS_APPLY.store(true, Ordering::SeqCst);
+    FORCE_MANUAL_CAS_APPLY.store(force_manual_cas, Ordering::SeqCst);
+    MANUAL_CAS_FAIL_AT_UPDATE_INDEX.store(
+        manual_cas_fail_at_update_index.unwrap_or(usize::MAX),
+        Ordering::SeqCst,
+    );
+    TRANSACTION_INJECT_COMMIT_FAILURE.store(transaction_inject_commit_failure, Ordering::SeqCst);
+    *MANUAL_CAS_MUTATE_BEFORE_CHECK
+        .lock()
+        .expect("manual-cas mutation config mutex should not be poisoned") =
+        manual_cas_mutate_before_check;
+    *ROLLBACK_FAIL_FOR_REF
+        .lock()
+        .expect("rollback fault config mutex should not be poisoned") = rollback_fail_for_ref;
     ForcedManualCasGuard { _lock: lock }
 }
 
@@ -904,6 +952,20 @@ fn apply_ref_updates_with_transaction(
             })?;
     }
 
+    #[cfg(test)]
+    if TRANSACTION_INJECT_COMMIT_FAILURE.load(Ordering::SeqCst) {
+        let applied_updates = detect_applied_updates(repo, updates);
+        let rollback = rollback_applied_updates(repo, &applied_updates);
+        bail!(format_apply_failure(
+            "ref_transaction",
+            "transaction commit failed",
+            None,
+            "injected transaction commit failure",
+            &applied_updates,
+            &rollback,
+        ));
+    }
+
     if let Err(err) = transaction.commit() {
         let applied_updates = detect_applied_updates(repo, updates);
         let rollback = rollback_applied_updates(repo, &applied_updates);
@@ -926,7 +988,13 @@ fn apply_ref_updates_with_manual_cas(
     updates: &[PlannedRefUpdate],
 ) -> Result<()> {
     let mut applied_updates = Vec::<PlannedRefUpdate>::new();
-    for update in updates {
+    for (update_index, update) in updates.iter().enumerate() {
+        #[cfg(not(test))]
+        let _ = update_index;
+
+        #[cfg(test)]
+        maybe_inject_manual_cas_mutation_before_check(repo, update_index)?;
+
         if let Err(err) = ensure_expected_ref_target(repo, update) {
             let rollback = rollback_applied_updates(repo, &applied_updates);
             bail!(format_apply_failure(
@@ -934,6 +1002,19 @@ fn apply_ref_updates_with_manual_cas(
                 "CAS precondition failed",
                 Some(&update.ref_name),
                 &err.to_string(),
+                &applied_updates,
+                &rollback,
+            ));
+        }
+
+        #[cfg(test)]
+        if MANUAL_CAS_FAIL_AT_UPDATE_INDEX.load(Ordering::SeqCst) == update_index {
+            let rollback = rollback_applied_updates(repo, &applied_updates);
+            bail!(format_apply_failure(
+                "manual_cas_rollback",
+                "target update failed",
+                Some(&update.ref_name),
+                "injected manual-cas update failure",
                 &applied_updates,
                 &rollback,
             ));
@@ -974,6 +1055,42 @@ fn apply_ref_updates_with_manual_cas(
         applied_updates.push(update.clone());
     }
 
+    Ok(())
+}
+
+#[cfg(test)]
+fn maybe_inject_manual_cas_mutation_before_check(
+    repo: &git2::Repository,
+    update_index: usize,
+) -> Result<()> {
+    let mut configured = MANUAL_CAS_MUTATE_BEFORE_CHECK
+        .lock()
+        .expect("manual-cas mutation config mutex should not be poisoned");
+    let Some(mutation) = configured.clone() else {
+        return Ok(());
+    };
+    if mutation.update_index != update_index {
+        return Ok(());
+    }
+
+    match mutation.mutate_to_oid {
+        Some(oid) => {
+            repo.reference(
+                &mutation.ref_name,
+                oid,
+                true,
+                "receive fault injection: mutate ref before CAS precondition check",
+            )?;
+        }
+        None => match repo.find_reference(&mutation.ref_name) {
+            Ok(mut reference) => {
+                reference.delete()?;
+            }
+            Err(err) if err.code() == git2::ErrorCode::NotFound => {}
+            Err(err) => return Err(err.into()),
+        },
+    }
+    *configured = None;
     Ok(())
 }
 
@@ -1030,6 +1147,15 @@ fn rollback_applied_updates(
             continue;
         }
 
+        #[cfg(test)]
+        if should_inject_rollback_failure_for_ref(&update.ref_name) {
+            outcome.failed_refs.push((
+                update.ref_name.clone(),
+                "injected rollback failure".to_string(),
+            ));
+            continue;
+        }
+
         match update.expected_old_oid {
             Some(old_oid) => {
                 if let Err(err) = repo.reference(
@@ -1066,6 +1192,17 @@ fn rollback_applied_updates(
     }
 
     outcome
+}
+
+#[cfg(test)]
+fn should_inject_rollback_failure_for_ref(ref_name: &str) -> bool {
+    let configured = ROLLBACK_FAIL_FOR_REF
+        .lock()
+        .expect("rollback fault config mutex should not be poisoned");
+    let Some(configured_ref) = configured.as_deref() else {
+        return false;
+    };
+    configured_ref == ref_name || configured_ref == "*"
 }
 
 /// Formats a detailed failure report for receive target-update failures.
@@ -1647,6 +1784,49 @@ mod tests {
             .expect("must create commit")
     }
 
+    fn build_two_ref_update_fixture(
+        suffix: &str,
+    ) -> (
+        PathBuf,
+        git2::Repository,
+        Vec<PlannedRefUpdate>,
+        git2::Oid,
+        git2::Oid,
+        git2::Oid,
+        git2::Oid,
+    ) {
+        let repo_path = temp_bare_repo_path(suffix);
+        std::fs::create_dir_all(&repo_path).expect("must create repo path");
+        let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+        let main_old = commit_from_content(&repo, "main old", "main-old", &[]);
+        let main_new = commit_from_content(&repo, "main new", "main-new", &[main_old]);
+        let side_old = commit_from_content(&repo, "side old", "side-old", &[main_old]);
+        let side_new = commit_from_content(&repo, "side new", "side-new", &[side_old]);
+
+        repo.reference("refs/heads/main", main_old, true, "seed main old")
+            .expect("must seed main old ref");
+        repo.reference("refs/heads/side", side_old, true, "seed side old")
+            .expect("must seed side old ref");
+
+        let updates = vec![
+            PlannedRefUpdate {
+                ref_name: "refs/heads/main".to_string(),
+                expected_old_oid: Some(main_old),
+                new_oid: main_new,
+            },
+            PlannedRefUpdate {
+                ref_name: "refs/heads/side".to_string(),
+                expected_old_oid: Some(side_old),
+                new_oid: side_new,
+            },
+        ];
+
+        (
+            repo_path, repo, updates, main_old, main_new, side_old, side_new,
+        )
+    }
+
     #[test]
     fn rollback_applied_updates_restores_existing_target_refs() {
         let repo_path = temp_bare_repo_path("restore-existing");
@@ -1716,6 +1896,172 @@ mod tests {
                 .iter()
                 .any(|ref_name| ref_name == "refs/heads/new-target"),
             "rollback should record deleted refs"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn manual_cas_injected_second_update_failure_rolls_back_first_update() {
+        let (repo_path, repo, updates, main_old, _main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-fail-index");
+
+        let _fault = configure_fault_injection_for_tests(true, Some(1), None, None, false);
+        let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+        assert!(
+            result.is_err(),
+            "injected manual-cas update fault should fail the apply path"
+        );
+        let err_text = result
+            .expect_err("manual-cas apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected manual-cas update failure"),
+            "failure diagnostics should include injected manual-cas reason"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "failed second update should roll back first updated ref to its old target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "failing second update should leave second target at old value"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn manual_cas_injected_precondition_race_rolls_back_applied_updates() {
+        let (repo_path, repo, updates, main_old, _main_new, _side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-precondition-race");
+
+        let side_race = commit_from_content(&repo, "side race", "side-race", &[main_old]);
+        let mutation = ManualCasMutationBeforeCheck {
+            update_index: 1,
+            ref_name: "refs/heads/side".to_string(),
+            mutate_to_oid: Some(side_race),
+        };
+        let _fault = configure_fault_injection_for_tests(true, None, Some(mutation), None, false);
+        let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+        assert!(
+            result.is_err(),
+            "injected precondition-race mutation should fail manual-cas apply"
+        );
+        let err_text = result
+            .expect_err("manual-cas apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("CAS precondition failed"),
+            "failure should be reported as CAS precondition violation"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "manual-cas precondition race should roll back previously applied refs"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_race),
+            "injected external mutation should remain in place for non-applied update refs"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn manual_cas_injected_rollback_failure_is_reported_explicitly() {
+        let (repo_path, repo, updates, _main_old, main_new, side_old, _side_new) =
+            build_two_ref_update_fixture("manual-cas-rollback-failure");
+
+        let _fault = configure_fault_injection_for_tests(
+            true,
+            Some(1),
+            None,
+            Some("refs/heads/main".to_string()),
+            false,
+        );
+        let result = apply_ref_updates_with_manual_cas(&repo, &updates);
+        assert!(
+            result.is_err(),
+            "manual-cas failure with injected rollback failure should return an error"
+        );
+        let err_text = result
+            .expect_err("manual-cas apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("rollback failures:"),
+            "failure diagnostics should include rollback-failures section"
+        );
+        assert!(
+            err_text.contains("injected rollback failure"),
+            "failure diagnostics should include injected rollback-failure reason"
+        );
+        assert!(
+            err_text.contains("refs/heads/main"),
+            "failure diagnostics should include the ref that failed to roll back"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_new),
+            "when rollback fails, first applied update should remain at new target"
+        );
+        let side_target =
+            resolve_reference_target(&repo, "refs/heads/side").expect("must resolve side");
+        assert_eq!(
+            side_target,
+            Some(side_old),
+            "second non-applied update should remain at old target"
+        );
+
+        let _ = std::fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn transaction_injected_commit_failure_reports_and_preserves_targets() {
+        let (repo_path, repo, updates, main_old, _main_new, _side_old, _side_new) =
+            build_two_ref_update_fixture("transaction-commit-failure");
+
+        let _fault = configure_fault_injection_for_tests(false, None, None, None, true);
+        let tx = repo.transaction().expect("must open transaction");
+        let result = apply_ref_updates_with_transaction(&repo, tx, &[updates[0].clone()]);
+        assert!(
+            result.is_err(),
+            "injected transaction commit failure should fail transactional apply path"
+        );
+        let err_text = result
+            .expect_err("transaction apply should fail")
+            .to_string();
+        assert!(
+            err_text.contains("injected transaction commit failure"),
+            "failure diagnostics should include injected transaction failure reason"
+        );
+        assert!(
+            err_text.contains("unable to apply receive target updates (ref_transaction)"),
+            "failure diagnostics should include transaction backend context"
+        );
+
+        let main_target =
+            resolve_reference_target(&repo, "refs/heads/main").expect("must resolve main");
+        assert_eq!(
+            main_target,
+            Some(main_old),
+            "injected transaction failure should preserve target refs"
         );
 
         let _ = std::fs::remove_dir_all(repo_path);
