@@ -99,6 +99,36 @@ fn receive_parses_create_refs_only_integration_policy() {
     );
 }
 
+// Verifies that `receive --integrate merge` parses and maps to the expected enum.
+#[test]
+fn receive_parses_merge_integration_policy() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "receive",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--integrate",
+        "merge",
+    ])
+    .expect("receive command with explicit merge integration policy should parse");
+
+    let Some(Command::Receive {
+        integrate,
+        incoming_as_branches,
+        ..
+    }) = cli.command
+    else {
+        panic!("expected parsed receive command");
+    };
+    assert_eq!(integrate, ReceiveIntegratePolicy::Merge);
+    assert!(
+        !incoming_as_branches,
+        "incoming branch mirroring should remain disabled when flag is not set"
+    );
+}
+
 // Verifies that `receive --incoming-as-branches` enables incoming branch mirroring.
 #[test]
 fn receive_parses_incoming_as_branches_flag() {

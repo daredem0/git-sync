@@ -230,11 +230,14 @@ fn receive_bundle(
     if all_heads_already_applied {
         let incoming_refs = incoming_head_refs(&inspection.heads, &bundle_id);
         let preflight_plan = compute_receive_plan(&repo, &incoming_refs)?;
-        let mergeability_checks = if check_mergeability {
-            compute_receive_mergeability_checks(&repo, &preflight_plan)?
-        } else {
-            Vec::new()
-        };
+        let mergeability_checks =
+            if check_mergeability || integrate_policy == ReceiveIntegratePolicy::Merge {
+                compute_receive_mergeability_checks(&repo, &preflight_plan)?
+            } else {
+                Vec::new()
+            };
+        let can_apply_without_conflicts =
+            can_apply_receive_plan(&preflight_plan, integrate_policy, &mergeability_checks);
         if !analysis_only {
             write_incoming_namespace_refs(
                 &repo,
@@ -246,7 +249,7 @@ fn receive_bundle(
         return Ok(ReceiveBundleResult {
             bundle_version: inspection.version,
             imported_heads: inspection.heads,
-            can_apply_without_conflicts: true,
+            can_apply_without_conflicts,
             apply_backend: None,
             preflight_plan,
             mergeability_checks,
@@ -269,9 +272,8 @@ fn receive_bundle(
         let preflight_plan = apply_result.preflight_plan;
         let mergeability_checks = apply_result.mergeability_checks;
         let line_stats = collect_bundle_line_stats(&dry_run_repo, &inspection)?;
-        let can_apply_without_conflicts = !preflight_plan
-            .iter()
-            .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
+        let can_apply_without_conflicts =
+            can_apply_receive_plan(&preflight_plan, integrate_policy, &mergeability_checks);
 
         return Ok(ReceiveBundleResult {
             bundle_version: inspection.version,
@@ -294,9 +296,8 @@ fn receive_bundle(
     )?;
     let preflight_plan = apply_result.preflight_plan;
     let mergeability_checks = apply_result.mergeability_checks;
-    let can_apply_without_conflicts = !preflight_plan
-        .iter()
-        .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired);
+    let can_apply_without_conflicts =
+        can_apply_receive_plan(&preflight_plan, integrate_policy, &mergeability_checks);
 
     Ok(ReceiveBundleResult {
         bundle_version: inspection.version,
@@ -347,16 +348,23 @@ fn apply_bundle_to_repo(
     let incoming_refs =
         write_incoming_namespace_refs(repo, heads, &bundle_id, incoming_as_branches)?;
     let preflight_plan = compute_receive_plan(repo, &incoming_refs)?;
-    let mergeability_checks = if check_mergeability {
-        compute_receive_mergeability_checks(repo, &preflight_plan)?
-    } else {
-        Vec::new()
-    };
+    let mergeability_checks =
+        if check_mergeability || integrate_policy == ReceiveIntegratePolicy::Merge {
+            compute_receive_mergeability_checks(repo, &preflight_plan)?
+        } else {
+            Vec::new()
+        };
     let apply_backend = if check_mergeability {
         None
     } else {
-        validate_receive_plan(&preflight_plan, integrate_policy)?;
-        apply_receive_plan(repo, &preflight_plan, integrate_policy)?
+        validate_receive_plan(&preflight_plan, integrate_policy, &mergeability_checks)?;
+        apply_receive_plan(
+            repo,
+            &preflight_plan,
+            integrate_policy,
+            &bundle_id,
+            &mergeability_checks,
+        )?
     };
 
     Ok(ApplyBundleToRepoResult {
@@ -434,6 +442,14 @@ fn incoming_branch_ref_name(bundle_id: &str, head_reference: &str) -> String {
         .strip_prefix("refs/")
         .unwrap_or(head_reference);
     format!("refs/heads/incoming/{bundle_id}/{suffix}")
+}
+
+/// Builds one merge-test ref name for a bundle head reference.
+fn merge_test_ref_name(bundle_id: &str, head_reference: &str) -> String {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    format!("refs/sync/merge-test/{bundle_id}/{suffix}")
 }
 
 /// Computes a deterministic per-head preflight plan for receive integration.
@@ -572,24 +588,133 @@ fn collect_conflict_paths(index: &git2::Index) -> Result<Vec<String>> {
     Ok(paths.into_iter().collect())
 }
 
+/// Creates a merge commit object for merge-policy receive integration.
+fn create_receive_merge_commit(
+    repo: &git2::Repository,
+    target_ref: &str,
+    target_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+) -> Result<git2::Oid> {
+    let target_commit = repo.find_commit(target_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+    let mut index = repo.merge_commits(&target_commit, &incoming_commit, None)?;
+    if index.has_conflicts() {
+        let conflict_paths = collect_conflict_paths(&index)?;
+        let rendered_paths = if conflict_paths.is_empty() {
+            "<none>".to_string()
+        } else {
+            conflict_paths.join(", ")
+        };
+        bail!(
+            "unable to create merge commit for '{}' because merge conflicts were detected: {}",
+            target_ref,
+            rendered_paths
+        );
+    }
+
+    let tree_oid = index.write_tree_to(repo)?;
+    let tree = repo.find_tree(tree_oid)?;
+    let signature = receive_merge_signature(repo)?;
+    let merge_message = format!(
+        "git-sync receive merge for {target_ref}\n\nTarget: {target_oid}\nIncoming: {incoming_oid}\n"
+    );
+    let merge_oid = repo.commit(
+        None,
+        &signature,
+        &signature,
+        &merge_message,
+        &tree,
+        &[&target_commit, &incoming_commit],
+    )?;
+    Ok(merge_oid)
+}
+
+/// Chooses a signature for receive-created merge commits.
+fn receive_merge_signature(repo: &git2::Repository) -> Result<git2::Signature<'static>> {
+    let (name, email) = match repo.signature() {
+        Ok(signature) => (
+            signature.name().unwrap_or("git-sync").to_string(),
+            signature.email().unwrap_or("git-sync@local").to_string(),
+        ),
+        Err(_) => ("git-sync".to_string(), "git-sync@local".to_string()),
+    };
+    Ok(git2::Signature::now(&name, &email)?)
+}
+
 /// Validates an integration plan under the selected policy.
 fn validate_receive_plan(
     preflight_plan: &[ReceivePlanEntry],
     integrate_policy: ReceiveIntegratePolicy,
+    mergeability_checks: &[ReceiveMergeabilityCheck],
 ) -> Result<()> {
-    if matches!(integrate_policy, ReceiveIntegratePolicy::CreateRefsOnly) {
-        return Ok(());
+    match integrate_policy {
+        ReceiveIntegratePolicy::CreateRefsOnly => Ok(()),
+        ReceiveIntegratePolicy::FastForwardOnly => {
+            let diverged = preflight_plan
+                .iter()
+                .filter(|entry| entry.status == ReceivePlanStatus::DivergedMergeRequired)
+                .collect::<Vec<_>>();
+            if !diverged.is_empty() {
+                bail!(format_non_fast_forward_diagnostics(&diverged));
+            }
+            Ok(())
+        }
+        ReceiveIntegratePolicy::Merge => {
+            let mut blocked_rows = Vec::<&ReceivePlanEntry>::new();
+            for row in preflight_plan {
+                if row.status != ReceivePlanStatus::DivergedMergeRequired {
+                    continue;
+                }
+                let mergeability = mergeability_checks
+                    .iter()
+                    .find(|check| check.target_ref == row.target_ref);
+                if !matches!(
+                    mergeability.map(|check| check.status),
+                    Some(ReceiveMergeabilityStatus::Clean)
+                ) {
+                    blocked_rows.push(row);
+                }
+            }
+            if !blocked_rows.is_empty() {
+                bail!(format_merge_policy_diagnostics(
+                    &blocked_rows,
+                    mergeability_checks
+                ));
+            }
+            Ok(())
+        }
     }
+}
 
-    let diverged = preflight_plan
-        .iter()
-        .filter(|entry| entry.status == ReceivePlanStatus::DivergedMergeRequired)
-        .collect::<Vec<_>>();
-    if !diverged.is_empty() {
-        bail!(format_non_fast_forward_diagnostics(&diverged));
+/// Returns whether the current receive plan can be fully applied for a policy.
+fn can_apply_receive_plan(
+    preflight_plan: &[ReceivePlanEntry],
+    integrate_policy: ReceiveIntegratePolicy,
+    mergeability_checks: &[ReceiveMergeabilityCheck],
+) -> bool {
+    match integrate_policy {
+        ReceiveIntegratePolicy::CreateRefsOnly => true,
+        ReceiveIntegratePolicy::FastForwardOnly => !preflight_plan
+            .iter()
+            .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired),
+        ReceiveIntegratePolicy::Merge => {
+            for row in preflight_plan {
+                if row.status != ReceivePlanStatus::DivergedMergeRequired {
+                    continue;
+                }
+                let mergeability = mergeability_checks
+                    .iter()
+                    .find(|check| check.target_ref == row.target_ref);
+                if !matches!(
+                    mergeability.map(|check| check.status),
+                    Some(ReceiveMergeabilityStatus::Clean)
+                ) {
+                    return false;
+                }
+            }
+            true
+        }
     }
-
-    Ok(())
 }
 
 /// Applies validated ref updates according to the selected integration policy.
@@ -597,12 +722,20 @@ fn apply_receive_plan(
     repo: &git2::Repository,
     preflight_plan: &[ReceivePlanEntry],
     integrate_policy: ReceiveIntegratePolicy,
+    bundle_id: &str,
+    mergeability_checks: &[ReceiveMergeabilityCheck],
 ) -> Result<Option<ReceiveApplyBackend>> {
     if matches!(integrate_policy, ReceiveIntegratePolicy::CreateRefsOnly) {
         return Ok(None);
     }
 
-    let updates = planned_ref_updates_from_plan(preflight_plan)?;
+    let updates = planned_ref_updates_from_plan(
+        repo,
+        preflight_plan,
+        integrate_policy,
+        bundle_id,
+        mergeability_checks,
+    )?;
     if updates.is_empty() {
         return Ok(None);
     }
@@ -635,7 +768,11 @@ struct RollbackOutcome {
 
 /// Builds deterministic target-ref update rows from the validated preflight plan.
 fn planned_ref_updates_from_plan(
+    repo: &git2::Repository,
     preflight_plan: &[ReceivePlanEntry],
+    integrate_policy: ReceiveIntegratePolicy,
+    bundle_id: &str,
+    mergeability_checks: &[ReceiveMergeabilityCheck],
 ) -> Result<Vec<PlannedRefUpdate>> {
     let mut updates = Vec::new();
     for row in preflight_plan {
@@ -648,12 +785,49 @@ fn planned_ref_updates_from_plan(
                 });
             }
             ReceivePlanStatus::AlreadyPresent => {}
-            ReceivePlanStatus::DivergedMergeRequired => {
-                bail!(
-                    "internal receive plan error: diverged row '{}' reached apply stage",
-                    row.target_ref
-                );
-            }
+            ReceivePlanStatus::DivergedMergeRequired => match integrate_policy {
+                ReceiveIntegratePolicy::CreateRefsOnly => {}
+                ReceiveIntegratePolicy::FastForwardOnly => {
+                    bail!(
+                        "internal receive plan error: diverged row '{}' reached apply stage",
+                        row.target_ref
+                    );
+                }
+                ReceiveIntegratePolicy::Merge => {
+                    let mergeability = mergeability_checks
+                        .iter()
+                        .find(|check| check.target_ref == row.target_ref);
+                    if !matches!(
+                        mergeability.map(|check| check.status),
+                        Some(ReceiveMergeabilityStatus::Clean)
+                    ) {
+                        bail!(
+                            "internal receive plan error: merge policy reached apply stage for blocked row '{}'",
+                            row.target_ref
+                        );
+                    }
+                    let target_oid = row.target_oid.expect(
+                        "merge integration requires an existing target OID for diverged rows",
+                    );
+                    let merge_oid = create_receive_merge_commit(
+                        repo,
+                        &row.target_ref,
+                        target_oid,
+                        row.incoming_oid,
+                    )?;
+                    let merge_test_ref = merge_test_ref_name(bundle_id, &row.target_ref);
+                    updates.push(PlannedRefUpdate {
+                        ref_name: merge_test_ref.clone(),
+                        expected_old_oid: resolve_reference_target(repo, &merge_test_ref)?,
+                        new_oid: merge_oid,
+                    });
+                    updates.push(PlannedRefUpdate {
+                        ref_name: row.target_ref.clone(),
+                        expected_old_oid: row.target_oid,
+                        new_oid: merge_oid,
+                    });
+                }
+            },
         }
     }
     Ok(updates)
@@ -681,7 +855,7 @@ fn apply_ref_updates_with_transaction(
                 &update.ref_name,
                 update.new_oid,
                 None,
-                "receive bundle import (fast-forward)",
+                "receive bundle import (integration update)",
             )
             .map_err(|err| {
                 anyhow!(
@@ -733,7 +907,7 @@ fn apply_ref_updates_with_manual_cas(
                     update.new_oid,
                     true,
                     expected_old,
-                    "receive bundle import (fast-forward)",
+                    "receive bundle import (integration update)",
                 )
                 .map(|_| ()),
             None => repo
@@ -741,7 +915,7 @@ fn apply_ref_updates_with_manual_cas(
                     &update.ref_name,
                     update.new_oid,
                     false,
-                    "receive bundle import (fast-forward)",
+                    "receive bundle import (integration update)",
                 )
                 .map(|_| ()),
         };
@@ -960,6 +1134,67 @@ fn format_non_fast_forward_diagnostics(diagnostics: &[&ReceivePlanEntry]) -> Str
                     .expect("diverged receive diagnostics must include target oid"),
                 diagnostic.incoming_oid,
                 merge_base,
+                diagnostic.preserved_incoming_ref
+            ),
+        );
+    }
+    message
+}
+
+/// Formats per-ref diagnostics for merge-policy failures.
+fn format_merge_policy_diagnostics(
+    diagnostics: &[&ReceivePlanEntry],
+    mergeability_checks: &[ReceiveMergeabilityCheck],
+) -> String {
+    let mut message = String::from("unable to integrate bundle heads with --integrate merge:\n");
+    for diagnostic in diagnostics {
+        let merge_base = diagnostic
+            .merge_base_oid
+            .map(|oid| oid.to_string())
+            .unwrap_or_else(|| "<none>".to_string());
+        let mergeability = mergeability_checks
+            .iter()
+            .find(|check| check.target_ref == diagnostic.target_ref);
+        let reason = match mergeability.map(|check| check.status) {
+            Some(ReceiveMergeabilityStatus::Conflicted) => "merge would conflict",
+            Some(ReceiveMergeabilityStatus::Unknown) => "mergeability check failed",
+            Some(ReceiveMergeabilityStatus::Clean) => "mergeability precheck did not pass",
+            None => "mergeability check missing",
+        };
+        let _ = std::fmt::Write::write_fmt(
+            &mut message,
+            format_args!(
+                "- target ref: {}\n  target oid: {}\n  incoming oid: {}\n  merge-base oid: {}\n  reason: {}\n",
+                diagnostic.target_ref,
+                diagnostic
+                    .target_oid
+                    .expect("diverged merge diagnostics must include target oid"),
+                diagnostic.incoming_oid,
+                merge_base,
+                reason,
+            ),
+        );
+
+        if let Some(check) = mergeability {
+            if !check.conflict_paths.is_empty() {
+                message.push_str("  conflict files:\n");
+                for path in &check.conflict_paths {
+                    let _ =
+                        std::fmt::Write::write_fmt(&mut message, format_args!("  - {}\n", path));
+                }
+            }
+            if let Some(detail) = &check.detail {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut message,
+                    format_args!("  detail: {}\n", detail),
+                );
+            }
+        }
+
+        let _ = std::fmt::Write::write_fmt(
+            &mut message,
+            format_args!(
+                "  next-step: merge required; incoming ref preserved at {}\n",
                 diagnostic.preserved_incoming_ref
             ),
         );

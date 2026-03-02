@@ -298,6 +298,40 @@ fn find_incoming_branch_target(receiver_repo: &Path, target_ref: &str) -> Option
     None
 }
 
+fn find_merge_test_ref_target(receiver_repo: &Path, target_ref: &str) -> Option<(String, String)> {
+    let output = run_command(
+        "git",
+        &[
+            "-C",
+            receiver_repo.to_string_lossy().as_ref(),
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/sync/merge-test",
+        ],
+        None,
+    );
+    assert_success(&output, "git for-each-ref merge-test namespace");
+    let stdout =
+        String::from_utf8(output.stdout).expect("merge-test ref listing stdout should be utf-8");
+    let tail = format!(
+        "/{}",
+        target_ref.strip_prefix("refs/").unwrap_or(target_ref)
+    );
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(ref_name) = parts.next() else {
+            continue;
+        };
+        let Some(object_name) = parts.next() else {
+            continue;
+        };
+        if ref_name.ends_with(&tail) {
+            return Some((ref_name.to_string(), object_name.to_string()));
+        }
+    }
+    None
+}
+
 fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &str) -> String {
     let mut command = Command::new("git");
     command.args([
@@ -391,6 +425,113 @@ fn create_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str, content: &
         );
     }
     String::from_utf8(output.stdout)
+        .expect("commit oid stdout should be utf-8")
+        .trim()
+        .to_string()
+}
+
+fn create_non_conflicting_diverged_commit_on_bare_repo(repo: &Path, parent_oid: &str) -> String {
+    let base_blob_output = run_command(
+        "git",
+        &[
+            "-C",
+            repo.to_string_lossy().as_ref(),
+            "rev-parse",
+            &format!("{parent_oid}:base.txt"),
+        ],
+        None,
+    );
+    assert_success(
+        &base_blob_output,
+        "resolve base blob oid from parent commit",
+    );
+    let base_blob_oid = String::from_utf8(base_blob_output.stdout)
+        .expect("base blob oid should be utf-8")
+        .trim()
+        .to_string();
+
+    let mut hash_blob = Command::new("git");
+    hash_blob.args([
+        "-C",
+        repo.to_string_lossy().as_ref(),
+        "hash-object",
+        "-w",
+        "--stdin",
+    ]);
+    hash_blob
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = hash_blob.spawn().expect("must spawn git hash-object");
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(b"receiver-only side file\n")
+        .expect("must write blob content");
+    let blob_output = child.wait_with_output().expect("must wait for hash-object");
+    assert!(
+        blob_output.status.success(),
+        "git hash-object must succeed for non-conflicting diverged commit"
+    );
+    let side_blob_oid = String::from_utf8(blob_output.stdout)
+        .expect("side blob oid should be utf-8")
+        .trim()
+        .to_string();
+
+    let mktree_input = format!(
+        "100644 blob {base_blob_oid}\tbase.txt\n100644 blob {side_blob_oid}\treceiver-only.txt\n"
+    );
+    let mut mktree = Command::new("git");
+    mktree.args(["-C", repo.to_string_lossy().as_ref(), "mktree"]);
+    mktree
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = mktree.spawn().expect("must spawn git mktree");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(mktree_input.as_bytes())
+        .expect("must write mktree input");
+    let tree_output = child.wait_with_output().expect("must wait for mktree");
+    assert!(
+        tree_output.status.success(),
+        "git mktree must succeed for non-conflicting diverged commit"
+    );
+    let tree_oid = String::from_utf8(tree_output.stdout)
+        .expect("tree oid should be utf-8")
+        .trim()
+        .to_string();
+
+    let mut commit_tree = Command::new("git");
+    commit_tree.args([
+        "-C",
+        repo.to_string_lossy().as_ref(),
+        "commit-tree",
+        &tree_oid,
+        "-p",
+        parent_oid,
+    ]);
+    commit_tree
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = commit_tree.spawn().expect("must spawn git commit-tree");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin must be available")
+        .write_all(b"receiver diverged non-conflicting tip\n")
+        .expect("must write commit message");
+    let commit_output = child.wait_with_output().expect("must wait for commit-tree");
+    assert!(
+        commit_output.status.success(),
+        "git commit-tree must succeed for non-conflicting diverged commit"
+    );
+    String::from_utf8(commit_output.stdout)
         .expect("commit oid stdout should be utf-8")
         .trim()
         .to_string()
@@ -1177,6 +1318,209 @@ fn receive_integrate_fast_forward_only_fails_for_diverged_target() {
     assert_eq!(
         incoming_oid, source_tip,
         "incoming namespace ref should still point to bundle tip commit on failure"
+    );
+}
+
+// Verifies that `receive --integrate merge` succeeds for cleanly mergeable diverged refs,
+// writes merge-test refs, and advances target refs to the merge commit.
+#[test]
+fn receive_integrate_merge_passes_for_clean_diverged_target() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-merge-pass");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init merge-pass receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_non_conflicting_diverged_commit_on_bare_repo(&receiver, &base_oid);
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "merge",
+        ],
+        None,
+    );
+    assert_success(&output, "receive merge clean diverged target");
+    let text = output_text(&output);
+    assert!(
+        text.contains("result : receive applied with policy merge"),
+        "merge integration success should be reported explicitly"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_ne!(
+        receiver_tip, diverged_tip_oid,
+        "merge receive should move target tip away from receiver diverged parent"
+    );
+    assert_ne!(
+        receiver_tip, source_tip,
+        "merge receive should create a merge commit instead of directly fast-forwarding source tip"
+    );
+
+    let parents_output = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "show",
+            "-s",
+            "--format=%P",
+            &receiver_tip,
+        ],
+        None,
+    );
+    assert_success(&parents_output, "inspect merge commit parents");
+    let parents = String::from_utf8(parents_output.stdout)
+        .expect("parents output should be utf-8")
+        .trim()
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        parents.len(),
+        2,
+        "merge integration should create a two-parent merge commit"
+    );
+    assert!(
+        parents.iter().any(|oid| oid == &diverged_tip_oid),
+        "merge commit should include receiver diverged tip as a parent"
+    );
+    assert!(
+        parents.iter().any(|oid| oid == &source_tip),
+        "merge commit should include incoming bundle tip as a parent"
+    );
+
+    let merge_test_ref = find_merge_test_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        merge_test_ref.is_some(),
+        "merge integration should write merge-test ref for merged target"
+    );
+    let (_, merge_test_oid) = merge_test_ref.expect("merge-test ref should exist");
+    assert_eq!(
+        merge_test_oid, receiver_tip,
+        "merge-test ref should point to the merge commit applied to target ref"
+    );
+}
+
+// Verifies that `receive --integrate merge` fails for conflicted diverged refs,
+// keeps target refs unchanged, and does not write merge-test refs.
+#[test]
+fn receive_integrate_merge_fails_for_conflicted_diverged_target() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-merge-conflict-fail");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init merge-conflict receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_diverged_commit_on_bare_repo(&receiver, &base_oid, "receiver-side diverged\n");
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "merge",
+        ],
+        None,
+    );
+    assert_failure(&output, "receive merge conflicted diverged target");
+    let text = output_text(&output);
+    assert!(
+        text.contains("merge would conflict"),
+        "merge integration failure should report conflict reason"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "failed merge integration must keep diverged target tip unchanged"
+    );
+
+    let merge_test_ref = find_merge_test_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        merge_test_ref.is_none(),
+        "merge integration should not write merge-test refs when merge fails with conflicts"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let incoming = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming.is_some(),
+        "incoming namespace ref should still be preserved on merge-policy failure"
+    );
+    let (_, incoming_oid) = incoming.expect("incoming ref should exist");
+    assert_eq!(
+        incoming_oid, source_tip,
+        "incoming namespace ref should still point to bundle tip commit on merge-policy failure"
     );
 }
 

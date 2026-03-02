@@ -121,6 +121,8 @@ pub enum ReceiveIntegratePolicy {
     /// Update target refs only when they can be advanced via strict fast-forward.
     #[default]
     FastForwardOnly,
+    /// Merge diverged target refs when a clean merge commit can be created.
+    Merge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

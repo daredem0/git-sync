@@ -36,6 +36,7 @@ pub(super) fn run(
     let integrate_policy = match integrate {
         CliReceiveIntegratePolicy::CreateRefsOnly => ReceiveIntegratePolicy::CreateRefsOnly,
         CliReceiveIntegratePolicy::FastForwardOnly => ReceiveIntegratePolicy::FastForwardOnly,
+        CliReceiveIntegratePolicy::Merge => ReceiveIntegratePolicy::Merge,
     };
     let result = if !incoming_as_branches
         && !verify_metadata
@@ -265,6 +266,7 @@ fn render_plan_outcome(
     let policy_label = match policy {
         ReceiveIntegratePolicy::CreateRefsOnly => "create-refs-only",
         ReceiveIntegratePolicy::FastForwardOnly => "fast-forward-only",
+        ReceiveIntegratePolicy::Merge => "merge",
     };
     println!();
     println!(
@@ -314,6 +316,12 @@ fn render_plan_outcome(
         ReceiveIntegratePolicy::CreateRefsOnly => {
             println!(
                 "result : receive applied with policy {} (target refs preserved).",
+                policy_label
+            );
+        }
+        ReceiveIntegratePolicy::Merge => {
+            println!(
+                "result : receive applied with policy {} (diverged refs merged when clean).",
                 policy_label
             );
         }
@@ -469,6 +477,32 @@ fn render_plan_actions(plan: &[ReceivePlanEntry], policy: ReceiveIntegratePolicy
                 crate::git::ReceivePlanStatus::DivergedMergeRequired => {
                     println!(
                         "- cannot auto-update {} (diverged history, manual merge required)",
+                        row.target_ref
+                    );
+                }
+            },
+            ReceiveIntegratePolicy::Merge => match row.status {
+                crate::git::ReceivePlanStatus::TargetMissing
+                | crate::git::ReceivePlanStatus::FastForwardOk => {
+                    println!(
+                        "- {} {} from {} to {} (merge policy; no merge commit needed)",
+                        if dry_run { "would update" } else { "updated" },
+                        row.target_ref,
+                        format_optional_short_oid(row.target_oid),
+                        short_oid(row.incoming_oid)
+                    );
+                }
+                crate::git::ReceivePlanStatus::AlreadyPresent => {
+                    println!(
+                        "- {} {} unchanged (already up to date)",
+                        if dry_run { "would keep" } else { "kept" },
+                        row.target_ref
+                    );
+                }
+                crate::git::ReceivePlanStatus::DivergedMergeRequired => {
+                    println!(
+                        "- {} merge {} with incoming head (merge policy)",
+                        if dry_run { "would" } else { "did" },
                         row.target_ref
                     );
                 }
