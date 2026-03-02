@@ -41,6 +41,8 @@ pub(crate) use types::{
 };
 
 #[cfg(test)]
+pub(crate) use bundle::force_manual_cas_for_tests;
+#[cfg(test)]
 pub(crate) use types::{
     PackEntryLedger, PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead,
     PayloadAuditDocumentTransportEntry, PayloadAuditPackSummary, PayloadPackProof,

@@ -162,6 +162,33 @@ fn find_incoming_head_branch_target(
     None
 }
 
+fn find_merge_test_ref_target(
+    repo: &git2::Repository,
+    head_reference: &str,
+) -> Option<(String, git2::Oid)> {
+    let suffix = head_reference
+        .strip_prefix("refs/")
+        .unwrap_or(head_reference);
+    let expected_tail = format!("/{suffix}");
+    let mut refs = repo.references().ok()?;
+    while let Some(reference_result) = refs.next() {
+        let reference = reference_result.ok()?;
+        let Some(name) = reference.name() else {
+            continue;
+        };
+        if !name.starts_with("refs/sync/merge-test/") {
+            continue;
+        }
+        if !name.ends_with(&expected_tail) {
+            continue;
+        }
+        if let Some(target) = reference.target() {
+            return Some((name.to_string(), target));
+        }
+    }
+    None
+}
+
 // Focus: receive workflow correctness, prerequisite handling, idempotency, and ref-application checks.
 // Verifies that receive_bundle_input imports a zip-packaged bundle and updates exported head refs when prerequisites exist.
 #[test]
@@ -567,6 +594,400 @@ fn receive_incoming_as_branches_writes_branch_mirrors() {
     assert_eq!(
         incoming_branch.1, tip_commit_id,
         "incoming branch mirror ref must point at imported bundle head oid"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that receive can fall back to manual CAS backend and still apply fast-forward updates safely.
+#[test]
+fn receive_fast_forward_only_can_apply_via_manual_cas_fallback_backend() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-manual-cas-fallback", false);
+    let receiver_dir = temp_repo_dir("receive-manual-cas-fallback-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            base_commit_id,
+            true,
+            "seed receiver tip at base",
+        )
+        .expect("must create receiver tip reference");
+
+    let _force_manual_cas = force_manual_cas_for_tests();
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::FastForwardOnly,
+    )
+    .expect("fast-forward-only receive should succeed with forced manual CAS backend");
+
+    assert_eq!(
+        receive_result.apply_backend,
+        Some(ReceiveApplyBackend::ManualCasRollback),
+        "forced fallback should report manual CAS backend"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip ref should exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "manual CAS fallback should still update tip ref to imported commit"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that merge integration creates a merge commit for cleanly mergeable diverged targets
+// and writes a merge-test namespace ref that points to the merge result.
+#[test]
+fn receive_merge_policy_merges_clean_diverged_target_and_writes_merge_test_ref() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-merge-policy-clean", false);
+    let receiver_dir = temp_repo_dir("receive-merge-policy-clean-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let diverged_tip_oid = commit_from_files(
+        &receiver_repo,
+        "receiver diverged tip (non-conflicting)",
+        &[
+            ("f.txt", "base"),
+            ("receiver-only.txt", "receiver local file"),
+        ],
+        &[base_commit_id],
+    );
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            diverged_tip_oid,
+            true,
+            "seed diverged receiver tip",
+        )
+        .expect("must seed diverged receiver tip ref");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::Merge,
+    )
+    .expect("merge receive should succeed for cleanly mergeable diverged target");
+
+    assert!(
+        receive_result.can_apply_without_conflicts,
+        "merge receive should report applicable plan when diverged target is cleanly mergeable"
+    );
+    assert_eq!(
+        receive_result.imported_heads.len(),
+        1,
+        "fixture bundle should report one imported head"
+    );
+    assert!(
+        receive_result
+            .preflight_plan
+            .iter()
+            .any(|row| row.status == ReceivePlanStatus::DivergedMergeRequired),
+        "preflight plan should classify this target as diverged before merge integration"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("merged target tip ref should exist");
+    let merged_tip_oid = tip_ref
+        .target()
+        .expect("merged target tip ref should point to a direct oid");
+    assert_ne!(
+        merged_tip_oid, diverged_tip_oid,
+        "merge receive should move target tip away from diverged receiver parent"
+    );
+    assert_ne!(
+        merged_tip_oid, tip_commit_id,
+        "merge receive should produce a merge commit, not a direct fast-forward to incoming tip"
+    );
+
+    let merge_commit = receiver_repo
+        .find_commit(merged_tip_oid)
+        .expect("merged target oid should resolve to commit");
+    assert_eq!(
+        merge_commit.parent_count(),
+        2,
+        "merge receive should create a two-parent merge commit"
+    );
+    let parent_0 = merge_commit
+        .parent_id(0)
+        .expect("merge commit parent 0 should exist");
+    let parent_1 = merge_commit
+        .parent_id(1)
+        .expect("merge commit parent 1 should exist");
+    assert!(
+        [parent_0, parent_1].contains(&diverged_tip_oid),
+        "merge commit should contain receiver diverged parent"
+    );
+    assert!(
+        [parent_0, parent_1].contains(&tip_commit_id),
+        "merge commit should contain incoming bundle tip parent"
+    );
+
+    let merge_test_ref = find_merge_test_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("merge-test ref should be written for merged target");
+    assert_eq!(
+        merge_test_ref.1, merged_tip_oid,
+        "merge-test ref should point at the applied merge commit"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that merge integration rejects conflicted diverged targets and remains non-destructive
+// for target refs while still preserving incoming namespace refs.
+#[test]
+fn receive_merge_policy_rejects_conflicted_diverged_target_non_destructive() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-merge-policy-conflict", false);
+    let receiver_dir = temp_repo_dir("receive-merge-policy-conflict-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let diverged_tip_oid = commit_from_files(
+        &receiver_repo,
+        "receiver diverged tip (conflicting)",
+        &[("f.txt", "receiver-side conflicting change")],
+        &[base_commit_id],
+    );
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            diverged_tip_oid,
+            true,
+            "seed diverged receiver tip",
+        )
+        .expect("must seed diverged receiver tip ref");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::Merge,
+    );
+    assert!(
+        receive_result.is_err(),
+        "merge receive must fail when diverged target would conflict"
+    );
+    let err_text = receive_result
+        .expect_err("merge receive should fail")
+        .to_string();
+    assert!(
+        err_text.contains("merge would conflict"),
+        "merge-policy failure diagnostics should include merge-conflict reason"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("target tip ref should still exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(diverged_tip_oid),
+        "failed merge receive must keep diverged target tip unchanged"
+    );
+
+    let merge_test_ref = find_merge_test_ref_target(&receiver_repo, "refs/heads/tip");
+    assert!(
+        merge_test_ref.is_none(),
+        "merge-policy failure must not create merge-test refs"
+    );
+
+    let incoming_ref = find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip")
+        .expect("incoming namespace ref should still be preserved on merge-policy failure");
+    assert_eq!(
+        incoming_ref.1, tip_commit_id,
+        "incoming namespace ref should still point at imported bundle tip"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that merge-policy dry-run can evaluate a clean merge path without mutating the receiver.
+#[test]
+fn receive_merge_policy_dry_run_keeps_receiver_unchanged_for_clean_diverged_target() {
+    let (repo_dir, bundle_result, base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("receive-merge-policy-dry-run-clean", false);
+    let receiver_dir = temp_repo_dir("receive-merge-policy-dry-run-clean-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let diverged_tip_oid = commit_from_files(
+        &receiver_repo,
+        "receiver diverged tip (non-conflicting)",
+        &[
+            ("f.txt", "base"),
+            ("receiver-only.txt", "receiver local file"),
+        ],
+        &[base_commit_id],
+    );
+    receiver_repo
+        .reference(
+            "refs/heads/tip",
+            diverged_tip_oid,
+            true,
+            "seed diverged receiver tip",
+        )
+        .expect("must seed diverged receiver tip ref");
+
+    let dry_run = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: true,
+        },
+        ReceiveIntegratePolicy::Merge,
+    )
+    .expect("merge-policy dry-run should succeed for cleanly mergeable diverged target");
+    assert!(
+        dry_run.can_apply_without_conflicts,
+        "clean mergeable dry-run should report applicable integration"
+    );
+    assert!(
+        dry_run
+            .mergeability_checks
+            .iter()
+            .any(|check| check.status == ReceiveMergeabilityStatus::Clean),
+        "merge dry-run should report clean mergeability status for diverged target"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("target tip ref should still exist");
+    assert_eq!(
+        tip_ref.target(),
+        Some(diverged_tip_oid),
+        "merge-policy dry-run must not mutate target refs in receiver"
+    );
+    assert!(
+        find_merge_test_ref_target(&receiver_repo, "refs/heads/tip").is_none(),
+        "merge-policy dry-run must not create merge-test refs in receiver"
+    );
+    assert!(
+        find_incoming_head_ref_target(&receiver_repo, "refs/heads/tip").is_none(),
+        "merge-policy dry-run must not create incoming namespace refs in receiver"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+    let _ = std::fs::remove_dir_all(receiver_dir);
+}
+
+// Verifies that merge integration updates missing target refs directly to incoming OIDs
+// and does not create merge-test refs when no merge commit is needed.
+#[test]
+fn receive_merge_policy_updates_missing_target_without_merge_commit() {
+    let (repo_dir, bundle_result, base_commit_id, tip_commit_id) =
+        create_linear_bundle_fixture("receive-merge-policy-target-missing", false);
+    let receiver_dir = temp_repo_dir("receive-merge-policy-target-missing-receiver");
+    std::fs::create_dir_all(&receiver_dir).expect("must create receiver dir");
+    let receiver_repo =
+        git2::Repository::init_bare(&receiver_dir).expect("must init receiver bare repo");
+
+    let mut source_remote = receiver_repo
+        .remote_anonymous(repo_dir.to_str().expect("repo path should be utf-8"))
+        .expect("must create source remote");
+    source_remote
+        .fetch(&["refs/heads/base:refs/heads/base"], None, None)
+        .expect("must fetch base prerequisite into receiver");
+
+    let receive_result = receive_bundle_input_with_options_and_policy(
+        &bundle_result.archive_path,
+        &receiver_dir,
+        ReceiveBundleOptions {
+            verify_metadata: false,
+            dry_run: false,
+        },
+        ReceiveIntegratePolicy::Merge,
+    )
+    .expect("merge policy should succeed when target ref is missing");
+    assert!(
+        receive_result
+            .preflight_plan
+            .iter()
+            .any(|row| row.status == ReceivePlanStatus::TargetMissing),
+        "target-missing row should remain classified as target_missing"
+    );
+
+    let receiver_repo = git2::Repository::open_bare(&receiver_dir).expect("must open receiver");
+    let base_ref = receiver_repo
+        .find_reference("refs/heads/base")
+        .expect("base prerequisite ref should exist");
+    assert_eq!(
+        base_ref.target(),
+        Some(base_commit_id),
+        "base prerequisite ref should remain unchanged"
+    );
+    let tip_ref = receiver_repo
+        .find_reference("refs/heads/tip")
+        .expect("tip target ref should exist after merge-policy receive");
+    assert_eq!(
+        tip_ref.target(),
+        Some(tip_commit_id),
+        "merge policy should directly update missing target to incoming tip oid"
+    );
+    assert!(
+        find_merge_test_ref_target(&receiver_repo, "refs/heads/tip").is_none(),
+        "merge policy should not create merge-test refs when merge commit is unnecessary"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

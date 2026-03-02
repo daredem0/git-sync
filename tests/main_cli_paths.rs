@@ -1524,6 +1524,174 @@ fn receive_integrate_merge_fails_for_conflicted_diverged_target() {
     );
 }
 
+// Verifies that merge integration can also mirror incoming refs as branches when requested.
+#[test]
+fn receive_integrate_merge_with_incoming_as_branches_writes_branch_mirrors() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-merge-with-incoming-branches");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init merge-with-branches receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_non_conflicting_diverged_commit_on_bare_repo(&receiver, &base_oid);
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "merge",
+            "--incoming-as-branches",
+        ],
+        None,
+    );
+    assert_success(&output, "receive merge with incoming-as-branches");
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_ne!(
+        receiver_tip, diverged_tip_oid,
+        "merge receive with incoming-as-branches should still advance target tip via merge"
+    );
+
+    let source_tip = rev_parse(&fixture.source_repo, "refs/tags/sync/tip^{commit}");
+    let incoming_branch = find_incoming_branch_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming_branch.is_some(),
+        "incoming branch mirror should be written when --incoming-as-branches is set"
+    );
+    let (_, incoming_branch_oid) =
+        incoming_branch.expect("incoming branch mirror ref should exist");
+    assert_eq!(
+        incoming_branch_oid, source_tip,
+        "incoming branch mirror should point to source bundle tip commit"
+    );
+
+    let merge_test_ref = find_merge_test_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        merge_test_ref.is_some(),
+        "merge integration should still create merge-test refs with incoming-as-branches enabled"
+    );
+}
+
+// Verifies that merge-policy dry-run JSON reports mergeability and never mutates the real receiver.
+#[test]
+fn receive_integrate_merge_dry_run_json_reports_mergeability_without_mutation() {
+    let fixture = create_fixture();
+    let receiver = fixture.root.join("receiver-merge-dry-run-json");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "init merge-dry-run receiver");
+
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            fixture.source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "fetch base prerequisite");
+
+    let base_oid = rev_parse(&receiver, "refs/tags/sync/base^{commit}");
+    let diverged_tip_oid =
+        create_non_conflicting_diverged_commit_on_bare_repo(&receiver, &base_oid);
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "set diverged tip ref");
+
+    let output = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            fixture.bundle_archive.to_string_lossy().as_ref(),
+            "--integrate",
+            "merge",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        None,
+    );
+    assert_success(&output, "receive merge dry-run json");
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("dry-run json output should be valid json");
+    assert!(
+        json["mergeability_checks"].is_array(),
+        "dry-run merge JSON should include mergeability checks array"
+    );
+    assert!(
+        json["can_apply_without_conflicts"]
+            .as_bool()
+            .unwrap_or_default(),
+        "clean mergeable dry-run should report applicable plan"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "merge dry-run json must not mutate real receiver target refs"
+    );
+    assert!(
+        find_incoming_ref_target(&receiver, "refs/tags/sync/tip").is_none(),
+        "merge dry-run json must not write incoming namespace refs in receiver"
+    );
+    assert!(
+        find_merge_test_ref_target(&receiver, "refs/tags/sync/tip").is_none(),
+        "merge dry-run json must not write merge-test refs in receiver"
+    );
+}
+
 // Verifies that `receive --check-mergeability` reports merge simulation results for diverged refs
 // without updating target refs.
 #[test]
@@ -1903,6 +2071,297 @@ fn receive_integrate_fast_forward_only_rejects_mixed_plan_without_partial_target
     assert_eq!(
         incoming_side_oid, side_oid,
         "incoming side namespace ref should point to source side commit"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// Verifies that merge policy also validates the whole plan before mutating any target refs.
+// If one diverged head conflicts, fast-forwardable heads must remain unchanged (all-or-none target integration).
+#[test]
+fn receive_integrate_merge_rejects_mixed_plan_without_partial_target_updates() {
+    let root = unique_temp_dir("receive-merge-all-or-none");
+    let source_repo = root.join("source");
+    fs::create_dir_all(&source_repo).expect("must create source repo dir");
+
+    let init = run_command(
+        "git",
+        &["init", source_repo.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init, "git init source repo");
+    let set_name = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "config",
+            "user.name",
+            "Test User",
+        ],
+        None,
+    );
+    assert_success(&set_name, "git config user.name");
+    let set_email = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "config",
+            "user.email",
+            "test@example.com",
+        ],
+        None,
+    );
+    assert_success(&set_email, "git config user.email");
+
+    fs::write(source_repo.join("base.txt"), "base\n").expect("must write base file");
+    let add_base = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "add",
+            "base.txt",
+        ],
+        None,
+    );
+    assert_success(&add_base, "git add base");
+    let commit_base = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "commit",
+            "-m",
+            "base commit",
+        ],
+        None,
+    );
+    assert_success(&commit_base, "git commit base");
+    let tag_base = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "tag",
+            "sync/base",
+        ],
+        None,
+    );
+    assert_success(&tag_base, "git tag base");
+    let base_oid = rev_parse(&source_repo, "refs/tags/sync/base^{commit}");
+
+    fs::write(source_repo.join("base.txt"), "tip branch\n").expect("must write tip branch change");
+    let add_tip = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "add",
+            "base.txt",
+        ],
+        None,
+    );
+    assert_success(&add_tip, "git add tip");
+    let commit_tip = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "commit",
+            "-m",
+            "tip commit",
+        ],
+        None,
+    );
+    assert_success(&commit_tip, "git commit tip");
+    let tag_tip = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "tag",
+            "sync/tip",
+        ],
+        None,
+    );
+    assert_success(&tag_tip, "git tag tip");
+    let tip_oid = rev_parse(&source_repo, "refs/tags/sync/tip^{commit}");
+
+    let checkout_side = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "checkout",
+            "-b",
+            "side",
+            &base_oid,
+        ],
+        None,
+    );
+    assert_success(&checkout_side, "git checkout side from base");
+    fs::write(source_repo.join("side.txt"), "side branch\n").expect("must write side branch file");
+    let add_side = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "add",
+            "side.txt",
+        ],
+        None,
+    );
+    assert_success(&add_side, "git add side");
+    let commit_side = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "commit",
+            "-m",
+            "side commit",
+        ],
+        None,
+    );
+    assert_success(&commit_side, "git commit side");
+    let tag_side = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "tag",
+            "sync/side",
+        ],
+        None,
+    );
+    assert_success(&tag_side, "git tag side");
+    let side_oid = rev_parse(&source_repo, "refs/tags/sync/side^{commit}");
+
+    let bundle_path = root.join("multi-head.bundle");
+    let create_bundle = run_command(
+        "git",
+        &[
+            "-C",
+            source_repo.to_string_lossy().as_ref(),
+            "bundle",
+            "create",
+            bundle_path.to_string_lossy().as_ref(),
+            "^refs/tags/sync/base",
+            "refs/tags/sync/tip",
+            "refs/tags/sync/side",
+        ],
+        None,
+    );
+    assert_success(&create_bundle, "git bundle create multi-head");
+
+    let receiver = root.join("receiver");
+    let init_receiver = run_command(
+        "git",
+        &["init", "--bare", receiver.to_string_lossy().as_ref()],
+        None,
+    );
+    assert_success(&init_receiver, "git init bare receiver");
+    let fetch_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "fetch",
+            source_repo.to_string_lossy().as_ref(),
+            "refs/tags/sync/base:refs/tags/sync/base",
+        ],
+        None,
+    );
+    assert_success(&fetch_base, "git fetch base into receiver");
+    let set_side_to_base = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/side",
+            &base_oid,
+        ],
+        None,
+    );
+    assert_success(&set_side_to_base, "seed side target at base");
+
+    let diverged_tip_oid =
+        create_diverged_commit_on_bare_repo(&receiver, &base_oid, "receiver diverged tip\n");
+    let set_tip = run_command(
+        "git",
+        &[
+            "-C",
+            receiver.to_string_lossy().as_ref(),
+            "update-ref",
+            "refs/tags/sync/tip",
+            &diverged_tip_oid,
+        ],
+        None,
+    );
+    assert_success(&set_tip, "seed diverged tip target");
+
+    let receive = run_bin(
+        &[
+            "receive",
+            "--repo",
+            receiver.to_string_lossy().as_ref(),
+            "--bundle",
+            bundle_path.to_string_lossy().as_ref(),
+            "--integrate",
+            "merge",
+        ],
+        None,
+    );
+    assert_failure(&receive, "receive mixed-plan merge");
+    let text = output_text(&receive);
+    assert!(
+        text.contains("merge would conflict"),
+        "mixed-plan merge failure should include conflict reason"
+    );
+
+    let receiver_tip = rev_parse(&receiver, "refs/tags/sync/tip^{commit}");
+    assert_eq!(
+        receiver_tip, diverged_tip_oid,
+        "conflicted merge target tip must remain unchanged after mixed-plan failure"
+    );
+    let receiver_side = rev_parse(&receiver, "refs/tags/sync/side^{commit}");
+    assert_eq!(
+        receiver_side, base_oid,
+        "fast-forwardable side ref must remain unchanged when merge plan validation fails"
+    );
+
+    let incoming_tip = find_incoming_ref_target(&receiver, "refs/tags/sync/tip");
+    assert!(
+        incoming_tip.is_some(),
+        "incoming namespace should preserve tip head even on merge-policy failure"
+    );
+    let (_, incoming_tip_oid) = incoming_tip.expect("incoming tip namespace ref should exist");
+    assert_eq!(
+        incoming_tip_oid, tip_oid,
+        "incoming tip namespace ref should point to source tip commit"
+    );
+
+    let incoming_side = find_incoming_ref_target(&receiver, "refs/tags/sync/side");
+    assert!(
+        incoming_side.is_some(),
+        "incoming namespace should preserve side head even on merge-policy failure"
+    );
+    let (_, incoming_side_oid) = incoming_side.expect("incoming side namespace ref should exist");
+    assert_eq!(
+        incoming_side_oid, side_oid,
+        "incoming side namespace ref should point to source side commit"
+    );
+
+    assert!(
+        find_merge_test_ref_target(&receiver, "refs/tags/sync/tip").is_none(),
+        "merge-test tip ref must not be created when merge-policy validation fails"
+    );
+    assert!(
+        find_merge_test_ref_target(&receiver, "refs/tags/sync/side").is_none(),
+        "merge-test side ref must not be created when merge-policy validation fails"
     );
 
     let _ = fs::remove_dir_all(root);

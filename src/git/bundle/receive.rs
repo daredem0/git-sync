@@ -22,7 +22,40 @@ use anyhow::{Result, anyhow, bail};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{
+    Mutex, MutexGuard,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
+static FORCE_MANUAL_CAS_APPLY: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static FORCE_MANUAL_CAS_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Test-only guard to force receive to use manual CAS apply backend.
+#[cfg(test)]
+pub(crate) struct ForcedManualCasGuard {
+    _lock: MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for ForcedManualCasGuard {
+    fn drop(&mut self) {
+        FORCE_MANUAL_CAS_APPLY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Enables manual-CAS backend forcing for deterministic fallback-path tests.
+#[cfg(test)]
+pub(crate) fn force_manual_cas_for_tests() -> ForcedManualCasGuard {
+    let lock = FORCE_MANUAL_CAS_MUTEX
+        .lock()
+        .expect("manual-cas test mutex should not be poisoned");
+    FORCE_MANUAL_CAS_APPLY.store(true, Ordering::SeqCst);
+    ForcedManualCasGuard { _lock: lock }
+}
 
 #[derive(Debug, Clone)]
 struct ApplyBundleToRepoResult {
@@ -738,6 +771,12 @@ fn apply_receive_plan(
     )?;
     if updates.is_empty() {
         return Ok(None);
+    }
+
+    #[cfg(test)]
+    if FORCE_MANUAL_CAS_APPLY.load(Ordering::SeqCst) {
+        apply_ref_updates_with_manual_cas(repo, &updates)?;
+        return Ok(Some(ReceiveApplyBackend::ManualCasRollback));
     }
 
     match repo.transaction() {

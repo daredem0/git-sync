@@ -36,4 +36,6 @@ pub use receive::{
 };
 
 #[cfg(test)]
+pub(crate) use receive::force_manual_cas_for_tests;
+#[cfg(test)]
 pub(crate) use receive::is_head_already_applied;
