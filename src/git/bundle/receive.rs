@@ -335,6 +335,7 @@ fn apply_bundle_to_repo(
     let pack_data = parsed_bundle.pack_data;
 
     let odb = repo.odb()?;
+    add_repo_disk_alternates_to_odb(repo, &odb)?;
     let pack_dir = repo.path().join("objects").join("pack");
     fs::create_dir_all(&pack_dir)?;
     let mut indexer = git2::Indexer::new(Some(&odb), &pack_dir, 0o644, true)?;
@@ -1715,7 +1716,7 @@ fn configure_temp_repo_alternates(
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            alternate_dirs.insert(resolve_source_alternate_path(&source_objects_dir, trimmed));
+            alternate_dirs.insert(resolve_alternate_entry_path(&source_objects_dir, trimmed));
         }
     }
 
@@ -1739,15 +1740,43 @@ fn configure_temp_repo_alternates(
     Ok(())
 }
 
-/// Resolves one alternate entry from source ODB metadata to an absolute path.
-fn resolve_source_alternate_path(source_objects_dir: &Path, entry: &str) -> PathBuf {
+/// Resolves one alternate entry path to an absolute objects directory path.
+fn resolve_alternate_entry_path(base_objects_dir: &Path, entry: &str) -> PathBuf {
     let raw = Path::new(entry);
     let joined = if raw.is_absolute() {
         raw.to_path_buf()
     } else {
-        source_objects_dir.join(raw)
+        base_objects_dir.join(raw)
     };
     joined.canonicalize().unwrap_or(joined)
+}
+
+/// Ensures all persisted `objects/info/alternates` entries are active in this ODB handle.
+///
+/// This is required so thin-pack indexing resolves external delta bases
+/// consistently across environments.
+fn add_repo_disk_alternates_to_odb(repo: &git2::Repository, odb: &git2::Odb<'_>) -> Result<()> {
+    let objects_dir = repo.path().join("objects");
+    let alternates_path = objects_dir.join("info").join("alternates");
+    if !alternates_path.is_file() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(alternates_path)?;
+    let mut seen = BTreeSet::<PathBuf>::new();
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let resolved = resolve_alternate_entry_path(&objects_dir, trimmed);
+        if !resolved.is_dir() || !seen.insert(resolved.clone()) {
+            continue;
+        }
+        let resolved_text = resolved.to_string_lossy().to_string();
+        odb.add_disk_alternate(&resolved_text)?;
+    }
+    Ok(())
 }
 
 impl Drop for TempBareRepo {
