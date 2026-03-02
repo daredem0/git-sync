@@ -21,6 +21,8 @@ mod detail;
 mod document;
 mod input;
 mod session;
+#[cfg(test)]
+mod test_api;
 mod verify;
 
 /// Reusable payload session for fast object-detail queries.
@@ -145,36 +147,10 @@ pub fn collect_payload_object_detail_for_session(
     )
 }
 
-/// Verifies pack proof + ledger directly from a bundle or packaged zip input.
 #[cfg(test)]
-pub fn verify_pack_payload_for_bundle_input(
-    bundle_input_path: &Path,
-) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
-    verify_pack_payload_for_bundle_input_with_resolve_mode(bundle_input_path, None)
-}
-
-/// Verifies pack proof + ledger from bundle input with optional baseline resolve repository (tests only).
-#[cfg(test)]
-pub fn verify_pack_payload_for_bundle_input_with_resolve_mode(
-    bundle_input_path: &Path,
-    baseline_repo_path: Option<&Path>,
-) -> std::result::Result<PayloadPackVerification, PayloadAuditError> {
-    let baseline_repo = baseline_repo_path.and_then(|path| git2::Repository::open(path).ok());
-    let baseline_odb = baseline_repo.as_ref().and_then(|repo| repo.odb().ok());
-    let bundle_bytes =
-        input::load_bundle_bytes_for_input(bundle_input_path).map_err(|err| PayloadAuditError {
-            reason: err.to_string(),
-            blocked_entry_idx: None,
-            ledger_partial: None,
-        })?;
-    let parsed_bundle =
-        parse::parse_bundle_payload(&bundle_bytes).map_err(|err| PayloadAuditError {
-            reason: err.to_string(),
-            blocked_entry_idx: None,
-            ledger_partial: None,
-        })?;
-    verify_pack_payload_with_ledger_and_baseline_odb(parsed_bundle.pack_data, baseline_odb.as_ref())
-}
+pub(crate) use test_api::{
+    verify_pack_payload_for_bundle_input, verify_pack_payload_for_bundle_input_with_resolve_mode,
+};
 
 /// Verifies payload PACK bytes and returns proof + entry ledger truth with optional baseline ODB resolution.
 pub fn verify_pack_payload_with_ledger_and_baseline_odb(

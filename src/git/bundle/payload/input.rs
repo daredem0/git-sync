@@ -41,15 +41,6 @@ pub(super) fn load_payload_input(bundle_input_path: &Path) -> Result<LoadedPaylo
     })
 }
 
-#[cfg(test)]
-pub(super) fn load_bundle_bytes_for_input(bundle_input_path: &Path) -> Result<Vec<u8>> {
-    if is_zip_bundle_input_path(bundle_input_path) {
-        let extracted = extract_bundle_archive(bundle_input_path)?;
-        return fs::read(&extracted.bundle_path).map_err(Into::into);
-    }
-    fs::read(bundle_input_path).map_err(Into::into)
-}
-
 fn load_zip_payload_input(bundle_input_path: &Path) -> Result<LoadedPayloadInput> {
     let transport_entries = collect_transport_entries_for_zip(bundle_input_path)?;
     let extracted = extract_bundle_archive(bundle_input_path)?;

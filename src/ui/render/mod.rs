@@ -107,17 +107,10 @@ pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, state: &AppState) {
     frame.render_widget(help, area);
 }
 
-/// Returns contextual key help for page mode or diff mode.
-///
-/// Kept as a lightweight compatibility helper for tests and diagnostics.
 #[cfg(test)]
-pub(crate) fn help_text_for_mode(in_diff_view: bool) -> &'static str {
-    if in_diff_view {
-        help_hotkeys_text(HelpContext::Diff)
-    } else {
-        help_hotkeys_text(HelpContext::HistoryOverview)
-    }
-}
+pub(crate) use test_api::help_text_for_mode;
+#[cfg(test)]
+mod test_api;
 
 fn active_help_context(state: &AppState) -> HelpContext {
     if state.is_diff_open() {
