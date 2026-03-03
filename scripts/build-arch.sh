@@ -4,6 +4,52 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
+resolve_package_suffix() {
+  if [[ -n "${GIT_SYNC_PACKAGE_SUFFIX:-}" ]]; then
+    echo "${GIT_SYNC_PACKAGE_SUFFIX}"
+    return
+  fi
+
+  "${REPO_ROOT}/scripts/detect-libc-suffix.sh"
+}
+
+sanitize_package_suffix() {
+  local raw="$1"
+  local sanitized
+  sanitized="$(sed -E 's/[^A-Za-z0-9._+-]+/-/g; s/^-+//; s/-+$//' <<<"${raw}")"
+  if [[ -z "${sanitized}" ]]; then
+    echo "Derived package suffix is empty after sanitization." >&2
+    exit 1
+  fi
+  echo "${sanitized}"
+}
+
+apply_package_suffix() {
+  local suffix="$1"
+  local files=()
+  shopt -s nullglob
+  files=(target/arch/*.pkg.tar.*)
+  shopt -u nullglob
+
+  if ((${#files[@]} == 0)); then
+    echo "No Arch package was produced in target/arch." >&2
+    exit 1
+  fi
+
+  for pkg in "${files[@]}"; do
+    if [[ "${pkg}" == *"-${suffix}.pkg.tar."* ]]; then
+      continue
+    fi
+    local renamed
+    renamed="$(sed -E "s/(\\.pkg\\.tar\\.[^.]+)$/-${suffix}\\1/" <<<"${pkg}")"
+    if [[ "${renamed}" == "${pkg}" ]]; then
+      echo "Unable to apply suffix to package path: ${pkg}" >&2
+      exit 1
+    fi
+    mv "${pkg}" "${renamed}"
+  done
+}
+
 if ! command -v makepkg >/dev/null 2>&1; then
   echo "makepkg is not installed." >&2
   echo "Install with your package manager (on Arch: sudo pacman -S base-devel)." >&2
@@ -52,6 +98,10 @@ cp LICENSE "${WORK_DIR}/LICENSE"
 
 mkdir -p target/arch
 find "${WORK_DIR}" -maxdepth 1 -type f -name '*.pkg.tar.*' -exec cp {} target/arch/ \;
+
+PACKAGE_SUFFIX="$(sanitize_package_suffix "$(resolve_package_suffix)")"
+echo "Applying package suffix: ${PACKAGE_SUFFIX}"
+apply_package_suffix "${PACKAGE_SUFFIX}"
 
 echo "Arch package(s):"
 find target/arch -maxdepth 1 -type f -name '*.pkg.tar.*' -print | sort

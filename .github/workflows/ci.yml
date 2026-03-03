@@ -37,8 +37,16 @@ jobs:
           if-no-files-found: error
 
   build-release:
-    name: Build (release)
-    runs-on: ubuntu-latest
+    name: Build (release, ${{ matrix.id }})
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ubuntu-22.04
+            runs_on: ubuntu-22.04
+          - id: ubuntu-latest
+            runs_on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -69,22 +77,36 @@ jobs:
             cargo build --locked --release
           fi
 
+      - name: Derive release variant metadata
+        id: variant
+        run: |
+          set -euo pipefail
+          LIBC_SUFFIX="$(./scripts/detect-libc-suffix.sh)"
+          echo "libc_suffix=${LIBC_SUFFIX}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "GIT_SYNC_PACKAGE_SUFFIX=${LIBC_SUFFIX}"
+            echo "GIT_SYNC_LIBC_SUFFIX=${LIBC_SUFFIX}"
+            echo "GIT_SYNC_RELEASE_VARIANT=${{ matrix.id }}"
+          } > target/release-variant.env
+          cp target/release/git-sync "target/release/git-sync-${{ matrix.id }}-${LIBC_SUFFIX}"
+
       - name: Upload release binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-release
-          path: target/release/git-sync
+          name: binary-release-${{ matrix.id }}
+          path: target/release/git-sync-${{ matrix.id }}-${{ steps.variant.outputs.libc_suffix }}
           if-no-files-found: error
 
       - name: Upload release package inputs
         uses: actions/upload-artifact@v4
         with:
-          name: release-package-inputs
+          name: release-package-inputs-${{ matrix.id }}
           path: |
             target/release/git-sync
             target/man/git-sync.1.gz
             target/man/git-sync-readme.7.gz
             target/man/git-sync-architecture.7.gz
+            target/release-variant.env
           if-no-files-found: error
 
   test:
@@ -173,9 +195,13 @@ jobs:
           if-no-files-found: error
 
   package-deb:
-    name: Package Debian (.deb)
+    name: Package Debian (.deb, ${{ matrix.release_variant }})
     runs-on: ubuntu-latest
     needs: [build-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        release_variant: [ubuntu-22.04, ubuntu-latest]
 
     steps:
       - name: Checkout
@@ -198,26 +224,41 @@ jobs:
       - name: Download prebuilt release package inputs
         uses: actions/download-artifact@v4
         with:
-          name: release-package-inputs
+          name: release-package-inputs-${{ matrix.release_variant }}
           path: target
+
+      - name: Load release variant metadata
+        run: |
+          set -euo pipefail
+          if [[ ! -f target/release-variant.env ]]; then
+            echo "Missing release variant metadata: target/release-variant.env" >&2
+            exit 1
+          fi
+          source target/release-variant.env
+          echo "GIT_SYNC_PACKAGE_SUFFIX=${GIT_SYNC_PACKAGE_SUFFIX}" >> "${GITHUB_ENV}"
+          echo "GIT_SYNC_RELEASE_VARIANT=${GIT_SYNC_RELEASE_VARIANT}" >> "${GITHUB_ENV}"
 
       - name: Verify tag/version consistency
         run: ./scripts/verify-tag-version.sh
 
       - name: Build Debian package from prebuilt inputs
-        run: GIT_SYNC_USE_PREBUILT=1 ./scripts/build-deb.sh
+        run: GIT_SYNC_USE_PREBUILT=1 GIT_SYNC_PACKAGE_SUFFIX="${GIT_SYNC_PACKAGE_SUFFIX}" ./scripts/build-deb.sh
 
       - name: Upload Debian package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: package-deb
+          name: package-deb-${{ matrix.release_variant }}
           path: target/debian/*.deb
           if-no-files-found: error
 
   package-arch:
-    name: Package Arch (.pkg.tar.zst)
+    name: Package Arch (.pkg.tar.zst, ${{ matrix.release_variant }})
     runs-on: ubuntu-latest
     needs: [build-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        release_variant: [ubuntu-22.04, ubuntu-latest]
     container:
       image: archlinux:latest
 
@@ -232,8 +273,19 @@ jobs:
       - name: Download prebuilt release package inputs
         uses: actions/download-artifact@v4
         with:
-          name: release-package-inputs
+          name: release-package-inputs-${{ matrix.release_variant }}
           path: target
+
+      - name: Load release variant metadata
+        run: |
+          set -euo pipefail
+          if [[ ! -f target/release-variant.env ]]; then
+            echo "Missing release variant metadata: target/release-variant.env" >&2
+            exit 1
+          fi
+          source target/release-variant.env
+          echo "GIT_SYNC_PACKAGE_SUFFIX=${GIT_SYNC_PACKAGE_SUFFIX}" >> "${GITHUB_ENV}"
+          echo "GIT_SYNC_RELEASE_VARIANT=${GIT_SYNC_RELEASE_VARIANT}" >> "${GITHUB_ENV}"
 
       - name: Verify tag/version consistency
         run: ./scripts/verify-tag-version.sh
@@ -245,12 +297,12 @@ jobs:
 
       - name: Build Arch package from prebuilt inputs
         run: |
-          su builder -c "cd '${GITHUB_WORKSPACE}' && GIT_SYNC_USE_PREBUILT=1 ./scripts/build-arch.sh"
+          su builder -c "cd '${GITHUB_WORKSPACE}' && GIT_SYNC_USE_PREBUILT=1 GIT_SYNC_PACKAGE_SUFFIX='${GIT_SYNC_PACKAGE_SUFFIX}' ./scripts/build-arch.sh"
 
       - name: Upload Arch package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: package-arch
+          name: package-arch-${{ matrix.release_variant }}
           path: target/arch/*.pkg.tar.*
           if-no-files-found: error
 
@@ -348,23 +400,26 @@ jobs:
           name: binary-debug
           path: dist/binary-debug
 
-      - name: Download release binary artifact
+      - name: Download release binary artifacts
         uses: actions/download-artifact@v4
         with:
-          name: binary-release
+          pattern: binary-release-*
           path: dist/binary-release
+          merge-multiple: true
 
-      - name: Download Debian package artifact
+      - name: Download Debian package artifacts
         uses: actions/download-artifact@v4
         with:
-          name: package-deb
+          pattern: package-deb-*
           path: dist/package-deb
+          merge-multiple: true
 
-      - name: Download Arch package artifact
+      - name: Download Arch package artifacts
         uses: actions/download-artifact@v4
         with:
-          name: package-arch
+          pattern: package-arch-*
           path: dist/package-arch
+          merge-multiple: true
 
       - name: Download docs artifact
         uses: actions/download-artifact@v4
@@ -388,7 +443,7 @@ jobs:
         run: |
           mkdir -p dist/release-assets
           cp dist/binary-debug/git-sync dist/release-assets/git-sync-debug
-          cp dist/binary-release/git-sync dist/release-assets/git-sync-release
+          cp dist/binary-release/* dist/release-assets/
           cp dist/package-deb/*.deb dist/release-assets/
           cp dist/package-arch/*.pkg.tar.* dist/release-assets/
           cp dist/docs-html/*.tar.gz dist/release-assets/

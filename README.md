@@ -411,7 +411,7 @@ Development tasks are grouped into tiers:
 ### Committing 
 Commit Message Shape Rules (git-sync)
 
-1. First line format: "<Prefix>: Imperative title case summary" (no trailing period).
+1. First line format: "<Prefix>: Brief summary" (no trailing period).
 2. Allowed prefixes: Add:, Change:, Fix:, Refactor:, Doc:, chore.
 3. Leave exactly one blank line after the first line.
 4. Body uses dash bullets ("- "), one change per line, no extra blank lines between bullets.
