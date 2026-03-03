@@ -130,16 +130,32 @@ jobs:
         run: ./scripts/verify-tag-version.sh
 
       - name: Build release binary
-        shell: bash
+        shell: pwsh
         run: |
-          if TAG="$(git describe --tags --exact-match HEAD 2>/dev/null)"; then
-            VERSION="${TAG#v}"
-            echo "Building tagged release with version override: ${VERSION}"
-            GIT_SYNC_VERSION_OVERRIDE="${VERSION}" cargo build --locked --release --target x86_64-pc-windows-msvc
-          else
+          $strawberryPerl = "C:\Strawberry\perl\bin\perl.exe"
+          if (!(Test-Path $strawberryPerl)) {
+            choco install strawberryperl -y --no-progress
+          }
+          if (!(Test-Path $strawberryPerl)) {
+            throw "Strawberry Perl not found at $strawberryPerl; required for vendored OpenSSL build"
+          }
+          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+          $env:PERL = $strawberryPerl
+          $env:OPENSSL_SRC_PERL = $strawberryPerl
+
+          $tag = git describe --tags --exact-match HEAD 2>$null
+          if ($LASTEXITCODE -eq 0 -and $tag) {
+            $version = $tag -replace '^v', ''
+            Write-Host "Building tagged release with version override: $version"
+            $env:GIT_SYNC_VERSION_OVERRIDE = $version
             cargo build --locked --release --target x86_64-pc-windows-msvc
-          fi
-          cp target/x86_64-pc-windows-msvc/release/git-sync.exe target/x86_64-pc-windows-msvc/release/git-sync-windows-latest-x86_64-pc-windows-msvc.exe
+          } else {
+            cargo build --locked --release --target x86_64-pc-windows-msvc
+          }
+
+          Copy-Item `
+            "target/x86_64-pc-windows-msvc/release/git-sync.exe" `
+            "target/x86_64-pc-windows-msvc/release/git-sync-windows-latest-x86_64-pc-windows-msvc.exe"
 
       - name: Upload release binary artifact
         uses: actions/upload-artifact@v4
