@@ -7,5 +7,6 @@
 //! Keeps interaction and rendering concerns separate from proof computation.
 
 mod diff_ops;
+mod export_ops;
 mod navigation;
 mod payload_ops;

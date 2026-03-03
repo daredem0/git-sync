@@ -35,6 +35,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             verify_metadata,
             format,
             payload_ledger,
+            payload_detail,
             resolve,
         }) => audit::run(
             repo,
@@ -42,6 +43,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             verify_metadata,
             format,
             payload_ledger,
+            payload_detail,
             resolve,
         ),
         Some(Command::Ui {

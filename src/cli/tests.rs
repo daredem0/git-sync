@@ -232,3 +232,53 @@ fn receive_parses_verbose_flag() {
         "receive --verbose should enable detailed diagnostics"
     );
 }
+
+// Verifies that `audit --format json` defaults payload-detail mode to full.
+#[test]
+fn audit_json_defaults_payload_detail_mode_to_full() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "audit",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--format",
+        "json",
+    ])
+    .expect("audit json command with required arguments should parse");
+
+    let Some(Command::Audit { payload_detail, .. }) = cli.command else {
+        panic!("expected parsed audit command");
+    };
+    assert!(
+        matches!(payload_detail, PayloadDetailMode::Full),
+        "audit --format json should default payload-detail to full"
+    );
+}
+
+// Verifies that `audit --payload-detail light` parses and maps to light detail mode.
+#[test]
+fn audit_json_parses_payload_detail_light() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "audit",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--format",
+        "json",
+        "--payload-detail",
+        "light",
+    ])
+    .expect("audit json command with light payload-detail should parse");
+
+    let Some(Command::Audit { payload_detail, .. }) = cli.command else {
+        panic!("expected parsed audit command");
+    };
+    assert!(
+        matches!(payload_detail, PayloadDetailMode::Light),
+        "audit --payload-detail light should map to light detail mode"
+    );
+}

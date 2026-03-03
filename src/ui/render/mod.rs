@@ -45,22 +45,25 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
     if state.show_help {
         render_help_overlay(frame, state);
     }
+    if state.is_export_notice_open() {
+        render_export_notice_overlay(frame, state);
+    }
 }
 
 /// Renders footer key-hint text, including transient action messages.
 pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
-        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | q quit"
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | p/P export paudit light/full | q quit"
     } else if state.is_payload_object_open() {
-        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | q quit"
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | p/P export paudit light/full | q quit"
     } else if state.main_view == MainView::Payload && state.is_payload_entries_view() {
-        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | v toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | ? help | p/P export paudit light/full | q quit"
     } else if state.main_view == MainView::Payload {
-        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | v toggle history/payload | ? help | q quit"
+        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | ? help | p/P export paudit light/full | q quit"
     } else if state.page_index == 0 {
-        "Tab switch heads/would-change focus | j/k or Up/Down move selection\nv toggle history/payload | Enter open selected head | Esc overview/quit | ? help | q quit"
+        "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit light/full | q quit"
     } else {
-        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | q quit"
+        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | p/P export paudit light/full | q quit"
     };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
@@ -107,6 +110,34 @@ pub(crate) fn render_help_overlay(frame: &mut Frame<'_>, state: &AppState) {
     frame.render_widget(help, area);
 }
 
+/// Renders a centered export-success notice overlay.
+fn render_export_notice_overlay(frame: &mut Frame<'_>, state: &AppState) {
+    let Some(notice) = state.export_notice.as_ref() else {
+        return;
+    };
+
+    let area = centered_rect(82, 44, frame.area());
+    frame.render_widget(Clear, area);
+
+    let lines = vec![
+        Line::from("Payload audit log was successfully exported."),
+        Line::from(String::new()),
+        Line::from(format!("Path: {}", notice.path.display())),
+        Line::from(format!("Date/time: {}", notice.exported_at_human_utc)),
+        Line::from(String::new()),
+        Line::from("Press Esc to close this message."),
+    ];
+
+    let notice = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("paudit Export"),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(notice, area);
+}
+
 #[cfg(test)]
 pub(crate) use test_api::help_text_for_mode;
 #[cfg(test)]
@@ -141,6 +172,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open selected head and move into commit pages\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from overview)\n\
              - q: quit"
@@ -152,6 +185,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open diff for selected file\n\
              - g / G: jump to first or last commit page for selected head\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: return to overview\n\
              - q: quit"
@@ -162,6 +197,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - h/l or Left/Right: horizontal scroll\n\
              - PgUp/PgDn: fast vertical scroll\n\
              - Home: reset diff scroll to origin\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: close diff and return to commit page\n\
              - q: quit"
@@ -175,6 +212,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open selected object detail\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from payload main page)\n\
              - q: quit"
@@ -187,6 +226,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open detail for selected resolved entry\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from payload main page)\n\
              - q: quit"
@@ -197,6 +238,8 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - h/l or Left/Right: horizontal scroll\n\
              - PgUp/PgDn: fast vertical scroll\n\
              - Home: reset object-detail scroll to origin\n\
+             - p: export light payload-audit JSON (without object details)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: close object detail and return to payload list\n\
              - q: quit"
@@ -432,6 +475,8 @@ fn help_highlight_rules() -> Vec<(&'static str, Style)> {
         ("Enter", help_key_style()),
         ("Esc", help_key_style()),
         ("Tab", help_key_style()),
+        ("p:", help_key_style()),
+        ("P:", help_key_style()),
         ("h/l", help_key_style()),
         ("j/k", help_key_style()),
         ("1 / 2 / 3", help_key_style()),

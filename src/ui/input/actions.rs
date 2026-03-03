@@ -37,10 +37,21 @@ pub(super) fn apply_key_action(
             state.enter_selected_head(model);
             false
         }
+        KeyAction::ExportPayloadAuditJsonFull => {
+            state.export_payload_audit_json_full(model);
+            false
+        }
+        KeyAction::ExportPayloadAuditJsonLight => {
+            state.export_payload_audit_json_light(model);
+            false
+        }
         KeyAction::Quit => true,
         KeyAction::Escape => {
             if state.show_help {
                 state.close_help();
+                false
+            } else if state.is_export_notice_open() {
+                state.close_export_notice();
                 false
             } else if state.is_diff_open() {
                 state.close_diff();

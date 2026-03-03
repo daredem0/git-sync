@@ -11,11 +11,14 @@
 use super::super::input::{
     handle_diff_keys, handle_key_press, handle_page_keys, handle_payload_object_keys,
 };
-use super::super::types::{DiffViewState, MainView, OverviewFocus, PayloadModel, PayloadSubView};
+use super::super::types::{
+    DiffViewState, ExportNotice, MainView, OverviewFocus, PayloadModel, PayloadSubView,
+};
 use super::support::*;
 use crate::git::PayloadObjectKind;
 use crossterm::event::KeyCode;
 use ratatui::text::Line;
+use std::path::PathBuf;
 
 // Verifies that Esc closes diff view without requesting app exit, and Esc exits when no diff is open.
 #[test]
@@ -150,6 +153,27 @@ fn handle_key_press_esc_closes_help_before_page_navigation_or_exit() {
     assert_eq!(
         state.help_page_index, 0,
         "closing help should reset paging to first page"
+    );
+}
+
+// Verifies that Esc closes export notice overlay before normal escape routing.
+#[test]
+fn handle_key_press_esc_closes_export_notice_before_exit() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.export_notice = Some(ExportNotice {
+        path: PathBuf::from("sync.paudit.json"),
+        exported_at_human_utc: "2026-03-03 12:34:56 UTC".to_string(),
+    });
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Esc);
+    assert!(
+        !should_exit,
+        "Esc should close export notice overlay first instead of exiting"
+    );
+    assert!(
+        state.export_notice.is_none(),
+        "Esc should hide export notice overlay"
     );
 }
 

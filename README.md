@@ -135,7 +135,7 @@ Main overview:
 │                                               ││src/git/bundle/mod.rs                  13        0       │
 └───────────────────────────────────────────────┘└─────────────────────────────────────────────────────────┘
 Tab switch heads/would-change focus | j/k or Up/Down move selection                                         
-v toggle history/payload | Enter open selected head | Esc overview/quit | ? help | q quit                   
+Enter open selected head | Esc overview/quit | ? help | p/P export paudit light/full | q quit              
 ```
 
 Commit detail:
@@ -195,7 +195,7 @@ Payload page:
 │440ec8ae7645 commit   261        yes           ││... (11 more lines)                                     │
 └───────────────────────────────────────────────┘└────────────────────────────────────────────────────────┘
 j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries                 
-Enter open object detail | v toggle history/payload | ? help | q quit                                      
+Enter open object detail | ? help | p/P export paudit light/full | q quit                                  
 ```
 
 #### Audit values auditors should use as decision gates
@@ -351,6 +351,8 @@ Main pages:
 - `2`: payload page
 - `3`: open first commit detail page for selected head
 - `v`: toggle overview <-> payload
+- `p`: export light payload-audit JSON (without object details)
+- `P`: export full payload-audit JSON (`.paudit`) file
 - `?`: toggle help overlay
 - `q`: quit
 
@@ -394,6 +396,7 @@ Payload page:
 - Non-interactive payload audit requires both `--repo` and `--bundle`, and supports:
   - `--format table|json`
   - `--payload-ledger summary|full` (JSON mode)
+  - `--payload-detail full|light` (JSON mode)
   - `--resolve pack-only|baseline` (non-interactive modes)
 - Payload proof currently supports repositories using `sha1` object format only; non-`sha1` formats fail closed.
 - `audit --verify-metadata` is the explicit non-interactive verification path and requires `--bundle` and `--repo`.

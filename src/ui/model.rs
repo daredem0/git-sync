@@ -105,7 +105,7 @@ pub(super) fn format_repo_display(repo_path: &Path) -> String {
 }
 
 /// Attempts to derive a repository name from the configured remotes.
-fn derive_repo_name_from_repo(repo_path: &Path) -> Option<String> {
+pub(super) fn derive_repo_name_from_repo(repo_path: &Path) -> Option<String> {
     let repo = git2::Repository::open(repo_path).ok()?;
     let remotes = repo.remotes().ok()?;
 

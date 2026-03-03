@@ -21,6 +21,7 @@
     "entry_ledger",
     "pack_summary",
     "pack_objects",
+    "object_detail_mode",
     "object_details"
   ],
   "properties": {
@@ -370,6 +371,13 @@
           }
         }
       }
+    },
+    "object_detail_mode": {
+      "type": "string",
+      "enum": [
+        "full",
+        "light"
+      ]
     },
     "object_details": {
       "type": "array",

@@ -8,7 +8,8 @@
 
 use crate::git::types::{
     BundleInspection, MaterializedObjectData, PayloadAudit, PayloadAuditDocument,
-    PayloadAuditError, PayloadObjectDetail, PayloadPackVerification, PayloadResolveMode,
+    PayloadAuditError, PayloadAuditObjectDetailMode, PayloadObjectDetail, PayloadPackVerification,
+    PayloadResolveMode,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -65,9 +66,35 @@ pub fn build_payload_audit_document_for_bundle_input_with_options(
     ledger_mode: crate::git::PayloadAuditLedgerMode,
     resolve_mode: PayloadResolveMode,
 ) -> Result<PayloadAuditDocument> {
+    build_payload_audit_document_for_bundle_input_with_options_and_detail_mode(
+        bundle_input_path,
+        repo_path,
+        ledger_mode,
+        PayloadAuditObjectDetailMode::Full,
+        resolve_mode,
+    )
+}
+
+/// Builds a serialized payload-audit JSON document with explicit ledger, object-detail, and resolve modes.
+///
+/// # Errors
+///
+/// Returns an error when bundle import/inspection fails or object-detail
+/// materialization fails (in `full` detail mode).
+pub fn build_payload_audit_document_for_bundle_input_with_options_and_detail_mode(
+    bundle_input_path: &Path,
+    repo_path: &Path,
+    ledger_mode: crate::git::PayloadAuditLedgerMode,
+    detail_mode: PayloadAuditObjectDetailMode,
+    resolve_mode: PayloadResolveMode,
+) -> Result<PayloadAuditDocument> {
     let session =
         open_payload_session_with_resolve_mode(bundle_input_path, repo_path, resolve_mode)?;
-    payload_audit_document_from_session_with_ledger_mode(&session, ledger_mode)
+    payload_audit_document_from_session_with_ledger_and_detail_mode(
+        &session,
+        ledger_mode,
+        detail_mode,
+    )
 }
 
 /// Collects detail lines for one selected payload object.
@@ -119,16 +146,21 @@ pub fn payload_audit_from_session(session: &PayloadSession) -> PayloadAudit {
     session.payload.clone()
 }
 
-/// Builds a serialized payload-audit JSON document from a reusable session using a selected ledger mode.
+/// Builds a serialized payload-audit JSON document from a reusable session using selected ledger and object-detail modes.
 ///
 /// # Errors
 ///
-/// Returns an error when object detail collection fails for any payload object.
-pub fn payload_audit_document_from_session_with_ledger_mode(
+/// Returns an error when object detail collection fails for any payload object in `full` mode.
+pub fn payload_audit_document_from_session_with_ledger_and_detail_mode(
     session: &PayloadSession,
     ledger_mode: crate::git::PayloadAuditLedgerMode,
+    detail_mode: PayloadAuditObjectDetailMode,
 ) -> Result<PayloadAuditDocument> {
-    document::payload_audit_document_from_session_with_ledger_mode(session, ledger_mode)
+    document::payload_audit_document_from_session_with_ledger_and_detail_mode(
+        session,
+        ledger_mode,
+        detail_mode,
+    )
 }
 
 /// Collects detail lines for one selected payload object from a reusable session.

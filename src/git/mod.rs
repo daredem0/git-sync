@@ -18,6 +18,7 @@ mod util;
 pub(crate) use bundle::PayloadSession;
 pub(crate) use bundle::{
     build_payload_audit_document_for_bundle_input_with_options,
+    build_payload_audit_document_for_bundle_input_with_options_and_detail_mode,
     collect_commit_file_patch_for_bundle_input, collect_head_audit_entries_for_bundle_input,
     collect_payload_audit_for_bundle_input_with_resolve_mode,
     collect_payload_object_detail_for_bundle_input, collect_payload_object_detail_for_session,
@@ -34,10 +35,11 @@ pub(crate) use types::{
     BundleHead, BundleInspection, BundleVersion, ChangeStatus, CommitAuditEntry,
     CommitAuditIdentity, CreateBundleOptions, CreateBundleResult, FileLineStat, HeadAuditEntry,
     OpenContext, PackEntryBaseRef, PackEntryKind, PackEntryRecord, PayloadAudit,
-    PayloadAuditDocument, PayloadAuditLedgerMode, PayloadObjectDetail, PayloadObjectEntry,
-    PayloadObjectKind, PayloadPackVerification, PayloadResolveMode, ReceiveApplyBackend,
-    ReceiveBundleOptions, ReceiveBundleResult, ReceiveIntegratePolicy, ReceiveMergeabilityCheck,
-    ReceiveMergeabilityStatus, ReceivePlanEntry, ReceivePlanStatus, ResolutionSource,
+    PayloadAuditDocument, PayloadAuditLedgerMode, PayloadAuditObjectDetailMode,
+    PayloadObjectDetail, PayloadObjectEntry, PayloadObjectKind, PayloadPackVerification,
+    PayloadResolveMode, ReceiveApplyBackend, ReceiveBundleOptions, ReceiveBundleResult,
+    ReceiveIntegratePolicy, ReceiveMergeabilityCheck, ReceiveMergeabilityStatus, ReceivePlanEntry,
+    ReceivePlanStatus, ResolutionSource,
 };
 
 #[cfg(test)]

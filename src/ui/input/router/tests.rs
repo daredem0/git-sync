@@ -23,6 +23,14 @@ fn global_action_maps_primary_navigation_and_global_shortcuts() {
         global_action(KeyCode::Char('3')),
         Some(KeyAction::GoCommitDetailPage)
     );
+    assert_eq!(
+        global_action(KeyCode::Char('p')),
+        Some(KeyAction::ExportPayloadAuditJsonLight)
+    );
+    assert_eq!(
+        global_action(KeyCode::Char('P')),
+        Some(KeyAction::ExportPayloadAuditJsonFull)
+    );
     assert_eq!(global_action(KeyCode::Char('q')), Some(KeyAction::Quit));
     assert_eq!(global_action(KeyCode::Esc), Some(KeyAction::Escape));
     assert_eq!(

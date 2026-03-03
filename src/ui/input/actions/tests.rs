@@ -8,9 +8,10 @@
 
 use super::*;
 use crate::ui::tests::support::sample_model;
-use crate::ui::types::{DiffViewState, PayloadObjectViewState};
+use crate::ui::types::{DiffViewState, ExportNotice, PayloadObjectViewState};
 use crossterm::event::KeyCode;
 use ratatui::text::Line;
+use std::path::PathBuf;
 
 fn oid(hex: &str) -> git2::Oid {
     git2::Oid::from_str(hex).expect("must parse test oid")
@@ -59,6 +60,19 @@ fn apply_key_action_handles_quit_and_escape_paths() {
     );
     assert!(state.payload_object_view.is_none());
 
+    state.export_notice = Some(ExportNotice {
+        path: PathBuf::from("sync.paudit.json"),
+        exported_at_human_utc: "2026-03-03 12:34:56 UTC".to_string(),
+    });
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::Escape),
+        "escape should close export notice before page navigation or exit"
+    );
+    assert!(
+        state.export_notice.is_none(),
+        "escape should clear export notice overlay state"
+    );
+
     state.page_index = 1;
     assert!(
         !apply_key_action(&mut state, &model, KeyAction::Escape),
@@ -90,6 +104,29 @@ fn apply_key_action_handles_main_view_and_help_toggles() {
         "main view toggle should not exit"
     );
     assert_eq!(state.main_view, MainView::Payload);
+}
+
+#[test]
+fn apply_key_action_export_payload_audit_sets_failure_message_when_export_fails() {
+    let model = sample_model(1, 1);
+    let mut state = AppState::new(&model);
+
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::ExportPayloadAuditJsonFull),
+        "export action should never request app exit"
+    );
+    assert!(
+        state
+            .action_message
+            .as_deref()
+            .is_some_and(|message| message.contains("failed to export paudit")),
+        "export failures should be surfaced as action messages"
+    );
+
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::ExportPayloadAuditJsonLight),
+        "light export action should never request app exit"
+    );
 }
 
 #[test]

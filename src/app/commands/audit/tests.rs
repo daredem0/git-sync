@@ -32,6 +32,7 @@ fn run_verify_metadata_requires_repo_and_bundle_arguments() {
         true,
         None,
         PayloadLedgerMode::Summary,
+        PayloadDetailMode::Full,
         CliPayloadResolveMode::PackOnly,
     );
     assert!(
@@ -47,6 +48,7 @@ fn run_verify_metadata_requires_repo_and_bundle_arguments() {
         true,
         None,
         PayloadLedgerMode::Summary,
+        PayloadDetailMode::Full,
         CliPayloadResolveMode::PackOnly,
     );
     assert!(
@@ -64,6 +66,7 @@ fn run_non_interactive_propagates_target_resolution_error() {
         None,
         OutputFormat::Table,
         PayloadLedgerMode::Summary,
+        PayloadDetailMode::Full,
         CliPayloadResolveMode::PackOnly,
     );
     assert!(

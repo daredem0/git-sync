@@ -45,6 +45,8 @@ pub struct PayloadAuditDocument {
     pub pack_summary: PayloadAuditPackSummary,
     /// Per-object listing from payload object enumeration.
     pub pack_objects: Vec<PayloadAuditDocumentPackObject>,
+    /// Object-detail export mode (`full` or `light`).
+    pub object_detail_mode: String,
     /// Per-object textual detail content for deep review/export.
     pub object_details: Vec<PayloadAuditDocumentObjectDetail>,
 }
@@ -56,6 +58,16 @@ pub enum PayloadAuditLedgerMode {
     /// Emit bounded first/last/unresolved subsets only.
     Summary,
     /// Emit all parsed entry rows.
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Output mode for serialized object-details section in payload-audit JSON.
+pub enum PayloadAuditObjectDetailMode {
+    /// Omit object detail content lines.
+    Light,
+    /// Emit full object detail content for all pack objects.
     Full,
 }
 

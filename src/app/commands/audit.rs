@@ -11,12 +11,13 @@ use std::path::PathBuf;
 
 use crate::app::{AppConfig, output};
 use crate::cli::{
-    OutputFormat, PayloadLedgerMode, PayloadResolveMode as CliPayloadResolveMode,
-    resolve_payload_audit_target,
+    OutputFormat, PayloadDetailMode, PayloadLedgerMode,
+    PayloadResolveMode as CliPayloadResolveMode, resolve_payload_audit_target,
 };
 use crate::git::{
-    PayloadAuditLedgerMode, PayloadResolveMode,
+    PayloadAuditLedgerMode, PayloadAuditObjectDetailMode, PayloadResolveMode,
     build_payload_audit_document_for_bundle_input_with_options,
+    build_payload_audit_document_for_bundle_input_with_options_and_detail_mode,
     collect_payload_audit_for_bundle_input_with_resolve_mode,
     verify_bundle_metadata_against_repo_input,
 };
@@ -28,6 +29,7 @@ pub(super) fn run(
     verify_metadata: bool,
     format: Option<OutputFormat>,
     payload_ledger: PayloadLedgerMode,
+    payload_detail: PayloadDetailMode,
     resolve: CliPayloadResolveMode,
 ) -> Result<()> {
     if verify_metadata {
@@ -49,6 +51,7 @@ pub(super) fn run(
         bundle,
         format.expect("format should be set in non-interactive mode"),
         payload_ledger,
+        payload_detail,
         resolve,
     )
 }
@@ -81,6 +84,7 @@ fn run_non_interactive(
     bundle: Option<PathBuf>,
     format: OutputFormat,
     payload_ledger: PayloadLedgerMode,
+    payload_detail: PayloadDetailMode,
     resolve: CliPayloadResolveMode,
 ) -> Result<()> {
     let resolve_mode = match resolve {
@@ -101,15 +105,29 @@ fn run_non_interactive(
             Ok(())
         }
         OutputFormat::Json => {
-            let payload_document = build_payload_audit_document_for_bundle_input_with_options(
-                &target.bundle_path,
-                &target.repo_path,
-                match payload_ledger {
-                    PayloadLedgerMode::Summary => PayloadAuditLedgerMode::Summary,
-                    PayloadLedgerMode::Full => PayloadAuditLedgerMode::Full,
-                },
-                resolve_mode,
-            )?;
+            let ledger_mode = match payload_ledger {
+                PayloadLedgerMode::Summary => PayloadAuditLedgerMode::Summary,
+                PayloadLedgerMode::Full => PayloadAuditLedgerMode::Full,
+            };
+            let payload_document = match payload_detail {
+                PayloadDetailMode::Full => {
+                    build_payload_audit_document_for_bundle_input_with_options(
+                        &target.bundle_path,
+                        &target.repo_path,
+                        ledger_mode,
+                        resolve_mode,
+                    )?
+                }
+                PayloadDetailMode::Light => {
+                    build_payload_audit_document_for_bundle_input_with_options_and_detail_mode(
+                        &target.bundle_path,
+                        &target.repo_path,
+                        ledger_mode,
+                        PayloadAuditObjectDetailMode::Light,
+                        resolve_mode,
+                    )?
+                }
+            };
             let payload_json = output::render_payload_audit_json(&payload_document)?;
             println!("{payload_json}");
             Ok(())

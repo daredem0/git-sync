@@ -35,6 +35,7 @@ impl AppState {
             payload_sort_mode: PayloadSortMode::Canonical,
             show_help: false,
             help_page_index: 0,
+            export_notice: None,
             action_message: None,
             payload_detail_cache: std::collections::HashMap::new(),
             payload_preview_cache: std::collections::HashMap::new(),
@@ -228,6 +229,16 @@ impl AppState {
     pub(crate) fn close_help(&mut self) {
         self.show_help = false;
         self.help_page_index = 0;
+    }
+
+    /// Returns `true` when export notice overlay is currently open.
+    pub(crate) fn is_export_notice_open(&self) -> bool {
+        self.export_notice.is_some()
+    }
+
+    /// Closes export notice overlay.
+    pub(crate) fn close_export_notice(&mut self) {
+        self.export_notice = None;
     }
 
     /// Advances help overlay to the next help page.

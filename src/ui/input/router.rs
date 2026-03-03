@@ -19,6 +19,8 @@ pub(super) enum KeyAction {
     GoHistoryOverview,
     GoPayloadOverview,
     GoCommitDetailPage,
+    ExportPayloadAuditJsonFull,
+    ExportPayloadAuditJsonLight,
     Quit,
     Escape,
     ToggleHelp,
@@ -65,6 +67,8 @@ pub(super) enum PayloadObjectAction {
 pub(super) fn global_action(code: KeyCode) -> Option<KeyAction> {
     primary_navigation_action(code).or(match code {
         KeyCode::Char('q') => Some(KeyAction::Quit),
+        KeyCode::Char('p') => Some(KeyAction::ExportPayloadAuditJsonLight),
+        KeyCode::Char('P') => Some(KeyAction::ExportPayloadAuditJsonFull),
         KeyCode::Esc => Some(KeyAction::Escape),
         KeyCode::Char('?') => Some(KeyAction::ToggleHelp),
         _ => None,

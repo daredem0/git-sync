@@ -51,6 +51,8 @@ pub enum Command {
         format: Option<OutputFormat>,
         #[arg(long, value_enum, default_value_t = PayloadLedgerMode::Summary)]
         payload_ledger: PayloadLedgerMode,
+        #[arg(long, value_enum, default_value_t = PayloadDetailMode::Full)]
+        payload_detail: PayloadDetailMode,
         #[arg(long, value_enum, default_value_t = PayloadResolveMode::PackOnly)]
         resolve: PayloadResolveMode,
     },
@@ -104,6 +106,16 @@ pub enum PayloadLedgerMode {
     Summary,
     /// Emit full parsed entry-ledger rows.
     Full,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+/// Object-detail export mode used by `audit --format json`.
+pub enum PayloadDetailMode {
+    /// Include full object detail rows and textual content lines.
+    #[default]
+    Full,
+    /// Omit object detail rows/content and keep only summary/object-list sections.
+    Light,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

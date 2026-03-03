@@ -224,6 +224,7 @@ fn render_payload_audit_json_outputs_pretty_json_document() {
             unknown_objects: 0,
         },
         pack_objects: Vec::new(),
+        object_detail_mode: "full".to_string(),
         object_details: Vec::new(),
     };
 

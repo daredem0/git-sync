@@ -72,12 +72,19 @@ pub(crate) struct AppState {
     pub(crate) payload_selected_index: usize,
     pub(crate) show_help: bool,
     pub(crate) help_page_index: usize,
+    pub(crate) export_notice: Option<ExportNotice>,
     pub(crate) action_message: Option<String>,
     pub(crate) payload_detail_cache: HashMap<git2::Oid, git::PayloadObjectDetail>,
     pub(crate) payload_preview_cache: HashMap<git2::Oid, PayloadPreviewState>,
     pub(crate) payload_preview: Option<PayloadPreviewState>,
     pub(crate) payload_object_view: Option<PayloadObjectViewState>,
     pub(crate) diff_view: Option<DiffViewState>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExportNotice {
+    pub(crate) path: PathBuf,
+    pub(crate) exported_at_human_utc: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

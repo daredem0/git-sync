@@ -21,7 +21,7 @@ pub use payload_document::{
     PayloadAuditDocument, PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead,
     PayloadAuditDocumentObjectDetail, PayloadAuditDocumentPackEntry,
     PayloadAuditDocumentPackObject, PayloadAuditDocumentTransportEntry, PayloadAuditLedgerMode,
-    PayloadAuditPackSummary,
+    PayloadAuditObjectDetailMode, PayloadAuditPackSummary,
 };
 pub use payload_ledger::{
     PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord, ResolutionSource,

@@ -10,8 +10,8 @@ use crate::git::types::{
     PackEntryBaseRef, PackEntryKind, PackEntryLedger, PackEntryRecord, PayloadAuditDocument,
     PayloadAuditDocumentEntryLedger, PayloadAuditDocumentHead, PayloadAuditDocumentObjectDetail,
     PayloadAuditDocumentPackEntry, PayloadAuditDocumentPackObject,
-    PayloadAuditDocumentTransportEntry, PayloadAuditLedgerMode, PayloadAuditPackSummary,
-    PayloadObjectKind, ResolutionSource,
+    PayloadAuditDocumentTransportEntry, PayloadAuditLedgerMode, PayloadAuditObjectDetailMode,
+    PayloadAuditPackSummary, PayloadObjectKind, ResolutionSource,
 };
 use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
@@ -27,9 +27,10 @@ const LEDGER_SUMMARY_EDGE_COUNT: usize = 20;
 /// # Errors
 ///
 /// Returns an error when object detail collection fails for any payload object.
-pub(super) fn payload_audit_document_from_session_with_ledger_mode(
+pub(super) fn payload_audit_document_from_session_with_ledger_and_detail_mode(
     session: &PayloadSession,
     ledger_mode: PayloadAuditLedgerMode,
+    detail_mode: PayloadAuditObjectDetailMode,
 ) -> Result<PayloadAuditDocument> {
     let mut pack_objects = Vec::<PayloadAuditDocumentPackObject>::new();
     let mut object_details = Vec::<PayloadAuditDocumentObjectDetail>::new();
@@ -64,16 +65,18 @@ pub(super) fn payload_audit_document_from_session_with_ledger_mode(
             context_path: object.context_path.clone(),
         });
 
-        let detail = super::collect_payload_object_detail_for_session(session, object.oid)?;
-        object_details.push(PayloadAuditDocumentObjectDetail {
-            oid: detail.oid.to_string(),
-            kind: payload_kind_code(detail.kind).to_string(),
-            size_bytes: detail.size_bytes,
-            syntax_path_hint: detail.syntax_path_hint,
-            blob_paths: detail.blob_paths,
-            text_line_count: detail.text_line_count,
-            lines: detail.lines,
-        });
+        if matches!(detail_mode, PayloadAuditObjectDetailMode::Full) {
+            let detail = super::collect_payload_object_detail_for_session(session, object.oid)?;
+            object_details.push(PayloadAuditDocumentObjectDetail {
+                oid: detail.oid.to_string(),
+                kind: payload_kind_code(detail.kind).to_string(),
+                size_bytes: detail.size_bytes,
+                syntax_path_hint: detail.syntax_path_hint,
+                blob_paths: detail.blob_paths,
+                text_line_count: detail.text_line_count,
+                lines: detail.lines,
+            });
+        }
     }
 
     let total_objects = session.payload.objects.len();
@@ -127,6 +130,7 @@ pub(super) fn payload_audit_document_from_session_with_ledger_mode(
         entry_ledger: build_document_entry_ledger(&session.payload.entry_ledger, ledger_mode),
         pack_summary: summary,
         pack_objects,
+        object_detail_mode: payload_object_detail_mode_code(detail_mode).to_string(),
         object_details,
     })
 }
@@ -215,6 +219,14 @@ fn payload_ledger_mode_code(mode: PayloadAuditLedgerMode) -> &'static str {
     match mode {
         PayloadAuditLedgerMode::Summary => "summary",
         PayloadAuditLedgerMode::Full => "full",
+    }
+}
+
+/// Returns stable string code for payload object-detail export mode.
+fn payload_object_detail_mode_code(mode: PayloadAuditObjectDetailMode) -> &'static str {
+    match mode {
+        PayloadAuditObjectDetailMode::Light => "light",
+        PayloadAuditObjectDetailMode::Full => "full",
     }
 }
 

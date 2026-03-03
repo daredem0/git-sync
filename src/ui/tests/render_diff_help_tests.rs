@@ -9,11 +9,12 @@
 // Focus: rendering behavior for diff page, footer/help text, and help overlay modes.
 
 use super::super::render::{
-    help_text_for_mode, render_diff_view, render_footer_text, render_help_overlay,
+    help_text_for_mode, render_diff_view, render_footer_text, render_help_overlay, render_page,
 };
-use super::super::types::{DiffViewState, MainView, PayloadSubView};
+use super::super::types::{DiffViewState, ExportNotice, MainView, PayloadSubView};
 use super::support::*;
 use ratatui::text::Line;
+use std::path::PathBuf;
 
 // Verifies that footer text switches to diff controls only when a diff view is active.
 #[test]
@@ -23,8 +24,8 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
 
     let overview_footer = render_footer_text(&state);
     assert!(
-        overview_footer.contains("toggle history/payload"),
-        "overview footer should include top-level view switch hint"
+        !overview_footer.contains("toggle history/payload"),
+        "overview footer should not include top-level view-switch hint anymore"
     );
     assert!(
         !overview_footer.contains("1 main | 2 payload | 3 commit"),
@@ -34,12 +35,16 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         overview_footer.contains("Enter open selected head"),
         "overview footer should include commit-page action hints"
     );
+    assert!(
+        overview_footer.contains("p/P export paudit light/full"),
+        "overview footer should include payload-audit export hint"
+    );
 
     state.page_index = 1;
     let commit_footer = render_footer_text(&state);
     assert!(
         !commit_footer.contains("toggle history/payload"),
-        "commit footer should not include main-page-only view switch hint"
+        "commit footer should not include top-level view switch hint"
     );
 
     state.diff_view = Some(DiffViewState {
@@ -112,6 +117,10 @@ fn help_text_for_mode_switches_content_by_view() {
     assert!(
         diff_help.contains("Hotkeys (Diff View)"),
         "page helper should return diff hotkey help when diff mode is active"
+    );
+    assert!(
+        diff_help.contains("p: export light payload-audit JSON"),
+        "diff-mode help text should include payload-audit export shortcut"
     );
 }
 
@@ -304,5 +313,36 @@ fn render_help_overlay_payload_entries_audit_page_explains_transport_checks() {
     assert!(
         output.contains("HDR_SIZE"),
         "payload entries audit page should explain size sanity checks"
+    );
+}
+
+// Verifies that export notice overlay shows success text, path, timestamp, and Esc hint.
+#[test]
+fn render_page_export_notice_overlay_includes_success_details() {
+    let model = sample_model(1, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.export_notice = Some(ExportNotice {
+        path: PathBuf::from("/tmp/20260303T123456Z_repo_sync.bundle.paudit.json"),
+        exported_at_human_utc: "2026-03-03 12:34:56 UTC".to_string(),
+    });
+
+    let output = render_and_capture_text(140, 35, |frame| {
+        render_page(frame, &model, &state);
+    });
+    assert!(
+        output.contains("Payload audit log was successfully exported"),
+        "export notice should include success headline"
+    );
+    assert!(
+        output.contains("Path: /tmp/20260303T123456Z_repo_sync.bundle.paudit.json"),
+        "export notice should include exported file path"
+    );
+    assert!(
+        output.contains("Date/time: 2026-03-03 12:34:56 UTC"),
+        "export notice should include human-readable UTC time"
+    );
+    assert!(
+        output.contains("Press Esc to close this message"),
+        "export notice should include Esc close hint"
     );
 }
