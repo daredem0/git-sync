@@ -109,6 +109,45 @@ jobs:
             target/release-variant.env
           if-no-files-found: error
 
+  build-release-windows:
+    name: Build (release, windows-latest)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag/version consistency
+        shell: bash
+        run: ./scripts/verify-tag-version.sh
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if TAG="$(git describe --tags --exact-match HEAD 2>/dev/null)"; then
+            VERSION="${TAG#v}"
+            echo "Building tagged release with version override: ${VERSION}"
+            GIT_SYNC_VERSION_OVERRIDE="${VERSION}" cargo build --locked --release --target x86_64-pc-windows-msvc
+          else
+            cargo build --locked --release --target x86_64-pc-windows-msvc
+          fi
+          cp target/x86_64-pc-windows-msvc/release/git-sync.exe target/x86_64-pc-windows-msvc/release/git-sync-windows-latest-x86_64-pc-windows-msvc.exe
+
+      - name: Upload release binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-release-windows-latest
+          path: target/x86_64-pc-windows-msvc/release/git-sync-windows-latest-x86_64-pc-windows-msvc.exe
+          if-no-files-found: error
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -385,7 +424,7 @@ jobs:
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-debug, build-release, test, package-deb, package-arch, coverage, docs]
+    needs: [build-debug, build-release, build-release-windows, test, package-deb, package-arch, coverage, docs]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
