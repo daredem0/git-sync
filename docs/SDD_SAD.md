@@ -29,7 +29,8 @@ Primary command surfaces:
 - `create`: produce a transport package from a linear commit range
 - `audit` (interactive default): TUI review of history and payload
 - `audit --format table|json`: non-interactive payload audit output
-  - `--payload-ledger summary|full` (JSON)
+  - `--payload-ledger none|summary|full` (JSON)
+  - `--payload-detail full|light` (JSON)
   - `--resolve pack-only|baseline` (non-interactive)
 - `audit --verify-metadata`: explicit metadata-to-repo verification check
 - `ui`: explicit interactive entrypoint
@@ -176,7 +177,7 @@ Interactive mode:
 Non-interactive payload mode:
 
 - `git-sync audit --repo --bundle --format table`
-- `git-sync audit --repo --bundle --format json [--payload-ledger summary|full]`
+- `git-sync audit --repo --bundle --format json [--payload-ledger none|summary|full] [--payload-detail full|light]`
 - optional resolve strategy: `--resolve pack-only|baseline`
 
 Explicit metadata verify mode:
@@ -319,8 +320,8 @@ The payload audit document (`.paudit`) is an **audit-time proof/report document*
 | Envelope metadata | schema/tool/provenance + bundle identity | Establishes report context and traceability |
 | `transport_entries` | transport files with size/hash | Verifies packaged transport components |
 | `pack_proof` | verification status, pack version, compatibility counters, entry/materialization counters, transfer gate, checksums | Primary proof tuple for completeness + integrity decisions |
-| `entry_ledger` (`summary`/`full`) | authoritative stream-entry accounting with unresolved rows and optional full rows | Direct inspection of PACK entry coverage and failure context |
-| `pack_summary`, `pack_objects`, `object_details` | derived object-level views and drill-down detail | Reviewer-friendly browsing after proof is established |
+| `entry_ledger` (`none`/`summary`/`full`) | authoritative stream-entry accounting with selectable row verbosity | Direct inspection of PACK entry coverage and failure context |
+| `pack_summary`, `pack_objects`, `object_details` | derived object-level views and drill-down detail (with optional empty object sections in minimal profile) | Reviewer-friendly browsing after proof is established |
 
 Relationship view of metadata and payload evidence:
 
@@ -414,6 +415,11 @@ The payload page also differentiates between derived and authoritative views:
 
 - `Objects` subview: deduplicated, reviewer-friendly projection
 - `Entries` subview: authoritative stream-order ledger used for completeness proof
+- interactive export keys provide two paudit profiles:
+  - `p`: minimal (`object_detail_mode=light`, `entry_ledger.mode=none`)
+  - `P`: full (`object_detail_mode=full`, `entry_ledger.mode=summary`)
+- exported paudit files are written to the process current working directory
+- successful export opens a dismissible overlay with output path + UTC date/time (`Esc` closes)
 
 ### 5.3 Non-interactive audit sequence
 
@@ -421,11 +427,15 @@ Non-interactive mode is the automation and archival path. It is deliberately spl
 
 | Mode | Inputs | Output | Best used for |
 |---|---|---|---|
-| Payload proof from bundle | `--repo --bundle --format table|json` (optional `--resolve pack-only|baseline`) | Proof counters, checksums, transfer status, transport/object rows, ledger (`summary` or `full`) | Transfer approval workflows, evidence archiving, machine policy checks |
-| Repository-range manifest | `--repo --from --to --format ...` | Changed-file manifest from repository truth | Intent review and “what changed in repo terms” reporting |
+| Payload proof from bundle | `--repo --bundle --format table|json` (optional `--resolve pack-only|baseline`, `--payload-ledger none|summary|full`, `--payload-detail full|light`) | Proof counters, checksums, transfer status, transport rows, and selectable ledger/object-detail sections | Transfer approval workflows, evidence archiving, machine policy checks |
 | Metadata verification | `--verify-metadata --repo --bundle` | Pass/fail with detailed mismatch context | Sidecar integrity and sidecar-vs-repo equivalence checks |
 
 `--format table` is designed for quick human review of the proof tuple. `--format json` emits the full payload-audit document for pipelines and long-term evidence retention.
+
+Minimal JSON profile:
+
+- `--payload-ledger none --payload-detail light`
+- keeps the proof tuple and object-type summary while omitting entry rows, pack-object rows, and object-detail lines
 
 Object-format guard: the payload proof path currently supports `sha1` object-format repositories only. Non-`sha1` formats are rejected fail-closed before payload parsing begins.
 
@@ -800,10 +810,10 @@ Proof evidence is deliberately exposed in every review surface so that operators
 
 | Surface | Evidence shown | Typical use |
 |---|---|---|
-| TUI overview (`Bundle Integrity`) | Proof status, transfer gate state, high-level counters | Fast operator confidence check before drill-down |
-| TUI payload page header | Parsed/materialized/unique/duplicate counters and checksum context | Interactive technical review of payload status |
+| TUI overview (`Bundle Integrity`) | Proof status, transfer gate state, parsed/materialized counters, and commit count | Fast operator confidence check before drill-down |
+| TUI payload page header | Parsed/materialized counters, commit count, unique/duplicate counters, and checksum context | Interactive technical review of payload status |
 | Non-interactive table | Concise proof tuple + ledger summary | Human-readable CI logs and release artifacts |
-| Non-interactive JSON | Full `pack_proof` + `entry_ledger` (`summary`/`full`) + derived object sections | Machine policy, archival evidence, reproducible audit records |
+| Non-interactive JSON | `pack_proof` + selectable `entry_ledger` (`none`/`summary`/`full`) + selectable object detail level (`full`/`light`) | Machine policy, archival evidence, reproducible audit records |
 
 ### 6.7 Current proof-path boundaries
 
@@ -846,6 +856,10 @@ Key interaction properties:
 - `v` toggles history/payload from main page
 - `Tab` switches overview focus between head and would-change tables
 - payload supports sort cycling, page jumps, and entry/object subview toggles
+- `p` exports minimal paudit (`object_detail_mode=light`, `entry_ledger.mode=none`)
+- `P` exports full paudit (`object_detail_mode=full`, `entry_ledger.mode=summary`)
+- paudit exports write to current working directory with `<UTC_ISO_BASIC>_<repo>_<bundle>_<mode>.paudit.json` naming
+- successful export displays a notice overlay with path and UTC date/time; `Esc` closes the overlay
 - `?` opens a contextual help overlay with three pages (`Hotkeys`, `Glossary`, `Audit Guide`)
 - while help is open, paging keys (`PgUp/PgDn`, `h/l`, arrows, `j/k`, `Tab`) switch help pages instead of mutating the underlying review selection
 - Esc closes deep modes first (diff/detail), then unwinds to overview, then exits
@@ -957,6 +971,16 @@ Version usage:
 - create metadata currently carries package/tool version fields for traceability
 - payload audit document includes runtime tool version in exported evidence
 
+### 9.1 Release packaging variants and artifact naming
+
+Release packaging is tied to release-build provenance:
+
+- CI builds release binaries on `ubuntu-22.04` and `ubuntu-latest`
+- Debian and Arch package jobs consume prebuilt release binary/manpage inputs from the matching release variant
+- package scripts derive a libc suffix from the build host (`getconf GNU_LIBC_VERSION`, fallback `ldd --version`)
+- both package formats use the same suffix contract (`*-<libc-suffix>.deb` and `*-<libc-suffix>.pkg.tar.*`)
+- `GIT_SYNC_PACKAGE_SUFFIX` can override detected suffix values for controlled/reproducible naming
+
 ## 10. Test Strategy
 
 The suite is structured to preserve command behavior, proof invariants, and UI consistency.
@@ -979,6 +1003,7 @@ Representative covered areas:
 - commit and file-level extraction for review pages
 - payload session/object detail behaviors
 - PACK mismatch and unresolved-delta rejection paths
+- paudit export mode paths (`--payload-ledger none|summary|full`, `--payload-detail full|light`) and interactive `p`/`P` export notice behavior
 - CLI path contracts (`tests/main_cli_paths.rs`)
 - end-to-end workflow (`tests/bundle_workflow_integration.rs`)
 - scripted receive matrix execution (`tests/receive_matrix_script_integration.rs`)

@@ -5,8 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
 ## [Unreleased]
+
+## [0.8.3] - 2026-03-03
+
+### Added
+- Added dual release-build variants in CI (`ubuntu-22.04` and `ubuntu-latest`) with Debian and Arch package jobs for each variant using prebuilt release inputs.
+- Added libc-derived package suffix detection (`scripts/detect-libc-suffix.sh`) and consistent suffixing for both `.deb` and `.pkg.tar.*` package outputs (override via `GIT_SYNC_PACKAGE_SUFFIX`).
+- Added JSON object-detail export control for payload audit output via `--payload-detail full|light`.
+- Added `--payload-ledger none` mode (`none|summary|full`) for payload-audit JSON exports.
+- Added interactive paudit export hotkeys:
+  - `p`: minimal export profile (`object_detail_mode=light`, `entry_ledger.mode=none`)
+  - `P`: full export profile (`object_detail_mode=full`, `entry_ledger.mode=summary`)
+- Added Windows release CI build job (`windows-latest`) targeting `x86_64-pc-windows-msvc`, publishing a versioned `.exe` artifact.
+
+### Changed
+- Updated interactive paudit exports to write into the current working directory from which `git-sync` is invoked.
+- Updated paudit export file naming to include UTC ISO-basic timestamp plus repo/bundle/mode tokens (`<timestamp>_<repo>_<bundle>_<mode>.paudit.json`).
+- Replaced transient export action hints with a dismissible export notice overlay showing success status, output path, UTC date/time, and `Esc` close guidance.
+- Simplified Bundle Integrity/Payload header counter presentation:
+  - show parsed/materialized entry ratios as one combined line when both match
+  - surface `commits` count in both overview integrity and payload header summaries
+- Tightened minimal paudit shape so `--payload-ledger none --payload-detail light` omits entry-ledger rows, pack-object rows, and object-detail rows.
+- Updated release workflow dependencies and asset collection so the Windows `.exe` is included in GitHub release uploads alongside Linux binaries and packages.
+
+### Tests
+- Added CLI, payload-document, and UI regression coverage for:
+  - `--payload-ledger none` and `--payload-detail full|light` behavior
+  - interactive `p`/`P` export actions and export notice handling
+  - minimal paudit document shape guarantees (no ledger rows, no pack objects, no object details)
+- Hardened UI command/runtime test reliability by removing environment-dependent terminal assumptions in command-path tests and adding deterministic runtime setup/cleanup coverage hooks.
+
+### Documentation
+- Updated README audit/export guidance for new paudit modes, minimal export profile, and `p`/`P` interactive hotkeys.
+- Updated README packaging guidance for libc-suffixed Debian/Arch package variants built from prebuilt release artifacts.
 
 ## [0.8.2] - 2026-03-02
 
@@ -401,7 +433,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/daredem0/git-sync/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/daredem0/git-sync/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/daredem0/git-sync/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/daredem0/git-sync/compare/v0.7.3...v0.8.0
