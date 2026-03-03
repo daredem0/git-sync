@@ -86,21 +86,49 @@ fn leave_alternate_screen(backend: &mut CrosstermBackend<io::Stdout>) -> io::Res
     execute!(backend, LeaveAlternateScreen).map(|_| ())
 }
 
-fn show_terminal_cursor(
-    terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
-) -> io::Result<()> {
+fn show_terminal_cursor<B: Backend>(terminal: &mut ratatui::Terminal<B>) -> io::Result<()> {
     terminal.show_cursor()
+}
+
+fn build_crossterm_terminal(
+    stdout: io::Stdout,
+) -> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>> {
+    let backend = CrosstermBackend::new(stdout);
+    ratatui::Terminal::new(backend).map_err(Into::into)
+}
+
+fn setup_terminal_with<B: Backend>(
+    enable_raw_mode_fn: fn() -> io::Result<()>,
+    enter_alt_screen_fn: fn(&mut io::Stdout) -> io::Result<()>,
+    build_terminal_fn: fn(io::Stdout) -> Result<ratatui::Terminal<B>>,
+) -> Result<ratatui::Terminal<B>> {
+    enable_raw_mode_fn()?;
+    let mut stdout = io::stdout();
+    enter_alt_screen_fn(&mut stdout)?;
+    build_terminal_fn(stdout)
 }
 
 fn setup_crossterm_terminal_with(
     enable_raw_mode_fn: fn() -> io::Result<()>,
     enter_alt_screen_fn: fn(&mut io::Stdout) -> io::Result<()>,
 ) -> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>> {
-    enable_raw_mode_fn()?;
-    let mut stdout = io::stdout();
-    enter_alt_screen_fn(&mut stdout)?;
-    let backend = CrosstermBackend::new(stdout);
-    ratatui::Terminal::new(backend).map_err(Into::into)
+    setup_terminal_with(
+        enable_raw_mode_fn,
+        enter_alt_screen_fn,
+        build_crossterm_terminal,
+    )
+}
+
+fn cleanup_terminal_with<B: Backend>(
+    terminal: &mut ratatui::Terminal<B>,
+    disable_raw_mode_fn: fn() -> io::Result<()>,
+    leave_alt_screen_fn: fn(&mut B) -> io::Result<()>,
+    show_cursor_fn: fn(&mut ratatui::Terminal<B>) -> io::Result<()>,
+) {
+    // Always attempt terminal cleanup, even when the event loop returns an error.
+    let _ = disable_raw_mode_fn();
+    let _ = leave_alt_screen_fn(terminal.backend_mut());
+    let _ = show_cursor_fn(terminal);
 }
 
 fn cleanup_crossterm_terminal_with(
@@ -109,10 +137,12 @@ fn cleanup_crossterm_terminal_with(
     leave_alt_screen_fn: fn(&mut CrosstermBackend<io::Stdout>) -> io::Result<()>,
     show_cursor_fn: fn(&mut ratatui::Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()>,
 ) {
-    // Always attempt terminal cleanup, even when the event loop returns an error.
-    let _ = disable_raw_mode_fn();
-    let _ = leave_alt_screen_fn(terminal.backend_mut());
-    let _ = show_cursor_fn(terminal);
+    cleanup_terminal_with(
+        terminal,
+        disable_raw_mode_fn,
+        leave_alt_screen_fn,
+        show_cursor_fn,
+    );
 }
 
 /// Runs the interactive TUI audit workflow for the provided config.

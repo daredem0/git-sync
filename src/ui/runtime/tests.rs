@@ -114,21 +114,21 @@ fn setup_enter_alt_fail_stub(_stdout: &mut io::Stdout) -> io::Result<()> {
     Err(io::Error::other("scripted enter-alt failure"))
 }
 
+fn setup_build_test_terminal(_stdout: io::Stdout) -> Result<ratatui::Terminal<TestBackend>> {
+    ratatui::Terminal::new(TestBackend::new(100, 30)).map_err(Into::into)
+}
+
 fn cleanup_disable_raw_stub() -> io::Result<()> {
     CLEANUP_DISABLE_RAW_CALLS.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
 
-fn cleanup_leave_alt_stub(
-    _backend: &mut ratatui::backend::CrosstermBackend<io::Stdout>,
-) -> io::Result<()> {
+fn cleanup_leave_alt_test_stub(_backend: &mut TestBackend) -> io::Result<()> {
     CLEANUP_LEAVE_ALT_CALLS.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
 
-fn cleanup_show_cursor_stub(
-    _terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
-) -> io::Result<()> {
+fn cleanup_show_cursor_test_stub(_terminal: &mut ratatui::Terminal<TestBackend>) -> io::Result<()> {
     CLEANUP_SHOW_CURSOR_CALLS.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
@@ -284,7 +284,11 @@ fn setup_crossterm_terminal_with_uses_injected_setup_operations() {
     SETUP_ENABLE_RAW_CALLS.store(0, Ordering::SeqCst);
     SETUP_ENTER_ALT_CALLS.store(0, Ordering::SeqCst);
 
-    let terminal = setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_stub);
+    let terminal = setup_terminal_with(
+        setup_enable_raw_stub,
+        setup_enter_alt_stub,
+        setup_build_test_terminal,
+    );
     assert!(
         terminal.is_ok(),
         "setup helper should build terminal when injected setup hooks succeed"
@@ -303,8 +307,12 @@ fn setup_crossterm_terminal_with_uses_injected_setup_operations() {
 
 #[test]
 fn setup_crossterm_terminal_with_propagates_enter_alt_failures() {
-    let error = setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_fail_stub)
-        .expect_err("enter-alt setup failures should bubble up");
+    let error = setup_terminal_with(
+        setup_enable_raw_stub,
+        setup_enter_alt_fail_stub,
+        setup_build_test_terminal,
+    )
+    .expect_err("enter-alt setup failures should bubble up");
     assert!(
         error.to_string().contains("scripted enter-alt failure"),
         "setup helper should preserve enter-alt failure detail"
@@ -317,13 +325,17 @@ fn cleanup_crossterm_terminal_with_uses_injected_cleanup_operations() {
     CLEANUP_LEAVE_ALT_CALLS.store(0, Ordering::SeqCst);
     CLEANUP_SHOW_CURSOR_CALLS.store(0, Ordering::SeqCst);
 
-    let mut terminal = setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_stub)
-        .expect("terminal setup should succeed for cleanup helper test");
-    cleanup_crossterm_terminal_with(
+    let mut terminal = setup_terminal_with(
+        setup_enable_raw_stub,
+        setup_enter_alt_stub,
+        setup_build_test_terminal,
+    )
+    .expect("terminal setup should succeed for cleanup helper test");
+    cleanup_terminal_with(
         &mut terminal,
         cleanup_disable_raw_stub,
-        cleanup_leave_alt_stub,
-        cleanup_show_cursor_stub,
+        cleanup_leave_alt_test_stub,
+        cleanup_show_cursor_test_stub,
     );
 
     assert_eq!(
@@ -351,10 +363,22 @@ fn crossterm_runtime_ops_setup_terminal_is_callable() {
 
 #[test]
 fn crossterm_runtime_ops_cleanup_terminal_is_callable() {
-    let mut terminal = setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_stub)
-        .expect("setup helper should provide terminal for cleanup wrapper");
     let runtime = CrosstermRuntimeOps;
-    runtime.cleanup_terminal(&mut terminal);
+    match setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_stub) {
+        Ok(mut terminal) => runtime.cleanup_terminal(&mut terminal),
+        Err(error) => {
+            let is_would_block = error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|value| value.kind() == ErrorKind::WouldBlock);
+            assert!(
+                is_would_block
+                    || error
+                        .to_string()
+                        .contains("Resource temporarily unavailable"),
+                "unexpected setup failure for cleanup wrapper: {error}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -366,8 +390,7 @@ fn crossterm_screen_helpers_are_callable() {
     let _ = leave_alternate_screen(&mut backend);
 
     let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(io::stdout()))
-            .expect("must create terminal for cursor helper");
+        ratatui::Terminal::new(TestBackend::new(100, 30)).expect("must create test terminal");
     let _ = show_terminal_cursor(&mut terminal);
 }
 
