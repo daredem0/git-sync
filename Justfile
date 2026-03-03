@@ -35,6 +35,14 @@ core-test:
 core-run-help:
     cargo run --locked -- --help
 
+# Run Clippy
+quality-clippy:
+    cargo clippy -- -D warnings
+
+# Check formatting
+quality-fmt:
+    cargo fmt --all -- --check
+
 # Run coverage summary.
 quality-coverage:
     cargo llvm-cov --workspace --all-features --summary-only

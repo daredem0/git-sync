@@ -14,6 +14,15 @@ use crate::git::{
     remove_unarchived_bundle_artifacts,
 };
 
+#[derive(Debug)]
+struct CreateRunInput {
+    repo: PathBuf,
+    from: String,
+    to: String,
+    output: PathBuf,
+    with_patches: bool,
+}
+
 pub(super) fn run(
     repo: PathBuf,
     from: String,
@@ -21,12 +30,15 @@ pub(super) fn run(
     output: PathBuf,
     with_patches: bool,
 ) -> Result<()> {
-    run_with(
+    let input = CreateRunInput {
         repo,
         from,
         to,
         output,
         with_patches,
+    };
+    run_with(
+        input,
         create_bundle,
         create_bundle_with_options,
         remove_unarchived_bundle_artifacts,
@@ -34,11 +46,7 @@ pub(super) fn run(
 }
 
 fn run_with<FCreate, FCreateWithOptions, FCleanup>(
-    repo: PathBuf,
-    from: String,
-    to: String,
-    output: PathBuf,
-    with_patches: bool,
+    input: CreateRunInput,
     create: FCreate,
     create_with_options: FCreateWithOptions,
     cleanup: FCleanup,
@@ -54,18 +62,18 @@ where
     ) -> Result<CreateBundleResult>,
     FCleanup: FnOnce(&CreateBundleResult) -> Result<()>,
 {
-    let result = if with_patches {
+    let result = if input.with_patches {
         create_with_options(
-            &repo,
-            &from,
-            &to,
-            &output,
+            &input.repo,
+            &input.from,
+            &input.to,
+            &input.output,
             CreateBundleOptions {
                 include_patch_sidecar: true,
             },
         )?
     } else {
-        create(&repo, &from, &to, &output)?
+        create(&input.repo, &input.from, &input.to, &input.output)?
     };
 
     let patch_audit_display = result

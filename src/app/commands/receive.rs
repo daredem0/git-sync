@@ -18,17 +18,32 @@ use crate::git::{
     receive_bundle_input_with_options_policy_and_branch_mirror_and_mergeability_check,
 };
 
-pub(super) fn run(
-    repo: PathBuf,
-    bundle: PathBuf,
-    verify_metadata: bool,
-    dry_run: bool,
-    integrate: CliReceiveIntegratePolicy,
-    incoming_as_branches: bool,
-    check_mergeability: bool,
-    verbose: bool,
-    format: Option<OutputFormat>,
-) -> Result<()> {
+#[derive(Debug)]
+pub(super) struct ReceiveRunOptions {
+    pub(super) repo: PathBuf,
+    pub(super) bundle: PathBuf,
+    pub(super) verify_metadata: bool,
+    pub(super) dry_run: bool,
+    pub(super) integrate: CliReceiveIntegratePolicy,
+    pub(super) incoming_as_branches: bool,
+    pub(super) check_mergeability: bool,
+    pub(super) verbose: bool,
+    pub(super) format: Option<OutputFormat>,
+}
+
+pub(super) fn run(options: ReceiveRunOptions) -> Result<()> {
+    let ReceiveRunOptions {
+        repo,
+        bundle,
+        verify_metadata,
+        dry_run,
+        integrate,
+        incoming_as_branches,
+        check_mergeability,
+        verbose,
+        format,
+    } = options;
+
     let effective_dry_run = dry_run || check_mergeability;
     if !effective_dry_run && format.is_some() {
         bail!("receive --format is supported only with --dry-run");

@@ -30,6 +30,27 @@ pub(super) struct ParsedTreeEntry {
     pub(super) kind: PayloadObjectKind,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct ReachabilityContext {
+    pub(super) reachable: HashSet<git2::Oid>,
+    pub(super) context_map: HashMap<git2::Oid, PayloadObjectContext>,
+    pub(super) blob_paths_by_oid: HashMap<git2::Oid, Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+struct TraversalState {
+    reachable: HashSet<git2::Oid>,
+    context: HashMap<git2::Oid, PayloadObjectContext>,
+    blob_paths: HashMap<git2::Oid, Vec<String>>,
+    seen_trees: HashSet<git2::Oid>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TreeWalkContext {
+    head_index: usize,
+    commit_order: usize,
+}
+
 /// Builds payload object rows from the deduplicated materialized index.
 pub(super) fn collect_payload_objects_from_materialized_index(
     materialized_index: &MaterializedObjectIndex,
@@ -63,16 +84,9 @@ pub(super) fn collect_payload_objects_from_materialized_index(
 pub(super) fn collect_reachability_context_from_materialized(
     heads: &[BundleHead],
     store_by_oid: &HashMap<git2::Oid, MaterializedObjectData>,
-) -> (
-    HashSet<git2::Oid>,
-    HashMap<git2::Oid, PayloadObjectContext>,
-    HashMap<git2::Oid, Vec<String>>,
-) {
-    let mut reachable = HashSet::<git2::Oid>::new();
-    let mut context = HashMap::<git2::Oid, PayloadObjectContext>::new();
-    let mut blob_paths = HashMap::<git2::Oid, Vec<String>>::new();
+) -> ReachabilityContext {
+    let mut traversal = TraversalState::default();
     let mut seen_commits = HashSet::<git2::Oid>::new();
-    let mut seen_trees = HashSet::<git2::Oid>::new();
 
     for (head_index, head) in heads.iter().enumerate() {
         let mut commit_order = 0usize;
@@ -88,8 +102,9 @@ pub(super) fn collect_reachability_context_from_materialized(
                 continue;
             }
             commit_order += 1;
-            reachable.insert(commit_id);
-            context
+            traversal.reachable.insert(commit_id);
+            traversal
+                .context
                 .entry(commit_id)
                 .or_insert_with(|| PayloadObjectContext {
                     head_index,
@@ -103,12 +118,11 @@ pub(super) fn collect_reachability_context_from_materialized(
                     store_by_oid,
                     tree_oid,
                     "",
-                    head_index,
-                    commit_order,
-                    &mut reachable,
-                    &mut context,
-                    &mut blob_paths,
-                    &mut seen_trees,
+                    TreeWalkContext {
+                        head_index,
+                        commit_order,
+                    },
+                    &mut traversal,
                 );
             }
             for parent_id in parents.into_iter().rev() {
@@ -119,13 +133,17 @@ pub(super) fn collect_reachability_context_from_materialized(
         }
     }
 
-    for paths in blob_paths.values_mut() {
+    for paths in traversal.blob_paths.values_mut() {
         paths.sort();
         paths.dedup();
         paths.truncate(BLOB_PATH_SCAN_LIMIT);
     }
 
-    (reachable, context, blob_paths)
+    ReachabilityContext {
+        reachable: traversal.reachable,
+        context_map: traversal.context,
+        blob_paths_by_oid: traversal.blob_paths,
+    }
 }
 
 /// Parses raw tree object bytes into structured entries.
@@ -169,14 +187,10 @@ fn walk_tree_from_materialized(
     store_by_oid: &HashMap<git2::Oid, MaterializedObjectData>,
     tree_oid: git2::Oid,
     prefix: &str,
-    head_index: usize,
-    commit_order: usize,
-    reachable: &mut HashSet<git2::Oid>,
-    context: &mut HashMap<git2::Oid, PayloadObjectContext>,
-    blob_paths: &mut HashMap<git2::Oid, Vec<String>>,
-    seen_trees: &mut HashSet<git2::Oid>,
+    walk_context: TreeWalkContext,
+    traversal: &mut TraversalState,
 ) {
-    if !seen_trees.insert(tree_oid) {
+    if !traversal.seen_trees.insert(tree_oid) {
         return;
     }
     let Some(tree_data) = store_by_oid.get(&tree_oid) else {
@@ -185,12 +199,13 @@ fn walk_tree_from_materialized(
     if tree_data.kind != PayloadObjectKind::Tree {
         return;
     }
-    reachable.insert(tree_oid);
-    context
+    traversal.reachable.insert(tree_oid);
+    traversal
+        .context
         .entry(tree_oid)
         .or_insert_with(|| PayloadObjectContext {
-            head_index,
-            commit_order,
+            head_index: walk_context.head_index,
+            commit_order: walk_context.commit_order,
             path: if prefix.is_empty() {
                 None
             } else {
@@ -207,28 +222,19 @@ fn walk_tree_from_materialized(
         } else {
             format!("{prefix}/{}", entry.name)
         };
-        reachable.insert(entry.oid);
-        context
+        traversal.reachable.insert(entry.oid);
+        traversal
+            .context
             .entry(entry.oid)
             .or_insert_with(|| PayloadObjectContext {
-                head_index,
-                commit_order,
+                head_index: walk_context.head_index,
+                commit_order: walk_context.commit_order,
                 path: Some(path.clone()),
             });
         if entry.kind == PayloadObjectKind::Tree {
-            walk_tree_from_materialized(
-                store_by_oid,
-                entry.oid,
-                &path,
-                head_index,
-                commit_order,
-                reachable,
-                context,
-                blob_paths,
-                seen_trees,
-            );
+            walk_tree_from_materialized(store_by_oid, entry.oid, &path, walk_context, traversal);
         } else if entry.kind == PayloadObjectKind::Blob {
-            let paths = blob_paths.entry(entry.oid).or_default();
+            let paths = traversal.blob_paths.entry(entry.oid).or_default();
             if paths.len() < BLOB_PATH_SCAN_LIMIT {
                 paths.push(path);
             }

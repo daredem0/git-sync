@@ -377,8 +377,10 @@ fn apply_bundle_to_repo(
         bundle_path,
         &parsed_bundle.inspection,
         pack_data,
-        true,
-        verbose,
+        IndexerImportOptions {
+            verify: true,
+            verbose,
+        },
     );
     let mut import_path = ImportPath::StrictIndexer;
     if let Err(indexer_error) = indexer_result {
@@ -390,8 +392,10 @@ fn apply_bundle_to_repo(
                 bundle_path,
                 &parsed_bundle.inspection,
                 pack_data,
-                false,
-                verbose,
+                IndexerImportOptions {
+                    verify: false,
+                    verbose,
+                },
             )
             .map(|_| {
                 import_path = ImportPath::CompatIndexerVerifyFalse;
@@ -599,6 +603,12 @@ fn validate_tree_connectivity(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IndexerImportOptions {
+    verify: bool,
+    verbose: bool,
+}
+
 /// Imports one bundle pack stream into the repository object database via libgit2 indexer.
 fn import_bundle_pack_with_indexer(
     repo: &git2::Repository,
@@ -607,40 +617,40 @@ fn import_bundle_pack_with_indexer(
     bundle_path: &Path,
     inspection: &BundleInspection,
     pack_data: &[u8],
-    verify: bool,
-    verbose: bool,
+    options: IndexerImportOptions,
 ) -> Result<()> {
-    let init_stage = if verify {
+    let init_stage = if options.verify {
         "indexer initialization (verify=true)"
     } else {
         "indexer initialization (verify=false)"
     };
-    let write_stage = if verify {
+    let write_stage = if options.verify {
         "pack write (verify=true)"
     } else {
         "pack write (verify=false)"
     };
-    let commit_stage = if verify {
+    let commit_stage = if options.verify {
         "indexer commit (verify=true)"
     } else {
         "indexer commit (verify=false)"
     };
 
-    let mut indexer = git2::Indexer::new(Some(odb), pack_dir, 0o644, verify).map_err(|err| {
-        with_verbose_indexer_diagnostics(
-            err,
-            verbose,
-            repo,
-            bundle_path,
-            inspection,
-            pack_data.len(),
-            init_stage,
-        )
-    })?;
+    let mut indexer =
+        git2::Indexer::new(Some(odb), pack_dir, 0o644, options.verify).map_err(|err| {
+            with_verbose_indexer_diagnostics(
+                err,
+                options.verbose,
+                repo,
+                bundle_path,
+                inspection,
+                pack_data.len(),
+                init_stage,
+            )
+        })?;
     indexer.write_all(pack_data).map_err(|err| {
         with_verbose_indexer_diagnostics(
             err,
-            verbose,
+            options.verbose,
             repo,
             bundle_path,
             inspection,
@@ -651,7 +661,7 @@ fn import_bundle_pack_with_indexer(
     indexer.commit().map_err(|err| {
         with_verbose_indexer_diagnostics(
             err,
-            verbose,
+            options.verbose,
             repo,
             bundle_path,
             inspection,

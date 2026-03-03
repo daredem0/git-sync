@@ -62,7 +62,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             check_mergeability,
             verbose,
             format,
-        }) => receive::run(
+        }) => receive::run(receive::ReceiveRunOptions {
             repo,
             bundle,
             verify_metadata,
@@ -72,7 +72,7 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             check_mergeability,
             verbose,
             format,
-        ),
+        }),
         None => {
             println!("git-sync scaffold is ready.");
             println!("Use --help to inspect planned commands.");

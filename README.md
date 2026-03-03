@@ -451,6 +451,7 @@ Use `just` as the primary entry point:
 just help
 just core-build
 just core-test
+just quality-clippy
 just quality-coverage
 just quality-docs-private
 just quality-docs-pdf
@@ -496,6 +497,24 @@ just quality-coverage
 
 # direct command
 cargo llvm-cov --workspace --all-features --summary-only
+```
+
+### Linting
+
+```bash
+just quality-clippy
+
+# direct command
+cargo clippy -- -D warnings
+```
+
+### Formatting
+
+```bash
+just quality-fmt
+
+# direct command
+cargo fmt --all -- --check
 ```
 
 ### Third-Party License Compliance

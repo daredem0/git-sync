@@ -48,15 +48,14 @@ pub(super) fn open_payload_session_with_resolve_mode_impl(
         .map(|entry| (entry.oid, entry))
         .collect::<HashMap<_, _>>();
 
-    let (reachable, context_map, blob_paths_by_oid) =
-        context::collect_reachability_context_from_materialized(
-            &inspection.heads,
-            &materialized_store_by_oid,
-        );
+    let reachability_context = context::collect_reachability_context_from_materialized(
+        &inspection.heads,
+        &materialized_store_by_oid,
+    );
     let objects = context::collect_payload_objects_from_materialized_index(
         &verification.materialized_index,
-        &reachable,
-        &context_map,
+        &reachability_context.reachable,
+        &reachability_context.context_map,
     );
 
     let payload = PayloadAudit {
@@ -72,7 +71,7 @@ pub(super) fn open_payload_session_with_resolve_mode_impl(
         inspection,
         payload,
         materialized_store_by_oid,
-        blob_paths_by_oid,
+        blob_paths_by_oid: reachability_context.blob_paths_by_oid,
         bundle_path: loaded.bundle_name,
         bundle_size_bytes: loaded.bundle_bytes.len() as u64,
         bundle_sha256: sha256_hex(&loaded.bundle_bytes)?,

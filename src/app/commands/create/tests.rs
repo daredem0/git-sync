@@ -39,11 +39,13 @@ fn run_with_uses_create_path_when_with_patches_is_false() {
     let c2 = Rc::clone(&called_create_with_options);
     let c3 = Rc::clone(&called_cleanup);
     let result = run_with(
-        PathBuf::from("/tmp/repo"),
-        "from".to_string(),
-        "to".to_string(),
-        PathBuf::from("sync.bundle"),
-        false,
+        CreateRunInput {
+            repo: PathBuf::from("/tmp/repo"),
+            from: "from".to_string(),
+            to: "to".to_string(),
+            output: PathBuf::from("sync.bundle"),
+            with_patches: false,
+        },
         move |_repo, _from, _to, _output| {
             *c1.borrow_mut() = true;
             Ok(sample_result(false))
@@ -86,11 +88,13 @@ fn run_with_uses_create_with_options_when_with_patches_is_true() {
     let c2 = Rc::clone(&called_create_with_options);
     let c3 = Rc::clone(&captured_include_patch);
     let result = run_with(
-        PathBuf::from("/tmp/repo"),
-        "from".to_string(),
-        "to".to_string(),
-        PathBuf::from("sync.bundle"),
-        true,
+        CreateRunInput {
+            repo: PathBuf::from("/tmp/repo"),
+            from: "from".to_string(),
+            to: "to".to_string(),
+            output: PathBuf::from("sync.bundle"),
+            with_patches: true,
+        },
         move |_repo, _from, _to, _output| {
             *c1.borrow_mut() = true;
             Ok(sample_result(false))
@@ -124,11 +128,13 @@ fn run_with_uses_create_with_options_when_with_patches_is_true() {
 #[test]
 fn run_with_propagates_cleanup_error() {
     let result = run_with(
-        PathBuf::from("/tmp/repo"),
-        "from".to_string(),
-        "to".to_string(),
-        PathBuf::from("sync.bundle"),
-        false,
+        CreateRunInput {
+            repo: PathBuf::from("/tmp/repo"),
+            from: "from".to_string(),
+            to: "to".to_string(),
+            output: PathBuf::from("sync.bundle"),
+            with_patches: false,
+        },
         |_repo, _from, _to, _output| Ok(sample_result(false)),
         |_repo, _from, _to, _output, _options| Ok(sample_result(true)),
         |_result| Err(anyhow!("cleanup failed")),
