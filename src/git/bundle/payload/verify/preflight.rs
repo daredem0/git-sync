@@ -37,7 +37,7 @@ pub(super) fn run_pack_preflight(
     }
 
     // Header bytes are guaranteed present by the minimum-size check above.
-    let pack_version = u32::from_be_bytes(pack_data[4..8].try_into().expect("slice length"));
+    let pack_version = u32::from_be_bytes([pack_data[4], pack_data[5], pack_data[6], pack_data[7]]);
     if pack_version != 2 && pack_version != 3 {
         return Err(PayloadAuditError {
             reason: format!("unsupported pack version: {pack_version}"),
@@ -48,7 +48,7 @@ pub(super) fn run_pack_preflight(
 
     // Header bytes are guaranteed present by the minimum-size check above.
     let declared_entry_count =
-        u32::from_be_bytes(pack_data[8..12].try_into().expect("slice length")) as usize;
+        u32::from_be_bytes([pack_data[8], pack_data[9], pack_data[10], pack_data[11]]) as usize;
 
     // `pack_data.len() >= 32` guarantees a trailer is present.
     let trailer_offset = pack_data.len() - 20;

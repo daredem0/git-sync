@@ -42,18 +42,18 @@ pub(super) fn run(
         return Ok(());
     }
 
-    if format.is_none() {
-        return run_interactive(repo, bundle, resolve);
+    if let Some(format) = format {
+        return run_non_interactive(
+            repo,
+            bundle,
+            format,
+            payload_ledger,
+            payload_detail,
+            resolve,
+        );
     }
 
-    run_non_interactive(
-        repo,
-        bundle,
-        format.expect("format should be set in non-interactive mode"),
-        payload_ledger,
-        payload_detail,
-        resolve,
-    )
+    run_interactive(repo, bundle, resolve)
 }
 
 fn run_interactive(

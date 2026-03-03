@@ -78,11 +78,11 @@ impl RuntimeOps for CrosstermRuntimeOps {
     }
 }
 
-fn enter_alternate_screen(stdout: &mut io::Stdout) -> io::Result<()> {
-    execute!(stdout, EnterAlternateScreen).map(|_| ())
+fn enter_alternate_screen<W: io::Write>(writer: &mut W) -> io::Result<()> {
+    execute!(writer, EnterAlternateScreen).map(|_| ())
 }
 
-fn leave_alternate_screen(backend: &mut CrosstermBackend<io::Stdout>) -> io::Result<()> {
+fn leave_alternate_screen<W: io::Write>(backend: &mut CrosstermBackend<W>) -> io::Result<()> {
     execute!(backend, LeaveAlternateScreen).map(|_| ())
 }
 

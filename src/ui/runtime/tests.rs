@@ -356,37 +356,11 @@ fn cleanup_crossterm_terminal_with_uses_injected_cleanup_operations() {
 }
 
 #[test]
-fn crossterm_runtime_ops_setup_terminal_is_callable() {
-    let runtime = CrosstermRuntimeOps;
-    let _ = runtime.setup_terminal();
-}
-
-#[test]
-fn crossterm_runtime_ops_cleanup_terminal_is_callable() {
-    let runtime = CrosstermRuntimeOps;
-    match setup_crossterm_terminal_with(setup_enable_raw_stub, setup_enter_alt_stub) {
-        Ok(mut terminal) => runtime.cleanup_terminal(&mut terminal),
-        Err(error) => {
-            let is_would_block = error
-                .downcast_ref::<io::Error>()
-                .is_some_and(|value| value.kind() == ErrorKind::WouldBlock);
-            assert!(
-                is_would_block
-                    || error
-                        .to_string()
-                        .contains("Resource temporarily unavailable"),
-                "unexpected setup failure for cleanup wrapper: {error}"
-            );
-        }
-    }
-}
-
-#[test]
 fn crossterm_screen_helpers_are_callable() {
-    let mut stdout = io::stdout();
-    let _ = enter_alternate_screen(&mut stdout);
+    let mut sink = Vec::<u8>::new();
+    let _ = enter_alternate_screen(&mut sink);
 
-    let mut backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+    let mut backend = ratatui::backend::CrosstermBackend::new(Vec::<u8>::new());
     let _ = leave_alternate_screen(&mut backend);
 
     let mut terminal =

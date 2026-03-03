@@ -8,7 +8,7 @@
 
 use super::types::SyntaxHighlighter;
 use std::path::Path;
-use syntect::highlighting::ThemeSet;
+use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 
 impl SyntaxHighlighter {
@@ -24,7 +24,7 @@ impl SyntaxHighlighter {
             .or_else(|| themes.themes.get("InspiredGitHub"))
             .or_else(|| themes.themes.values().next())
             .cloned()
-            .expect("syntect should provide at least one built-in theme");
+            .unwrap_or_else(Theme::default);
 
         Self { syntax_set, theme }
     }

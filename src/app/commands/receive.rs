@@ -89,7 +89,7 @@ pub(super) fn run(
     };
 
     if effective_dry_run && matches!(format, Some(OutputFormat::Json)) {
-        println!("{}", render_dry_run_json(version, &result));
+        println!("{}", render_dry_run_json(version, &result)?);
         return Ok(());
     }
 
@@ -139,7 +139,7 @@ pub(super) fn run(
     Ok(())
 }
 
-fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) -> String {
+fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) -> Result<String> {
     let plan_rows = result
         .preflight_plan
         .iter()
@@ -194,7 +194,7 @@ fn render_dry_run_json(version: &str, result: &crate::git::ReceiveBundleResult) 
         "mergeability_checks": mergeability_rows,
         "line_stats": line_rows,
     }))
-    .expect("receive dry-run json rendering should always be serializable")
+    .map_err(Into::into)
 }
 
 fn render_preflight_plan(plan: &[ReceivePlanEntry]) {

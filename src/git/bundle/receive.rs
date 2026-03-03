@@ -1205,9 +1205,12 @@ fn planned_ref_updates_from_plan(
                             row.target_ref
                         );
                     }
-                    let target_oid = row.target_oid.expect(
-                        "merge integration requires an existing target OID for diverged rows",
-                    );
+                    let Some(target_oid) = row.target_oid else {
+                        bail!(
+                            "internal receive plan error: merge integration requires an existing target oid for diverged row '{}'",
+                            row.target_ref
+                        );
+                    };
                     let merge_oid = create_receive_merge_commit(
                         repo,
                         &row.target_ref,
@@ -1600,9 +1603,7 @@ fn format_non_fast_forward_diagnostics(diagnostics: &[&ReceivePlanEntry]) -> Str
             format_args!(
                 "- target ref: {}\n  target oid: {}\n  incoming oid: {}\n  merge-base oid: {}\n  reason: diverged (non-fast-forward)\n  next-step: merge required; incoming ref preserved at {}\n",
                 diagnostic.target_ref,
-                diagnostic
-                    .target_oid
-                    .expect("diverged receive diagnostics must include target oid"),
+                format_optional_oid(diagnostic.target_oid),
                 diagnostic.incoming_oid,
                 merge_base,
                 diagnostic.preserved_incoming_ref
@@ -1637,9 +1638,7 @@ fn format_merge_policy_diagnostics(
             format_args!(
                 "- target ref: {}\n  target oid: {}\n  incoming oid: {}\n  merge-base oid: {}\n  reason: {}\n",
                 diagnostic.target_ref,
-                diagnostic
-                    .target_oid
-                    .expect("diverged merge diagnostics must include target oid"),
+                format_optional_oid(diagnostic.target_oid),
                 diagnostic.incoming_oid,
                 merge_base,
                 reason,
