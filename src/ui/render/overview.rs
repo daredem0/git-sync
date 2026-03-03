@@ -72,41 +72,63 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         &overview.dry_run,
         DryRunLine::Ok(result) if result.can_apply_without_conflicts
     );
-    let general_right_lines = vec![
+    let mut general_right_lines = vec![
         styled_status_line("metadata verification", metadata_status, metadata_ok),
         styled_status_line("dry-run applicability", dry_run_status, dry_run_ok),
         styled_status_line("pack proof", pack_summary.status, pack_summary.status_ok),
-        styled_status_line(
+    ];
+    if pack_summary.entries_parsed == pack_summary.entries_materialized
+        && pack_summary.entries_parsed_ok
+        && pack_summary.entries_materialized_ok
+    {
+        general_right_lines.push(styled_status_line(
+            "pack entries parsed/materialized",
+            pack_summary.entries_parsed,
+            pack_summary.entries_parsed_ok && pack_summary.entries_materialized_ok,
+        ));
+        general_right_lines.push(Line::from(format!(
+            "commits: {}",
+            pack_summary.commit_objects
+        )));
+    } else {
+        general_right_lines.push(styled_status_line(
             "pack entries parsed",
             pack_summary.entries_parsed,
             pack_summary.entries_parsed_ok,
-        ),
-        styled_status_line(
+        ));
+        general_right_lines.push(Line::from(format!(
+            "commits: {}",
+            pack_summary.commit_objects
+        )));
+        general_right_lines.push(styled_status_line(
             "pack entries materialized",
             pack_summary.entries_materialized,
             pack_summary.entries_materialized_ok,
-        ),
-        styled_status_line(
-            "transfer gate",
-            pack_summary.transfer,
-            pack_summary.transfer_ok,
-        ),
-        styled_status_line(
-            "pack checksum",
-            pack_summary.checksum,
-            pack_summary.checksum_ok,
-        ),
-        styled_status_line(
-            "bundle fully reachable from heads",
-            pack_summary.bundle_reachability,
-            pack_summary.bundle_reachability_ok,
-        ),
-        Line::from(format!("thin pack detected: {}", pack_summary.thin)),
-        Line::from(format!(
-            "baseline resolutions: {}",
-            pack_summary.baseline_resolutions
-        )),
-    ];
+        ));
+    }
+    general_right_lines.push(styled_status_line(
+        "transfer gate",
+        pack_summary.transfer,
+        pack_summary.transfer_ok,
+    ));
+    general_right_lines.push(styled_status_line(
+        "pack checksum",
+        pack_summary.checksum,
+        pack_summary.checksum_ok,
+    ));
+    general_right_lines.push(styled_status_line(
+        "bundle fully reachable from heads",
+        pack_summary.bundle_reachability,
+        pack_summary.bundle_reachability_ok,
+    ));
+    general_right_lines.push(Line::from(format!(
+        "thin pack detected: {}",
+        pack_summary.thin
+    )));
+    general_right_lines.push(Line::from(format!(
+        "baseline resolutions: {}",
+        pack_summary.baseline_resolutions
+    )));
     let general_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(OVERVIEW_COLUMN_SPLIT)
@@ -250,6 +272,11 @@ fn render_pack_proof_summary(payload: &PayloadModel) -> PackProofSummary {
             .to_string();
             let baseline_resolutions = proof.baseline_resolutions_count.to_string();
             let total_objects = audit.objects.len();
+            let commit_objects = audit
+                .objects
+                .iter()
+                .filter(|entry| matches!(entry.kind, crate::git::PayloadObjectKind::Commit))
+                .count();
             let unreachable_objects = audit
                 .objects
                 .iter()
@@ -276,6 +303,7 @@ fn render_pack_proof_summary(payload: &PayloadModel) -> PackProofSummary {
                 transfer_ok: proof.transfer_allowed,
                 checksum,
                 checksum_ok: proof.checksum_verified && checksums_match,
+                commit_objects: commit_objects.to_string(),
                 thin,
                 baseline_resolutions,
                 bundle_reachability,
@@ -293,6 +321,7 @@ fn render_pack_proof_summary(payload: &PayloadModel) -> PackProofSummary {
             transfer_ok: false,
             checksum: "-".to_string(),
             checksum_ok: false,
+            commit_objects: "-".to_string(),
             thin: "-".to_string(),
             baseline_resolutions: "-".to_string(),
             bundle_reachability: "-".to_string(),
@@ -313,6 +342,7 @@ struct PackProofSummary {
     transfer_ok: bool,
     checksum: String,
     checksum_ok: bool,
+    commit_objects: String,
     thin: String,
     baseline_resolutions: String,
     bundle_reachability: String,

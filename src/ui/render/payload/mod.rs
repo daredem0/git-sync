@@ -66,6 +66,11 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
     match &model.payload {
         PayloadModel::Ok(payload) => {
             let proof = &payload.pack_proof;
+            let commit_count = payload
+                .objects
+                .iter()
+                .filter(|entry| matches!(entry.kind, crate::git::PayloadObjectKind::Commit))
+                .count();
             let counts_match = proof.entries_declared == proof.entries_parsed;
             let checksums_match = proof.computed_pack_checksum == proof.trailer_pack_checksum;
             let proof_status = if proof.verification_status.eq_ignore_ascii_case("ok")
@@ -91,7 +96,7 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
                 "Payload View\n\
                  Press 1 main | 2 payload | 3 commit\n\
                  status: {proof_status} | pack version: {}\n\
-                 entries: {}/{} | materialized: {}/{}\n\
+                 entries: {}/{} | materialized: {}/{} | commits: {}\n\
                  unique objects: {} | duplicates: {}\n\
                  {transfer_line} | hash: {} | checksum: {}\n\
                  thin pack: {} | baseline resolutions: {}\n\
@@ -103,6 +108,7 @@ fn payload_title_text(model: &AuditModel, state: &AppState) -> String {
                 proof.entries_declared,
                 proof.entries_materialized,
                 proof.entries_declared,
+                commit_count,
                 proof.unique_objects_materialized,
                 proof.duplicate_entry_count_materialized,
                 proof.hash_algorithm,
@@ -155,8 +161,16 @@ fn style_payload_title_line(line: &str) -> Line<'static> {
     }
 
     if let Some(rest) = line.strip_prefix("entries: ") {
-        if let Some((entries_ratio, materialized_part)) = rest.split_once(" | materialized: ") {
-            return Line::from(vec![
+        if let Some((entries_ratio, materialized_tail)) = rest.split_once(" | materialized: ") {
+            let (materialized_ratio, commit_count) =
+                if let Some((materialized_ratio, commit_count)) =
+                    materialized_tail.split_once(" | commits: ")
+                {
+                    (materialized_ratio, Some(commit_count))
+                } else {
+                    (materialized_tail, None)
+                };
+            let mut spans = vec![
                 Span::raw("entries: "),
                 Span::styled(
                     entries_ratio.to_string(),
@@ -164,10 +178,15 @@ fn style_payload_title_line(line: &str) -> Line<'static> {
                 ),
                 Span::raw(" | materialized: "),
                 Span::styled(
-                    materialized_part.to_string(),
-                    status_style(ratio_matches_declared(materialized_part)),
+                    materialized_ratio.to_string(),
+                    status_style(ratio_matches_declared(materialized_ratio)),
                 ),
-            ]);
+            ];
+            if let Some(commit_count) = commit_count {
+                spans.push(Span::raw(" | commits: "));
+                spans.push(Span::raw(commit_count.to_string()));
+            }
+            return Line::from(spans);
         }
     }
 

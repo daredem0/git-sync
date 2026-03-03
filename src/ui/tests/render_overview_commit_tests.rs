@@ -75,12 +75,8 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
         "overview render should include pack-proof status in general section"
     );
     assert!(
-        output.contains("pack entries parsed: 2/2"),
-        "overview render should include parsed/declared entry counts in general section"
-    );
-    assert!(
-        output.contains("pack entries materialized: 2/2"),
-        "overview render should include materialized/declared entry counts in general section"
+        output.contains("pack entries parsed/materialized: 2/2"),
+        "overview render should collapse parsed/materialized counters when both ratios match"
     );
     assert!(
         output.contains("transfer gate: allowed"),
@@ -109,6 +105,10 @@ fn render_overview_page_with_dry_run_ok_shows_summary_sections() {
     assert!(
         output.contains("bundle fully reachable from heads: no"),
         "overview render should include bundle-to-history reachability status"
+    );
+    assert!(
+        output.contains("commits: 1"),
+        "overview render should include commit count in bundle integrity section"
     );
     assert!(
         output.contains("file.txt"),
@@ -305,6 +305,10 @@ fn render_page_in_payload_view_shows_payload_screen() {
         "payload page should render materialized/declared entry counters in top summary"
     );
     assert!(
+        output.contains("| commits: 1"),
+        "payload page should render commit count on the entries/materialized line"
+    );
+    assert!(
         output.contains("computed checksum: cccccccccccccccccccccccccccccccccccccccc"),
         "payload page should render full computed pack checksum"
     );
@@ -342,6 +346,10 @@ fn payload_summary_uses_entry_based_counters_not_odb_count() {
     assert!(
         output.contains("materialized: 6/7"),
         "payload summary should render materialized/declared entry counters"
+    );
+    assert!(
+        output.contains("| commits: 1"),
+        "payload summary should render commit count beside entry counters"
     );
     assert!(
         output.contains("unique objects: 5"),
