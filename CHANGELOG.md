@@ -7,7 +7,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-## [0.8.3] - 2026-03-03
+## [0.9.0] - 2026-03-03
 
 ### Added
 - Added dual release-build variants in CI (`ubuntu-22.04` and `ubuntu-latest`) with Debian and Arch package jobs for each variant using prebuilt release inputs.
@@ -18,6 +18,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   - `p`: minimal export profile (`object_detail_mode=light`, `entry_ledger.mode=none`)
   - `P`: full export profile (`object_detail_mode=full`, `entry_ledger.mode=summary`)
 - Added Windows release CI build job (`windows-latest`) targeting `x86_64-pc-windows-msvc`, publishing a versioned `.exe` artifact.
+- Added dedicated CI quality gates for:
+  - `cargo clippy -- -D warnings`
+  - `cargo fmt --all -- --check`
 
 ### Changed
 - Updated interactive paudit exports to write into the current working directory from which `git-sync` is invoked.
@@ -28,6 +31,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   - surface `commits` count in both overview integrity and payload header summaries
 - Tightened minimal paudit shape so `--payload-ledger none --payload-detail light` omits entry-ledger rows, pack-object rows, and object-detail rows.
 - Updated release workflow dependencies and asset collection so the Windows `.exe` is included in GitHub release uploads alongside Linux binaries and packages.
+- Updated release/deploy workflow dependencies so `clippy` and `fmt` jobs must pass before tagged release asset publication and GitHub Pages deployment.
+- Updated local `just ci-local` workflow to include `quality-clippy` and `quality-fmt` for better parity with CI quality gates.
+- Refactored high-arity command and payload interfaces into options/context structs (`CreateRunInput`, `ReceiveRunOptions`, `ReachabilityContext`, `IndexerImportOptions`) to reduce maintainability risk in critical receive/payload flows.
+- Reduced strict-clippy debt in touched runtime/UI paths (build version normalization, diff parse defaults, payload title-line conditionals, and overview render structure).
 
 ### Tests
 - Added CLI, payload-document, and UI regression coverage for:
@@ -35,6 +42,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   - interactive `p`/`P` export actions and export notice handling
   - minimal paudit document shape guarantees (no ledger rows, no pack objects, no object details)
 - Hardened UI command/runtime test reliability by removing environment-dependent terminal assumptions in command-path tests and adding deterministic runtime setup/cleanup coverage hooks.
+- Updated create-command module tests to cover the new `CreateRunInput` orchestration path after the high-arity interface refactor.
 
 ### Documentation
 - Updated README audit/export guidance for new paudit modes, minimal export profile, and `p`/`P` interactive hotkeys.
