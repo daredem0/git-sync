@@ -19,30 +19,22 @@ pub(crate) fn line_number_columns(
 ) -> (String, String) {
     match kind {
         PatchLineKind::Added => {
-            let display = new_line
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "".to_string());
+            let display = new_line.map(|value| value.to_string()).unwrap_or_default();
             if let Some(value) = new_line.as_mut() {
                 *value += 1;
             }
             ("".to_string(), display)
         }
         PatchLineKind::Deleted => {
-            let display = old_line
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "".to_string());
+            let display = old_line.map(|value| value.to_string()).unwrap_or_default();
             if let Some(value) = old_line.as_mut() {
                 *value += 1;
             }
             (display, "".to_string())
         }
         PatchLineKind::Context => {
-            let old_display = old_line
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "".to_string());
-            let new_display = new_line
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "".to_string());
+            let old_display = old_line.map(|value| value.to_string()).unwrap_or_default();
+            let new_display = new_line.map(|value| value.to_string()).unwrap_or_default();
             if let Some(value) = old_line.as_mut() {
                 *value += 1;
             }

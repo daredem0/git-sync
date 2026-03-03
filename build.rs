@@ -54,14 +54,13 @@ fn git_describe() -> Option<String> {
 }
 
 fn normalize_tag_prefix(version: String) -> String {
-    if let Some(stripped) = version.strip_prefix('v') {
-        if stripped
+    if let Some(stripped) = version.strip_prefix('v')
+        && stripped
             .chars()
             .next()
             .is_some_and(|first| first.is_ascii_digit())
-        {
-            return stripped.to_string();
-        }
+    {
+        return stripped.to_string();
     }
 
     version

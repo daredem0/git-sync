@@ -146,70 +146,67 @@ fn payload_title_lines(model: &AuditModel, state: &AppState) -> Vec<Line<'static
 
 /// Styles payload-summary fields while preserving the existing text content.
 fn style_payload_title_line(line: &str) -> Line<'static> {
-    if let Some(rest) = line.strip_prefix("status: ") {
-        if let Some((status, pack_version)) = rest.split_once(" | pack version: ") {
-            return Line::from(vec![
-                Span::raw("status: "),
-                Span::styled(
-                    status.to_string(),
-                    status_style(status.eq_ignore_ascii_case("ok")),
-                ),
-                Span::raw(" | pack version: "),
-                Span::raw(pack_version.to_string()),
-            ]);
-        }
+    if let Some(rest) = line.strip_prefix("status: ")
+        && let Some((status, pack_version)) = rest.split_once(" | pack version: ")
+    {
+        return Line::from(vec![
+            Span::raw("status: "),
+            Span::styled(
+                status.to_string(),
+                status_style(status.eq_ignore_ascii_case("ok")),
+            ),
+            Span::raw(" | pack version: "),
+            Span::raw(pack_version.to_string()),
+        ]);
     }
 
-    if let Some(rest) = line.strip_prefix("entries: ") {
-        if let Some((entries_ratio, materialized_tail)) = rest.split_once(" | materialized: ") {
-            let (materialized_ratio, commit_count) =
-                if let Some((materialized_ratio, commit_count)) =
-                    materialized_tail.split_once(" | commits: ")
-                {
-                    (materialized_ratio, Some(commit_count))
-                } else {
-                    (materialized_tail, None)
-                };
-            let mut spans = vec![
-                Span::raw("entries: "),
-                Span::styled(
-                    entries_ratio.to_string(),
-                    status_style(ratio_matches_declared(entries_ratio)),
-                ),
-                Span::raw(" | materialized: "),
-                Span::styled(
-                    materialized_ratio.to_string(),
-                    status_style(ratio_matches_declared(materialized_ratio)),
-                ),
-            ];
-            if let Some(commit_count) = commit_count {
-                spans.push(Span::raw(" | commits: "));
-                spans.push(Span::raw(commit_count.to_string()));
-            }
-            return Line::from(spans);
-        }
-    }
-
-    if let Some(rest) = line.strip_prefix("transfer: ") {
-        if let Some((transfer_value, hash_and_checksum)) = rest.split_once(" | hash: ")
-            && let Some((hash_value, checksum_value)) =
-                hash_and_checksum.split_once(" | checksum: ")
+    if let Some(rest) = line.strip_prefix("entries: ")
+        && let Some((entries_ratio, materialized_tail)) = rest.split_once(" | materialized: ")
+    {
+        let (materialized_ratio, commit_count) = if let Some((materialized_ratio, commit_count)) =
+            materialized_tail.split_once(" | commits: ")
         {
-            return Line::from(vec![
-                Span::raw("transfer: "),
-                Span::styled(
-                    transfer_value.to_string(),
-                    status_style(transfer_value == "allowed"),
-                ),
-                Span::raw(" | hash: "),
-                Span::raw(hash_value.to_string()),
-                Span::raw(" | checksum: "),
-                Span::styled(
-                    checksum_value.to_string(),
-                    status_style(checksum_value.eq_ignore_ascii_case("ok")),
-                ),
-            ]);
+            (materialized_ratio, Some(commit_count))
+        } else {
+            (materialized_tail, None)
+        };
+        let mut spans = vec![
+            Span::raw("entries: "),
+            Span::styled(
+                entries_ratio.to_string(),
+                status_style(ratio_matches_declared(entries_ratio)),
+            ),
+            Span::raw(" | materialized: "),
+            Span::styled(
+                materialized_ratio.to_string(),
+                status_style(ratio_matches_declared(materialized_ratio)),
+            ),
+        ];
+        if let Some(commit_count) = commit_count {
+            spans.push(Span::raw(" | commits: "));
+            spans.push(Span::raw(commit_count.to_string()));
         }
+        return Line::from(spans);
+    }
+
+    if let Some(rest) = line.strip_prefix("transfer: ")
+        && let Some((transfer_value, hash_and_checksum)) = rest.split_once(" | hash: ")
+        && let Some((hash_value, checksum_value)) = hash_and_checksum.split_once(" | checksum: ")
+    {
+        return Line::from(vec![
+            Span::raw("transfer: "),
+            Span::styled(
+                transfer_value.to_string(),
+                status_style(transfer_value == "allowed"),
+            ),
+            Span::raw(" | hash: "),
+            Span::raw(hash_value.to_string()),
+            Span::raw(" | checksum: "),
+            Span::styled(
+                checksum_value.to_string(),
+                status_style(checksum_value.eq_ignore_ascii_case("ok")),
+            ),
+        ]);
     }
 
     if let Some(rest) = line.strip_prefix("subview: ")

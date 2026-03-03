@@ -52,7 +52,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         payload_transport_entry_count,
         payload_object_count,
     ) = render_general_payload_summary(&model.payload);
-    let general_left_lines = vec![
+    let general_left_lines = [
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
         format!("bundle: {}", overview.bundle_path),

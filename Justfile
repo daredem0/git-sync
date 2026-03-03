@@ -83,4 +83,4 @@ release-arch:
 release-packages: release-deb release-arch
 
 # Common local CI check subset.
-ci-local: core-build core-test quality-coverage quality-docs
+ci-local: core-build core-test quality-clippy quality-fmt quality-coverage quality-docs
