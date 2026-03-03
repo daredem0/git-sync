@@ -1273,6 +1273,45 @@ fn audit_json_none_mode_omits_all_entry_rows() {
     let _ = std::fs::remove_dir_all(repo_dir);
 }
 
+// Verifies that light+none mode yields minimal payload JSON by omitting pack-object and object-detail rows.
+#[test]
+fn audit_json_light_none_mode_omits_pack_object_rows() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-light-none-minimal", false);
+
+    let document = build_payload_audit_document_for_bundle_input_with_options_and_detail_mode(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::None,
+        PayloadAuditObjectDetailMode::Light,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must build payload-audit light-none document");
+
+    assert_eq!(
+        document.entry_ledger.mode, "none",
+        "light-none mode should encode entry_ledger.mode as 'none'"
+    );
+    assert_eq!(
+        document.object_detail_mode, "light",
+        "light-none mode should encode object_detail_mode as 'light'"
+    );
+    assert!(
+        document.pack_objects.is_empty(),
+        "light-none mode should omit pack object rows for minimal paudit output"
+    );
+    assert!(
+        document.object_details.is_empty(),
+        "light-none mode should omit object detail rows for minimal paudit output"
+    );
+    assert!(
+        document.pack_summary.total_objects > 0,
+        "light-none mode should retain aggregate pack summary counters"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
 // Verifies that full-mode payload JSON emits all parsed ledger rows in deterministic index order.
 #[test]
 fn audit_json_full_mode_includes_all_entry_rows() {

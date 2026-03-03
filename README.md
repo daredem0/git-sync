@@ -351,7 +351,7 @@ Main pages:
 - `2`: payload page
 - `3`: open first commit detail page for selected head
 - `v`: toggle overview <-> payload
-- `p`: export minimal payload-audit JSON (light details + no ledger rows)
+- `p`: export minimal payload-audit JSON (light details + no ledger or pack-object rows)
 - `P`: export full payload-audit JSON (`.paudit`) file
 - `?`: toggle help overlay
 - `q`: quit
@@ -398,6 +398,7 @@ Payload page:
   - `--payload-ledger none|summary|full` (JSON mode)
   - `--payload-detail full|light` (JSON mode)
   - `--resolve pack-only|baseline` (non-interactive modes)
+- Minimal paudit shape (smallest JSON): `--payload-ledger none --payload-detail light`
 - Payload proof currently supports repositories using `sha1` object format only; non-`sha1` formats fail closed.
 - `audit --verify-metadata` is the explicit non-interactive verification path and requires `--bundle` and `--repo`.
 - `receive` requires prerequisite history to already exist in the receiver repository.

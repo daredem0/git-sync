@@ -120,6 +120,10 @@ fn write_payload_audit_export_light_mode_omits_object_details() {
         "light export should use none ledger mode for minimal paudit output"
     );
     assert!(
+        content.contains("\"pack_objects\": []"),
+        "light export should omit pack object rows for minimal paudit output"
+    );
+    assert!(
         content.contains("\"first_entries\": []")
             && content.contains("\"last_entries\": []")
             && content.contains("\"unresolved_entry_rows\": []")

@@ -34,6 +34,8 @@ pub(super) fn payload_audit_document_from_session_with_ledger_and_detail_mode(
 ) -> Result<PayloadAuditDocument> {
     let mut pack_objects = Vec::<PayloadAuditDocumentPackObject>::new();
     let mut object_details = Vec::<PayloadAuditDocumentObjectDetail>::new();
+    let emit_pack_object_rows = !matches!(detail_mode, PayloadAuditObjectDetailMode::Light)
+        || !matches!(ledger_mode, PayloadAuditLedgerMode::None);
 
     let mut reachable_objects = 0usize;
     let mut commit_objects = 0usize;
@@ -55,15 +57,17 @@ pub(super) fn payload_audit_document_from_session_with_ledger_and_detail_mode(
             PayloadObjectKind::Unknown => unknown_objects += 1,
         }
 
-        pack_objects.push(PayloadAuditDocumentPackObject {
-            oid: object.oid.to_string(),
-            kind: payload_kind_code(object.kind).to_string(),
-            size_bytes: object.size_bytes,
-            reachable_from_heads: object.reachable_from_heads,
-            context_head_index: object.context_head_index,
-            context_commit_order: object.context_commit_order,
-            context_path: object.context_path.clone(),
-        });
+        if emit_pack_object_rows {
+            pack_objects.push(PayloadAuditDocumentPackObject {
+                oid: object.oid.to_string(),
+                kind: payload_kind_code(object.kind).to_string(),
+                size_bytes: object.size_bytes,
+                reachable_from_heads: object.reachable_from_heads,
+                context_head_index: object.context_head_index,
+                context_commit_order: object.context_commit_order,
+                context_path: object.context_path.clone(),
+            });
+        }
 
         if matches!(detail_mode, PayloadAuditObjectDetailMode::Full) {
             let detail = super::collect_payload_object_detail_for_session(session, object.oid)?;

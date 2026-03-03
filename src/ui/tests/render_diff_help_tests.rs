@@ -122,6 +122,10 @@ fn help_text_for_mode_switches_content_by_view() {
         diff_help.contains("p: export minimal payload-audit JSON"),
         "diff-mode help text should include payload-audit export shortcut"
     );
+    assert!(
+        diff_help.contains("no ledger or pack-object rows"),
+        "diff-mode help text should describe minimal paudit shape for p export"
+    );
 }
 
 // Verifies that rendering diff view prints header metadata and patch container labels.
