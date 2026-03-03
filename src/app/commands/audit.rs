@@ -61,6 +61,18 @@ fn run_interactive(
     bundle: Option<PathBuf>,
     resolve: CliPayloadResolveMode,
 ) -> Result<()> {
+    run_interactive_with(repo, bundle, resolve, ui::run)
+}
+
+fn run_interactive_with<F>(
+    repo: Option<PathBuf>,
+    bundle: Option<PathBuf>,
+    resolve: CliPayloadResolveMode,
+    runner: F,
+) -> Result<()>
+where
+    F: FnOnce(&AppConfig) -> Result<()>,
+{
     if !matches!(resolve, CliPayloadResolveMode::PackOnly) {
         return Err(anyhow!(
             "interactive audit currently supports only --resolve pack-only"
@@ -76,7 +88,7 @@ fn run_interactive(
         base_ref: "sync/last".to_string(),
         tip_ref: None,
     };
-    ui::run(&config)
+    runner(&config)
 }
 
 fn run_non_interactive(

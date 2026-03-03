@@ -95,6 +95,21 @@ fn build_two_ref_update_fixture(
     )
 }
 
+fn sample_inspection_with(
+    version: crate::git::BundleVersion,
+    prerequisites: Vec<git2::Oid>,
+) -> BundleInspection {
+    BundleInspection {
+        version,
+        prerequisites,
+        heads: vec![BundleHead {
+            oid: git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .expect("must parse synthetic head oid"),
+            reference: "refs/heads/main".to_string(),
+        }],
+    }
+}
+
 #[test]
 fn rollback_applied_updates_restores_existing_target_refs() {
     let _test_lock = test_fault_injection_lock();
@@ -790,6 +805,331 @@ fn connectivity_validation_rejects_missing_head_commit() {
         text.contains("post-import connectivity check")
             && (text.contains("failed to push head") || text.contains("missing commit")),
         "connectivity diagnostics should explain missing head failure: {text}"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn import_path_labels_and_fallback_flags_are_stable() {
+    assert_eq!(ImportPath::StrictIndexer.label(), "strict-indexer");
+    assert_eq!(
+        ImportPath::CompatIndexerVerifyFalse.label(),
+        "compat-indexer-verify-false"
+    );
+    assert_eq!(
+        ImportPath::CompatFetchFallback.label(),
+        "compat-fetch-fallback"
+    );
+    assert!(
+        !ImportPath::StrictIndexer.is_compatibility_fallback(),
+        "strict indexer path must not be treated as compatibility fallback"
+    );
+    assert!(
+        ImportPath::CompatIndexerVerifyFalse.is_compatibility_fallback()
+            && ImportPath::CompatFetchFallback.is_compatibility_fallback(),
+        "compatibility fallback import paths must be flagged accordingly"
+    );
+}
+
+#[test]
+fn verbose_indexer_diagnostics_returns_plain_error_when_disabled() {
+    let repo_path = temp_bare_repo_path("verbose-diagnostics-disabled");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+    let inspection = sample_inspection_with(crate::git::BundleVersion::V2, Vec::new());
+
+    let err = with_verbose_indexer_diagnostics(
+        "indexer failed",
+        false,
+        &repo,
+        std::path::Path::new("/tmp/sync.bundle"),
+        &inspection,
+        0,
+        "indexer initialization (verify=true)",
+    );
+    assert_eq!(
+        err.to_string(),
+        "indexer failed",
+        "non-verbose mode should preserve original error text without context expansion"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn verbose_indexer_diagnostics_reports_receiver_context_and_alternates() {
+    let repo_path = temp_bare_repo_path("verbose-diagnostics-enabled");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+    let objects_dir = repo.path().join("objects");
+    let info_dir = objects_dir.join("info");
+    std::fs::create_dir_all(&info_dir).expect("must create objects/info directory");
+
+    let relative_alt = objects_dir.join("relative-alt");
+    let absolute_alt = repo_path.join("absolute-alt");
+    std::fs::create_dir_all(&relative_alt).expect("must create relative alternate dir");
+    std::fs::create_dir_all(&absolute_alt).expect("must create absolute alternate dir");
+    let alternates_content = format!(
+        "# comment\n\nrelative-alt\n{}\n",
+        absolute_alt.to_string_lossy()
+    );
+    std::fs::write(info_dir.join("alternates"), alternates_content.as_bytes())
+        .expect("must write alternates file");
+
+    let prerequisites = (0..9usize)
+        .map(|idx| {
+            git2::Oid::from_str(&format!("{idx:040x}"))
+                .expect("must build synthetic prerequisite oid")
+        })
+        .collect::<Vec<_>>();
+    let inspection = sample_inspection_with(crate::git::BundleVersion::V3, prerequisites);
+
+    let err = with_verbose_indexer_diagnostics(
+        "packfile is missing objects",
+        true,
+        &repo,
+        std::path::Path::new("/tmp/sync.bundle"),
+        &inspection,
+        1234,
+        "pack write (verify=true)",
+    );
+    let text = err.to_string();
+    assert!(
+        text.contains("unable to import bundle pack during pack write (verify=true)")
+            && text.contains("verbose diagnostics:"),
+        "verbose diagnostics should include stage and expanded context"
+    );
+    assert!(
+        text.contains("bundle version: v3")
+            && text.contains("receiver bare repo: true")
+            && text.contains("object format: sha1"),
+        "verbose diagnostics should include receiver/bundle metadata details"
+    );
+    assert!(
+        text.contains("alternates entries:")
+            && text.contains(relative_alt.to_string_lossy().as_ref())
+            && text.contains(absolute_alt.to_string_lossy().as_ref()),
+        "verbose diagnostics should include resolved alternates entries"
+    );
+    assert!(
+        text.contains("missing prerequisite objects in receiver odb: 9/9")
+            && text.contains(", ..."),
+        "verbose diagnostics should include missing-prerequisite count and truncation marker"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn format_merge_policy_diagnostics_covers_clean_unknown_and_missing_checks() {
+    let target_a = git2::Oid::from_str("1111111111111111111111111111111111111111")
+        .expect("must parse target oid A");
+    let target_b = git2::Oid::from_str("2222222222222222222222222222222222222222")
+        .expect("must parse target oid B");
+    let target_c = git2::Oid::from_str("3333333333333333333333333333333333333333")
+        .expect("must parse target oid C");
+    let incoming_a = git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .expect("must parse incoming oid A");
+    let incoming_b = git2::Oid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .expect("must parse incoming oid B");
+    let incoming_c = git2::Oid::from_str("cccccccccccccccccccccccccccccccccccccccc")
+        .expect("must parse incoming oid C");
+
+    let row_a = ReceivePlanEntry {
+        target_ref: "refs/heads/a".to_string(),
+        target_oid: Some(target_a),
+        incoming_oid: incoming_a,
+        merge_base_oid: None,
+        preserved_incoming_ref: "refs/sync/incoming/id/heads/a".to_string(),
+        status: ReceivePlanStatus::DivergedMergeRequired,
+    };
+    let row_b = ReceivePlanEntry {
+        target_ref: "refs/heads/b".to_string(),
+        target_oid: Some(target_b),
+        incoming_oid: incoming_b,
+        merge_base_oid: None,
+        preserved_incoming_ref: "refs/sync/incoming/id/heads/b".to_string(),
+        status: ReceivePlanStatus::DivergedMergeRequired,
+    };
+    let row_c = ReceivePlanEntry {
+        target_ref: "refs/heads/c".to_string(),
+        target_oid: Some(target_c),
+        incoming_oid: incoming_c,
+        merge_base_oid: None,
+        preserved_incoming_ref: "refs/sync/incoming/id/heads/c".to_string(),
+        status: ReceivePlanStatus::DivergedMergeRequired,
+    };
+    let checks = vec![
+        ReceiveMergeabilityCheck {
+            target_ref: row_a.target_ref.clone(),
+            target_oid: row_a.target_oid,
+            target_summary: None,
+            incoming_oid: row_a.incoming_oid,
+            incoming_summary: None,
+            merge_base_oid: row_a.merge_base_oid,
+            merge_base_summary: None,
+            status: ReceiveMergeabilityStatus::Unknown,
+            detail: Some("simulation failed".to_string()),
+            conflict_paths: vec!["src/lib.rs".to_string()],
+        },
+        ReceiveMergeabilityCheck {
+            target_ref: row_b.target_ref.clone(),
+            target_oid: row_b.target_oid,
+            target_summary: None,
+            incoming_oid: row_b.incoming_oid,
+            incoming_summary: None,
+            merge_base_oid: row_b.merge_base_oid,
+            merge_base_summary: None,
+            status: ReceiveMergeabilityStatus::Clean,
+            detail: Some("clean".to_string()),
+            conflict_paths: Vec::new(),
+        },
+    ];
+
+    let diagnostics = format_merge_policy_diagnostics(&[&row_a, &row_b, &row_c], &checks);
+    assert!(
+        diagnostics.contains("reason: mergeability check failed")
+            && diagnostics.contains("reason: mergeability precheck did not pass")
+            && diagnostics.contains("reason: mergeability check missing"),
+        "merge-policy diagnostics should cover unknown, clean-but-blocked, and missing-check reasons"
+    );
+    assert!(
+        diagnostics.contains("conflict files:")
+            && diagnostics.contains("src/lib.rs")
+            && diagnostics.contains("detail: simulation failed"),
+        "merge-policy diagnostics should include conflict paths and optional detail lines"
+    );
+}
+
+#[test]
+fn resolve_reference_target_resolves_symbolic_references() {
+    let repo_path = temp_bare_repo_path("resolve-symbolic-ref");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+    let main_oid = commit_from_content(&repo, "main", "main", &[]);
+    repo.reference("refs/heads/main", main_oid, true, "seed main ref")
+        .expect("must seed main ref");
+    repo.reference_symbolic(
+        "refs/heads/current",
+        "refs/heads/main",
+        true,
+        "seed symbolic ref",
+    )
+    .expect("must seed symbolic ref");
+
+    let resolved = resolve_reference_target(&repo, "refs/heads/current")
+        .expect("symbolic ref resolution should succeed");
+    assert_eq!(
+        resolved,
+        Some(main_oid),
+        "symbolic reference should resolve to direct head target"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn bundle_fetch_remote_candidates_resolve_relative_paths_from_current_dir() {
+    let repo_path = temp_bare_repo_path("bundle-fetch-relative-path");
+    std::fs::create_dir_all(&repo_path).expect("must create temp directory");
+    let bundle_path = repo_path.join("relative.bundle");
+    std::fs::write(&bundle_path, b"placeholder").expect("must write relative bundle fixture");
+
+    let previous_dir = std::env::current_dir().expect("must read current dir");
+    std::env::set_current_dir(&repo_path).expect("must switch into temp fixture directory");
+    let candidates = bundle_fetch_remote_candidates(std::path::Path::new("relative.bundle"))
+        .expect("relative bundle input should resolve against current directory");
+    std::env::set_current_dir(previous_dir).expect("must restore previous current dir");
+
+    assert_eq!(
+        candidates.len(),
+        2,
+        "relative bundle input should still produce path and file:// candidates"
+    );
+    assert!(
+        candidates[0].ends_with("relative.bundle") && candidates[1].starts_with("file://"),
+        "relative bundle candidates should include resolved absolute path and file:// URL"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn fetch_fallback_requires_at_least_one_head() {
+    let repo_path = temp_bare_repo_path("fetch-fallback-empty-heads");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+    let error = import_bundle_pack_with_libgit2_fetch(
+        &repo,
+        std::path::Path::new("/tmp/missing.bundle"),
+        &[],
+        "bundle-id",
+    )
+    .expect_err("fetch fallback should reject empty advertised-head set");
+    assert!(
+        error
+            .to_string()
+            .contains("bundle fetch fallback requires at least one advertised head"),
+        "error should explain empty-head fallback precondition"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn fetch_fallback_reports_candidate_failures_for_missing_bundle_path() {
+    let repo_path = temp_bare_repo_path("fetch-fallback-missing-bundle");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+    let heads = vec![BundleHead {
+        oid: git2::Oid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("must parse synthetic oid"),
+        reference: "refs/heads/main".to_string(),
+    }];
+
+    let missing_bundle = repo_path.join("missing.bundle");
+    let error = import_bundle_pack_with_libgit2_fetch(&repo, &missing_bundle, &heads, "bundle-id")
+        .expect_err("missing bundle path should fail libgit2 fetch fallback");
+    let text = error.to_string();
+    assert!(
+        text.contains("libgit2 bundle fetch fallback failed for all URL candidates")
+            && text.contains("fetch failed"),
+        "fallback diagnostics should summarize per-candidate fetch failures"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn cleanup_temporary_fetch_refs_deletes_existing_and_ignores_missing_refs() {
+    let repo_path = temp_bare_repo_path("cleanup-fetch-staging-refs");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+    let oid = commit_from_content(&repo, "staging", "staging", &[]);
+    repo.reference(
+        "refs/sync/fetch-staging/test/heads/main",
+        oid,
+        true,
+        "seed temporary staging ref",
+    )
+    .expect("must create staging ref");
+
+    let refs = [
+        "refs/sync/fetch-staging/test/heads/main".to_string(),
+        "refs/sync/fetch-staging/test/heads/missing".to_string(),
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    cleanup_temporary_fetch_refs(&repo, &refs)
+        .expect("cleanup should delete existing refs and ignore missing ones");
+
+    assert_eq!(
+        resolve_reference_target(&repo, "refs/sync/fetch-staging/test/heads/main")
+            .expect("staging ref lookup should succeed"),
+        None,
+        "cleanup should delete present staging refs"
     );
 
     let _ = std::fs::remove_dir_all(repo_path);

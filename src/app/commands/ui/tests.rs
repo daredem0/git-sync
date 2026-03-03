@@ -9,6 +9,14 @@
 use super::*;
 use anyhow::anyhow;
 
+fn ok_runner(_config: &AppConfig) -> anyhow::Result<()> {
+    Ok(())
+}
+
+fn err_runner(_config: &AppConfig) -> anyhow::Result<()> {
+    Err(anyhow!("simulated default ui runner error"))
+}
+
 #[test]
 fn run_with_passes_cli_values_into_app_config() {
     let repo = PathBuf::from("/tmp/repo");
@@ -50,5 +58,41 @@ fn run_with_propagates_runner_error() {
     assert!(
         err.to_string().contains("simulated ui error"),
         "error text should preserve runner failure reason"
+    );
+}
+
+#[test]
+fn run_calls_default_ui_runner_path() {
+    set_test_ui_runner(Some(ok_runner));
+    let result = run(
+        PathBuf::from("/tmp/repo"),
+        PathBuf::from("/tmp/sync.bundle.zip"),
+        "sync/last".to_string(),
+        None,
+    );
+
+    set_test_ui_runner(None);
+    assert!(
+        result.is_ok(),
+        "default ui runner path should route through configured injected runner in tests"
+    );
+}
+
+#[test]
+fn run_propagates_error_from_injected_default_ui_runner() {
+    set_test_ui_runner(Some(err_runner));
+    let result = run(
+        PathBuf::from("/tmp/repo"),
+        PathBuf::from("/tmp/sync.bundle.zip"),
+        "sync/last".to_string(),
+        None,
+    );
+
+    set_test_ui_runner(None);
+    let err = result.expect_err("injected default ui runner error should bubble up");
+    assert!(
+        err.to_string()
+            .contains("simulated default ui runner error"),
+        "error text should preserve injected default ui runner failure details"
     );
 }

@@ -10,6 +10,7 @@ use super::support::*;
 use super::*;
 use flate2::{Compression, write::ZlibEncoder};
 use std::io::Write as _;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Verifies that PACK proof parsing succeeds for a normal generated bundle and reports a non-zero declared count.
 #[test]
@@ -167,6 +168,60 @@ fn verify_pack_payload_rejects_trailing_bytes_before_trailer() {
             .reason
             .contains("pack contains trailing or unconsumed bytes before trailer"),
         "error should explicitly report trailing/unconsumed bytes before trailer"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that test-only payload verification adapters preserve load-input failures as structured payload errors.
+#[test]
+fn verify_pack_payload_for_bundle_input_maps_load_errors() {
+    let missing_bundle = std::env::temp_dir().join(format!(
+        "git-sync-payload-missing-{}-{}.bundle",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+
+    let error = verify_pack_payload_for_bundle_input_with_resolve_mode(&missing_bundle, None)
+        .expect_err("missing bundle path should fail payload test adapter");
+    assert!(
+        !error.reason.is_empty(),
+        "mapped payload error should preserve load failure reason text"
+    );
+    assert_eq!(
+        error.blocked_entry_idx, None,
+        "mapped load errors should not report blocked-entry index"
+    );
+    assert_eq!(
+        error.ledger_partial, None,
+        "mapped load errors should not report partial ledger rows"
+    );
+}
+
+// Verifies that test-only payload verification adapters preserve bundle-parse failures as structured payload errors.
+#[test]
+fn verify_pack_payload_for_bundle_input_maps_parse_errors() {
+    let repo_dir = temp_repo_dir("payload-test-api-parse-error");
+    std::fs::create_dir_all(&repo_dir).expect("must create temp repo directory");
+    let malformed_bundle = repo_dir.join("malformed.bundle");
+    std::fs::write(&malformed_bundle, b"not a git bundle").expect("must write malformed bundle");
+
+    let error = verify_pack_payload_for_bundle_input_with_resolve_mode(&malformed_bundle, None)
+        .expect_err("malformed bundle should fail payload test adapter");
+    assert!(
+        !error.reason.is_empty(),
+        "mapped payload error should preserve parse failure reason text"
+    );
+    assert_eq!(
+        error.blocked_entry_idx, None,
+        "mapped parse errors should not report blocked-entry index"
+    );
+    assert_eq!(
+        error.ledger_partial, None,
+        "mapped parse errors should not report partial ledger rows"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

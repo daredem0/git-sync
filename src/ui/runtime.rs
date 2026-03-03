@@ -28,16 +28,91 @@ trait EventSource {
     fn read(&self) -> io::Result<Event>;
 }
 
-struct CrosstermEventSource;
+trait RuntimeOps {
+    type B: Backend;
+
+    fn setup_terminal(&self) -> Result<ratatui::Terminal<Self::B>>;
+    fn cleanup_terminal(&self, terminal: &mut ratatui::Terminal<Self::B>);
+}
+
+struct CrosstermEventSource {
+    poll_fn: fn(Duration) -> io::Result<bool>,
+    read_fn: fn() -> io::Result<Event>,
+}
+
+impl Default for CrosstermEventSource {
+    fn default() -> Self {
+        Self {
+            poll_fn: event::poll,
+            read_fn: event::read,
+        }
+    }
+}
 
 impl EventSource for CrosstermEventSource {
     fn poll(&self, timeout: Duration) -> io::Result<bool> {
-        event::poll(timeout)
+        (self.poll_fn)(timeout)
     }
 
     fn read(&self) -> io::Result<Event> {
-        event::read()
+        (self.read_fn)()
     }
+}
+
+struct CrosstermRuntimeOps;
+
+impl RuntimeOps for CrosstermRuntimeOps {
+    type B = CrosstermBackend<io::Stdout>;
+
+    fn setup_terminal(&self) -> Result<ratatui::Terminal<Self::B>> {
+        setup_crossterm_terminal_with(enable_raw_mode, enter_alternate_screen)
+    }
+
+    fn cleanup_terminal(&self, terminal: &mut ratatui::Terminal<Self::B>) {
+        cleanup_crossterm_terminal_with(
+            terminal,
+            disable_raw_mode,
+            leave_alternate_screen,
+            show_terminal_cursor,
+        );
+    }
+}
+
+fn enter_alternate_screen(stdout: &mut io::Stdout) -> io::Result<()> {
+    execute!(stdout, EnterAlternateScreen).map(|_| ())
+}
+
+fn leave_alternate_screen(backend: &mut CrosstermBackend<io::Stdout>) -> io::Result<()> {
+    execute!(backend, LeaveAlternateScreen).map(|_| ())
+}
+
+fn show_terminal_cursor(
+    terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<()> {
+    terminal.show_cursor()
+}
+
+fn setup_crossterm_terminal_with(
+    enable_raw_mode_fn: fn() -> io::Result<()>,
+    enter_alt_screen_fn: fn(&mut io::Stdout) -> io::Result<()>,
+) -> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode_fn()?;
+    let mut stdout = io::stdout();
+    enter_alt_screen_fn(&mut stdout)?;
+    let backend = CrosstermBackend::new(stdout);
+    ratatui::Terminal::new(backend).map_err(Into::into)
+}
+
+fn cleanup_crossterm_terminal_with(
+    terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
+    disable_raw_mode_fn: fn() -> io::Result<()>,
+    leave_alt_screen_fn: fn(&mut CrosstermBackend<io::Stdout>) -> io::Result<()>,
+    show_cursor_fn: fn(&mut ratatui::Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()>,
+) {
+    // Always attempt terminal cleanup, even when the event loop returns an error.
+    let _ = disable_raw_mode_fn();
+    let _ = leave_alt_screen_fn(terminal.backend_mut());
+    let _ = show_cursor_fn(terminal);
 }
 
 /// Runs the interactive TUI audit workflow for the provided config.
@@ -46,26 +121,63 @@ impl EventSource for CrosstermEventSource {
 ///
 /// Returns an error when terminal setup, rendering, or event handling fails.
 pub fn run(config: &AppConfig) -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = ratatui::Terminal::new(backend)?;
+    let runtime = CrosstermRuntimeOps;
+    let event_source = CrosstermEventSource::default();
+    #[cfg(test)]
+    if let Some(result) = run_override(config) {
+        return result;
+    }
+    run_with_runtime(config, &runtime, &event_source)
+}
 
-    terminal.draw(render_loading_screen)?;
+#[cfg(test)]
+thread_local! {
+    static TEST_RUN_OVERRIDE: std::cell::RefCell<Option<fn(&AppConfig) -> Result<()>>> = const { std::cell::RefCell::new(None) };
+}
 
-    let model = build_audit_model(config);
-    let mut app_state = AppState::new(&model);
-    let event_source = CrosstermEventSource;
+#[cfg(test)]
+fn run_override(config: &AppConfig) -> Option<Result<()>> {
+    TEST_RUN_OVERRIDE.with(|slot| slot.borrow().as_ref().map(|run_fn| run_fn(config)))
+}
 
-    let loop_result = run_loop(&mut terminal, &model, &mut app_state, &event_source);
+#[cfg(test)]
+pub(super) fn set_test_run_override(run_fn: Option<fn(&AppConfig) -> Result<()>>) {
+    TEST_RUN_OVERRIDE.with(|slot| {
+        *slot.borrow_mut() = run_fn;
+    });
+}
 
-    // Always attempt terminal cleanup, even when the event loop returns an error.
-    let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-    let _ = terminal.show_cursor();
-
+/// Runs the full terminal lifecycle with injectable setup/cleanup hooks.
+fn run_with_runtime<R: RuntimeOps>(
+    config: &AppConfig,
+    runtime: &R,
+    event_source: &impl EventSource,
+) -> Result<()> {
+    let mut terminal = runtime.setup_terminal()?;
+    let loop_result = run_with_prepared_terminal(&mut terminal, config, event_source);
+    runtime.cleanup_terminal(&mut terminal);
     loop_result
+}
+
+/// Runs loading/render logic after terminal setup has already completed.
+fn run_with_prepared_terminal(
+    terminal: &mut ratatui::Terminal<impl Backend>,
+    config: &AppConfig,
+    event_source: &impl EventSource,
+) -> Result<()> {
+    terminal.draw(render_loading_screen)?;
+    let model = build_audit_model(config);
+    run_with_loaded_model(terminal, model, event_source)
+}
+
+/// Runs the key/render loop for an already-built model.
+fn run_with_loaded_model(
+    terminal: &mut ratatui::Terminal<impl Backend>,
+    model: AuditModel,
+    event_source: &impl EventSource,
+) -> Result<()> {
+    let mut app_state = AppState::new(&model);
+    run_loop(terminal, &model, &mut app_state, event_source)
 }
 
 fn render_loading_screen(frame: &mut ratatui::Frame<'_>) {

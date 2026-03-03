@@ -8,6 +8,22 @@
 
 use super::apply_git_delta;
 
+fn encode_varint(mut value: usize) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        encoded.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+    encoded
+}
+
 #[test]
 fn apply_git_delta_rejects_source_size_mismatch() {
     let base = b"abc";
@@ -90,5 +106,70 @@ fn apply_git_delta_rejects_target_size_mismatch() {
     assert!(
         error.to_string().contains("delta result size mismatch"),
         "error should report target-size mismatch"
+    );
+}
+
+#[test]
+fn apply_git_delta_rejects_out_of_bounds_initial_varint_offset() {
+    let base: [u8; 0] = [];
+    let error = apply_git_delta(&base, &[]).expect_err("empty delta should fail");
+    assert!(
+        error.to_string().contains("delta varint is out of bounds"),
+        "error should report out-of-bounds varint offset"
+    );
+}
+
+#[test]
+fn apply_git_delta_applies_literal_then_copy_sections() {
+    let base = b"ABCDEFGH";
+    let mut delta = Vec::new();
+    delta.extend_from_slice(&encode_varint(base.len()));
+    delta.extend_from_slice(&encode_varint(7));
+    delta.push(0x03);
+    delta.extend_from_slice(b"xyz");
+    delta.push(0x91);
+    delta.push(2);
+    delta.push(4);
+
+    let out = apply_git_delta(base, &delta).expect("delta with literal+copy should succeed");
+    assert_eq!(
+        out, b"xyzCDEF",
+        "delta should append literal chunk then copied range"
+    );
+}
+
+#[test]
+fn apply_git_delta_supports_full_copy_when_size_bits_are_zero() {
+    let base = vec![b'a'; 0x10000];
+    let mut delta = Vec::new();
+    delta.extend_from_slice(&encode_varint(base.len()));
+    delta.extend_from_slice(&encode_varint(base.len()));
+    delta.push(0x8f);
+    delta.extend_from_slice(&[0, 0, 0, 0]);
+
+    let out = apply_git_delta(&base, &delta).expect("default full-copy delta should succeed");
+    assert_eq!(
+        out.len(),
+        base.len(),
+        "full-copy delta should materialize 0x10000 bytes"
+    );
+    assert_eq!(out, base, "full-copy delta should match base bytes");
+}
+
+#[test]
+fn apply_git_delta_supports_copy_size_high_bytes() {
+    let base = vec![b'z'; 0x020100];
+    let mut delta = Vec::new();
+    delta.extend_from_slice(&encode_varint(base.len()));
+    delta.extend_from_slice(&encode_varint(base.len()));
+    delta.push(0xE0);
+    delta.push(0x01);
+    delta.push(0x02);
+
+    let out = apply_git_delta(&base, &delta).expect("high-byte size copy should succeed");
+    assert_eq!(
+        out.len(),
+        base.len(),
+        "copy size bytes 1/2 should reconstruct full target size"
     );
 }
