@@ -102,6 +102,9 @@ pub enum OutputFormat {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 /// Entry-ledger export mode used by `audit --format json`.
 pub enum PayloadLedgerMode {
+    /// Omit all entry-ledger rows while retaining counters.
+    #[value(alias = "non")]
+    None,
     /// Emit bounded first/last/unresolved ledger subsets.
     Summary,
     /// Emit full parsed entry-ledger rows.

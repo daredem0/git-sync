@@ -39,7 +39,7 @@ pub struct PayloadAuditDocument {
     pub transport_entries: Vec<PayloadAuditDocumentTransportEntry>,
     /// PACK-level completeness and integrity proof metrics.
     pub pack_proof: PayloadPackProof,
-    /// Entry-ledger export section (summary or full rows).
+    /// Entry-ledger export section (`none`, `summary`, or `full` rows).
     pub entry_ledger: PayloadAuditDocumentEntryLedger,
     /// Aggregate object-count summary by type/reachability.
     pub pack_summary: PayloadAuditPackSummary,
@@ -55,6 +55,8 @@ pub struct PayloadAuditDocument {
 #[serde(rename_all = "snake_case")]
 /// Output mode for serialized entry-ledger section in payload-audit JSON.
 pub enum PayloadAuditLedgerMode {
+    /// Omit all entry-ledger rows while retaining entry counters.
+    None,
     /// Emit bounded first/last/unresolved subsets only.
     Summary,
     /// Emit all parsed entry rows.
@@ -74,7 +76,7 @@ pub enum PayloadAuditObjectDetailMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Serialized entry-ledger section in payload-audit document.
 pub struct PayloadAuditDocumentEntryLedger {
-    /// Export mode label (`summary` or `full`).
+    /// Export mode label (`none`, `summary`, or `full`).
     pub mode: String,
     /// Number of entries declared by PACK header.
     pub declared_entries: usize,
@@ -82,13 +84,13 @@ pub struct PayloadAuditDocumentEntryLedger {
     pub parsed_entries: usize,
     /// Number of unresolved entries in parsed ledger.
     pub unresolved_entries: usize,
-    /// First-K parsed rows (summary mode).
+    /// First-K parsed rows (summary mode; empty in none mode).
     pub first_entries: Vec<PayloadAuditDocumentPackEntry>,
-    /// Last-K parsed rows (summary mode).
+    /// Last-K parsed rows (summary mode; empty in none mode).
     pub last_entries: Vec<PayloadAuditDocumentPackEntry>,
-    /// Unresolved rows (summary and full mode).
+    /// Unresolved rows (summary/full mode; empty in none mode).
     pub unresolved_entry_rows: Vec<PayloadAuditDocumentPackEntry>,
-    /// Full parsed rows (full mode).
+    /// Full parsed rows (full mode; empty in none/summary modes).
     pub entries: Vec<PayloadAuditDocumentPackEntry>,
 }
 

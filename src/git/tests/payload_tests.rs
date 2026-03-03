@@ -1033,6 +1033,7 @@ fn paudit_schema_requires_transfer_gate_and_entry_counters() {
         "entry_ledger",
         "pack_summary",
         "pack_objects",
+        "object_detail_mode",
         "object_details",
     ] {
         assert!(
@@ -1088,6 +1089,15 @@ fn paudit_schema_requires_transfer_gate_and_entry_counters() {
                 .iter()
                 .any(|value| value.as_str() == Some(field)),
             "entry_ledger required field list must include '{field}'"
+        );
+    }
+    let mode_enum = schema_json["properties"]["entry_ledger"]["properties"]["mode"]["enum"]
+        .as_array()
+        .expect("entry_ledger.mode schema must define enum values");
+    for mode in ["none", "summary", "full"] {
+        assert!(
+            mode_enum.iter().any(|value| value.as_str() == Some(mode)),
+            "entry_ledger.mode enum must include '{mode}'"
         );
     }
 
@@ -1221,6 +1231,43 @@ fn audit_json_summary_mode_includes_required_ledger_subset() {
     assert_eq!(
         document.entry_ledger.declared_entries, document.pack_proof.entries_declared,
         "entry ledger declared counter should match pack proof declared counter"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that none-mode payload JSON omits all entry-ledger row arrays while preserving counters.
+#[test]
+fn audit_json_none_mode_omits_all_entry_rows() {
+    let (repo_dir, bundle_result, _base_commit_id, _tip_commit_id) =
+        create_linear_bundle_fixture("payload-audit-document-none-ledger", false);
+
+    let document = build_payload_audit_document_for_bundle_input_with_options(
+        &bundle_result.archive_path,
+        &repo_dir,
+        PayloadAuditLedgerMode::None,
+        PayloadResolveMode::PackOnly,
+    )
+    .expect("must build payload-audit none-ledger document");
+
+    assert_eq!(
+        document.entry_ledger.mode, "none",
+        "none mode should encode entry_ledger.mode as 'none'"
+    );
+    assert!(
+        document.entry_ledger.first_entries.is_empty()
+            && document.entry_ledger.last_entries.is_empty()
+            && document.entry_ledger.unresolved_entry_rows.is_empty()
+            && document.entry_ledger.entries.is_empty(),
+        "none mode should omit all entry-ledger row arrays"
+    );
+    assert_eq!(
+        document.entry_ledger.parsed_entries, document.pack_proof.entries_parsed,
+        "none mode should still expose parsed entry counters"
+    );
+    assert_eq!(
+        document.entry_ledger.declared_entries, document.pack_proof.entries_declared,
+        "none mode should still expose declared entry counters"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

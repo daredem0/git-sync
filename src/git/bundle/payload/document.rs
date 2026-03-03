@@ -140,34 +140,67 @@ fn build_document_entry_ledger(
     ledger: &PackEntryLedger,
     mode: PayloadAuditLedgerMode,
 ) -> PayloadAuditDocumentEntryLedger {
-    let unresolved_entry_rows = ledger
+    let parsed_entries = ledger.entries.len();
+    let declared_entries = ledger.declared_entry_count;
+    let unresolved_entries = ledger
         .entries
         .iter()
         .filter(|entry| !entry.resolved)
-        .map(document_pack_entry_row)
-        .collect::<Vec<_>>();
-    let parsed_entries = ledger.entries.len();
-    let declared_entries = ledger.declared_entry_count;
-    let unresolved_entries = unresolved_entry_rows.len();
-    let first_entries = ledger
-        .entries
-        .iter()
-        .take(LEDGER_SUMMARY_EDGE_COUNT)
-        .map(document_pack_entry_row)
-        .collect::<Vec<_>>();
-    let last_entries = ledger
-        .entries
-        .iter()
-        .skip(parsed_entries.saturating_sub(LEDGER_SUMMARY_EDGE_COUNT))
-        .map(document_pack_entry_row)
-        .collect::<Vec<_>>();
-    let entries = match mode {
-        PayloadAuditLedgerMode::Summary => Vec::new(),
-        PayloadAuditLedgerMode::Full => ledger
-            .entries
-            .iter()
-            .map(document_pack_entry_row)
-            .collect::<Vec<_>>(),
+        .count();
+    let (first_entries, last_entries, unresolved_entry_rows, entries) = match mode {
+        PayloadAuditLedgerMode::None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+        PayloadAuditLedgerMode::Summary => {
+            let unresolved_entry_rows = ledger
+                .entries
+                .iter()
+                .filter(|entry| !entry.resolved)
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            let first_entries = ledger
+                .entries
+                .iter()
+                .take(LEDGER_SUMMARY_EDGE_COUNT)
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            let last_entries = ledger
+                .entries
+                .iter()
+                .skip(parsed_entries.saturating_sub(LEDGER_SUMMARY_EDGE_COUNT))
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            (
+                first_entries,
+                last_entries,
+                unresolved_entry_rows,
+                Vec::new(),
+            )
+        }
+        PayloadAuditLedgerMode::Full => {
+            let unresolved_entry_rows = ledger
+                .entries
+                .iter()
+                .filter(|entry| !entry.resolved)
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            let first_entries = ledger
+                .entries
+                .iter()
+                .take(LEDGER_SUMMARY_EDGE_COUNT)
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            let last_entries = ledger
+                .entries
+                .iter()
+                .skip(parsed_entries.saturating_sub(LEDGER_SUMMARY_EDGE_COUNT))
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            let entries = ledger
+                .entries
+                .iter()
+                .map(document_pack_entry_row)
+                .collect::<Vec<_>>();
+            (first_entries, last_entries, unresolved_entry_rows, entries)
+        }
     };
 
     PayloadAuditDocumentEntryLedger {
@@ -217,6 +250,7 @@ fn payload_kind_code(kind: PayloadObjectKind) -> &'static str {
 /// Returns stable string code for payload ledger export mode.
 fn payload_ledger_mode_code(mode: PayloadAuditLedgerMode) -> &'static str {
     match mode {
+        PayloadAuditLedgerMode::None => "none",
         PayloadAuditLedgerMode::Summary => "summary",
         PayloadAuditLedgerMode::Full => "full",
     }

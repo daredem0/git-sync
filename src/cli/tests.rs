@@ -282,3 +282,55 @@ fn audit_json_parses_payload_detail_light() {
         "audit --payload-detail light should map to light detail mode"
     );
 }
+
+// Verifies that `audit --payload-ledger none` parses and maps to none ledger mode.
+#[test]
+fn audit_json_parses_payload_ledger_none() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "audit",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--format",
+        "json",
+        "--payload-ledger",
+        "none",
+    ])
+    .expect("audit json command with none payload-ledger should parse");
+
+    let Some(Command::Audit { payload_ledger, .. }) = cli.command else {
+        panic!("expected parsed audit command");
+    };
+    assert!(
+        matches!(payload_ledger, PayloadLedgerMode::None),
+        "audit --payload-ledger none should map to none ledger mode"
+    );
+}
+
+// Verifies that `audit --payload-ledger non` alias parses and maps to none ledger mode.
+#[test]
+fn audit_json_parses_payload_ledger_non_alias() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "audit",
+        "--repo",
+        ".",
+        "--bundle",
+        "sync.bundle.zip",
+        "--format",
+        "json",
+        "--payload-ledger",
+        "non",
+    ])
+    .expect("audit json command with non alias should parse");
+
+    let Some(Command::Audit { payload_ledger, .. }) = cli.command else {
+        panic!("expected parsed audit command");
+    };
+    assert!(
+        matches!(payload_ledger, PayloadLedgerMode::None),
+        "audit --payload-ledger non should map to none ledger mode alias"
+    );
+}

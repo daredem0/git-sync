@@ -67,7 +67,7 @@ fn write_payload_audit_export(
             git::build_payload_audit_document_for_bundle_input_with_options_and_detail_mode(
                 &model.bundle_path,
                 &model.repo_path,
-                PayloadAuditLedgerMode::Summary,
+                PayloadAuditLedgerMode::None,
                 PayloadAuditObjectDetailMode::Light,
                 PayloadResolveMode::PackOnly,
             )?

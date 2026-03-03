@@ -231,6 +231,7 @@
         "mode": {
           "type": "string",
           "enum": [
+            "none",
             "summary",
             "full"
           ]

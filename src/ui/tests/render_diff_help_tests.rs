@@ -36,7 +36,7 @@ fn render_footer_text_switches_between_page_and_diff_modes() {
         "overview footer should include commit-page action hints"
     );
     assert!(
-        overview_footer.contains("p/P export paudit light/full"),
+        overview_footer.contains("p/P export paudit minimal/full"),
         "overview footer should include payload-audit export hint"
     );
 
@@ -119,7 +119,7 @@ fn help_text_for_mode_switches_content_by_view() {
         "page helper should return diff hotkey help when diff mode is active"
     );
     assert!(
-        diff_help.contains("p: export light payload-audit JSON"),
+        diff_help.contains("p: export minimal payload-audit JSON"),
         "diff-mode help text should include payload-audit export shortcut"
     );
 }

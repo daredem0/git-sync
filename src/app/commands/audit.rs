@@ -106,6 +106,7 @@ fn run_non_interactive(
         }
         OutputFormat::Json => {
             let ledger_mode = match payload_ledger {
+                PayloadLedgerMode::None => PayloadAuditLedgerMode::None,
                 PayloadLedgerMode::Summary => PayloadAuditLedgerMode::Summary,
                 PayloadLedgerMode::Full => PayloadAuditLedgerMode::Full,
             };

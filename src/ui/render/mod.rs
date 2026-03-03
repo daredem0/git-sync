@@ -53,17 +53,17 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
 /// Renders footer key-hint text, including transient action messages.
 pub(crate) fn render_footer_text(state: &AppState) -> String {
     let base = if state.is_diff_open() {
-        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | p/P export paudit light/full | q quit"
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back | ? help | p/P export paudit minimal/full | q quit"
     } else if state.is_payload_object_open() {
-        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | p/P export paudit light/full | q quit"
+        "j/k or Up/Down scroll | h/l or Left/Right horizontal | PgUp/PgDn fast scroll | Home reset\nEsc back to payload list | ? help | p/P export paudit minimal/full | q quit"
     } else if state.main_view == MainView::Payload && state.is_payload_entries_view() {
-        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | ? help | p/P export paudit light/full | q quit"
+        "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | ? help | p/P export paudit minimal/full | q quit"
     } else if state.main_view == MainView::Payload {
-        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | ? help | p/P export paudit light/full | q quit"
+        "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | ? help | p/P export paudit minimal/full | q quit"
     } else if state.page_index == 0 {
-        "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit light/full | q quit"
+        "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
     } else {
-        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | p/P export paudit light/full | q quit"
+        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
     };
     match &state.action_message {
         Some(message) => format!("{base} | {message}"),
@@ -172,7 +172,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open selected head and move into commit pages\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from overview)\n\
@@ -185,7 +185,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open diff for selected file\n\
              - g / G: jump to first or last commit page for selected head\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: return to overview\n\
@@ -197,7 +197,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - h/l or Left/Right: horizontal scroll\n\
              - PgUp/PgDn: fast vertical scroll\n\
              - Home: reset diff scroll to origin\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: close diff and return to commit page\n\
@@ -212,7 +212,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open selected object detail\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from payload main page)\n\
@@ -226,7 +226,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - Enter: open detail for selected resolved entry\n\
              - v: toggle main view (History/Payload) on main page\n\
              - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: quit (from payload main page)\n\
@@ -238,7 +238,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - h/l or Left/Right: horizontal scroll\n\
              - PgUp/PgDn: fast vertical scroll\n\
              - Home: reset object-detail scroll to origin\n\
-             - p: export light payload-audit JSON (without object details)\n\
+             - p: export minimal payload-audit JSON (light details, no ledger rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
              - Esc: close object detail and return to payload list\n\

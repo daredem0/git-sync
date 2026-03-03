@@ -115,6 +115,17 @@ fn write_payload_audit_export_light_mode_omits_object_details() {
         content.contains("\"object_details\": []"),
         "light export should omit object details"
     );
+    assert!(
+        content.contains("\"mode\": \"none\""),
+        "light export should use none ledger mode for minimal paudit output"
+    );
+    assert!(
+        content.contains("\"first_entries\": []")
+            && content.contains("\"last_entries\": []")
+            && content.contains("\"unresolved_entry_rows\": []")
+            && content.contains("\"entries\": []"),
+        "light export should omit all ledger row arrays in none mode"
+    );
 
     let _ = fs::remove_file(&notice.path);
 }
