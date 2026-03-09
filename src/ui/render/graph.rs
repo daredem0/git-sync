@@ -116,8 +116,11 @@ pub(crate) fn render_history_graph_page(
                         .title("git log --oneline --decorate --graph (bundle scope)"),
                 )
                 .scroll((
-                    u16::try_from(selected_row_index.unwrap_or(0).saturating_sub(4))
-                        .unwrap_or(u16::MAX),
+                    u16::try_from(graph_scroll_offset(
+                        selected_row_index.unwrap_or(0),
+                        usize::from(chunks[1].height.saturating_sub(2)),
+                    ))
+                    .unwrap_or(u16::MAX),
                     0,
                 ))
         }
@@ -147,6 +150,14 @@ pub(crate) fn render_history_graph_page(
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[2]);
+}
+
+/// Computes vertical scroll so selection stays visible and only scrolls after viewport bottom.
+fn graph_scroll_offset(selected_row_index: usize, viewport_rows: usize) -> usize {
+    if viewport_rows == 0 {
+        return 0;
+    }
+    selected_row_index.saturating_sub(viewport_rows.saturating_sub(1))
 }
 
 /// Returns graph-selectable commit OIDs in visual order.
@@ -646,4 +657,27 @@ fn decoration_style(decoration: &str) -> Style {
     Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::graph_scroll_offset;
+
+    #[test]
+    fn graph_scroll_offset_stays_zero_while_selection_fits_viewport() {
+        assert_eq!(graph_scroll_offset(0, 10), 0);
+        assert_eq!(graph_scroll_offset(8, 10), 0);
+        assert_eq!(graph_scroll_offset(9, 10), 0);
+    }
+
+    #[test]
+    fn graph_scroll_offset_moves_after_selection_passes_viewport_bottom() {
+        assert_eq!(graph_scroll_offset(10, 10), 1);
+        assert_eq!(graph_scroll_offset(15, 10), 6);
+    }
+
+    #[test]
+    fn graph_scroll_offset_handles_empty_viewport() {
+        assert_eq!(graph_scroll_offset(5, 0), 0);
+    }
 }
