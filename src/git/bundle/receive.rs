@@ -861,27 +861,31 @@ fn compute_receive_plan(
     let mut plan = Vec::with_capacity(incoming_refs.len());
     for incoming in incoming_refs {
         let target_oid = resolve_reference_target(repo, &incoming.target_ref)?;
-        let status = match target_oid {
+        let target_commit_oid = resolve_reference_commit_target(repo, &incoming.target_ref)?;
+        let status = match target_commit_oid {
             None => ReceivePlanStatus::TargetMissing,
-            Some(current) if current == incoming.incoming_oid => ReceivePlanStatus::AlreadyPresent,
-            Some(current) => {
-                if repo.graph_descendant_of(incoming.incoming_oid, current)? {
+            Some(current_commit) if current_commit == incoming.incoming_oid => {
+                ReceivePlanStatus::AlreadyPresent
+            }
+            Some(current_commit) => {
+                if repo.graph_descendant_of(incoming.incoming_oid, current_commit)? {
                     ReceivePlanStatus::FastForwardOk
-                } else if repo.graph_descendant_of(current, incoming.incoming_oid)? {
+                } else if repo.graph_descendant_of(current_commit, incoming.incoming_oid)? {
                     ReceivePlanStatus::TargetAhead
                 } else {
                     ReceivePlanStatus::DivergedMergeRequired
                 }
             }
         };
-        let merge_base_oid = match target_oid {
-            Some(current) => repo.merge_base(current, incoming.incoming_oid).ok(),
+        let merge_base_oid = match target_commit_oid {
+            Some(current_commit) => repo.merge_base(current_commit, incoming.incoming_oid).ok(),
             None => None,
         };
 
         plan.push(ReceivePlanEntry {
             target_ref: incoming.target_ref.clone(),
             target_oid,
+            target_commit_oid,
             incoming_oid: incoming.incoming_oid,
             merge_base_oid,
             preserved_incoming_ref: incoming.incoming_ref.clone(),
@@ -902,7 +906,7 @@ fn compute_receive_mergeability_checks(
             continue;
         }
 
-        let Some(target_oid) = row.target_oid else {
+        let Some(target_oid) = row.target_commit_oid else {
             checks.push(ReceiveMergeabilityCheck {
                 target_ref: row.target_ref.clone(),
                 target_oid: None,
@@ -1215,7 +1219,7 @@ fn planned_ref_updates_from_plan(
                             row.target_ref
                         );
                     }
-                    let Some(target_oid) = row.target_oid else {
+                    let Some(target_oid) = row.target_commit_oid else {
                         bail!(
                             "internal receive plan error: merge integration requires an existing target oid for diverged row '{}'",
                             row.target_ref
@@ -1597,6 +1601,25 @@ fn resolve_reference_target(repo: &git2::Repository, ref_name: &str) -> Result<O
             .and_then(|resolved| resolved.target())
     });
     Ok(target)
+}
+
+/// Resolves a reference name to a commit OID by peeling commit-ish targets.
+fn resolve_reference_commit_target(
+    repo: &git2::Repository,
+    ref_name: &str,
+) -> Result<Option<git2::Oid>> {
+    let reference = match repo.find_reference(ref_name) {
+        Ok(reference) => reference,
+        Err(err) if err.code() == git2::ErrorCode::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let commit = reference.peel_to_commit().map_err(|err| {
+        anyhow!(
+            "reference '{}' does not resolve to a commit object: {err}",
+            ref_name
+        )
+    })?;
+    Ok(Some(commit.id()))
 }
 
 /// Formats per-ref diagnostics for non-fast-forward integration failures.

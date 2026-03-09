@@ -939,6 +939,7 @@ fn format_merge_policy_diagnostics_covers_clean_unknown_and_missing_checks() {
     let row_a = ReceivePlanEntry {
         target_ref: "refs/heads/a".to_string(),
         target_oid: Some(target_a),
+        target_commit_oid: Some(target_a),
         incoming_oid: incoming_a,
         merge_base_oid: None,
         preserved_incoming_ref: "refs/sync/incoming/id/heads/a".to_string(),
@@ -947,6 +948,7 @@ fn format_merge_policy_diagnostics_covers_clean_unknown_and_missing_checks() {
     let row_b = ReceivePlanEntry {
         target_ref: "refs/heads/b".to_string(),
         target_oid: Some(target_b),
+        target_commit_oid: Some(target_b),
         incoming_oid: incoming_b,
         merge_base_oid: None,
         preserved_incoming_ref: "refs/sync/incoming/id/heads/b".to_string(),
@@ -955,6 +957,7 @@ fn format_merge_policy_diagnostics_covers_clean_unknown_and_missing_checks() {
     let row_c = ReceivePlanEntry {
         target_ref: "refs/heads/c".to_string(),
         target_oid: Some(target_c),
+        target_commit_oid: Some(target_c),
         incoming_oid: incoming_c,
         merge_base_oid: None,
         preserved_incoming_ref: "refs/sync/incoming/id/heads/c".to_string(),
@@ -1024,6 +1027,52 @@ fn resolve_reference_target_resolves_symbolic_references() {
         resolved,
         Some(main_oid),
         "symbolic reference should resolve to direct head target"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn compute_receive_plan_peels_annotated_tag_targets_for_commit_comparison() {
+    let repo_path = temp_bare_repo_path("compute-plan-annotated-tag");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+    let base_oid = commit_from_content(&repo, "base", "base", &[]);
+    let tip_oid = commit_from_content(&repo, "tip", "tip", &[base_oid]);
+    let tip_object = repo
+        .find_object(tip_oid, Some(git2::ObjectType::Commit))
+        .expect("must resolve tip commit object");
+    let signature = git2::Signature::now("Test User", "test@example.com")
+        .expect("must construct test signature");
+    let tag_oid = repo
+        .tag("sync/tip", &tip_object, &signature, "annotated tip", false)
+        .expect("must create annotated tag");
+
+    let incoming_refs = vec![IncomingHeadRef {
+        target_ref: "refs/tags/sync/tip".to_string(),
+        incoming_ref: "refs/sync/incoming/test/tags/sync/tip".to_string(),
+        incoming_oid: tip_oid,
+    }];
+
+    let plan = compute_receive_plan(&repo, &incoming_refs)
+        .expect("annotated-tag target should be peeled for preflight commit checks");
+    assert_eq!(plan.len(), 1, "fixture should yield one preflight plan row");
+    let row = &plan[0];
+    assert_eq!(
+        row.status,
+        ReceivePlanStatus::AlreadyPresent,
+        "annotated-tag refs that peel to incoming commit should be treated as already present"
+    );
+    assert_eq!(
+        row.target_oid,
+        Some(tag_oid),
+        "plan should preserve raw tag-object oid for safe CAS update checks"
+    );
+    assert_eq!(
+        row.target_commit_oid,
+        Some(tip_oid),
+        "plan should also capture peeled commit oid for ancestry checks"
     );
 
     let _ = std::fs::remove_dir_all(repo_path);

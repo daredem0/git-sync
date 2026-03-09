@@ -130,6 +130,12 @@ pub struct ReceivePlanEntry {
     pub target_ref: String,
     /// Current target OID before receive, if the ref exists.
     pub target_oid: Option<git2::Oid>,
+    /// Commit OID peeled from the current target ref, if resolvable.
+    ///
+    /// This is used for ancestry/mergeability checks so annotated tags and
+    /// symbolic refs can be treated as commit-ish inputs while preserving
+    /// `target_oid` for CAS-safe ref updates.
+    pub target_commit_oid: Option<git2::Oid>,
     /// Incoming OID imported from the bundle head.
     pub incoming_oid: git2::Oid,
     /// Merge-base between target and incoming, when both are resolvable.
