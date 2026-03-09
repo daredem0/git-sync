@@ -7,8 +7,8 @@
 //! Keeps interaction and rendering concerns separate from proof computation.
 
 use crate::ui::types::{
-    AppState, AuditModel, CommitPagesModel, DryRunLine, MainView, OverviewFocus, PayloadSortMode,
-    PayloadSubView,
+    AppState, AuditModel, CommitPagesModel, DryRunLine, HistoryViewMode, MainView, OverviewFocus,
+    PayloadSortMode, PayloadSubView,
 };
 
 const HELP_PAGE_COUNT: usize = 3;
@@ -25,9 +25,11 @@ impl AppState {
         };
         Self {
             main_view: MainView::History,
+            history_view_mode: HistoryViewMode::CommitPages,
             overview_focus: OverviewFocus::Heads,
             payload_sub_view: PayloadSubView::Objects,
             page_index: 0,
+            history_graph_scroll_y: 0,
             selected_head_index: 0,
             selected_change_index: 0,
             selected_file_indices,
@@ -110,6 +112,9 @@ impl AppState {
 
     /// Moves file selection down within the current commit page.
     pub(crate) fn move_selection_down(&mut self, model: &AuditModel) {
+        if self.is_history_graph_view() {
+            return;
+        }
         if self.page_index == 0 && self.main_view == MainView::History {
             match self.overview_focus {
                 OverviewFocus::Heads => {
@@ -150,6 +155,9 @@ impl AppState {
 
     /// Moves file selection up within the current commit page.
     pub(crate) fn move_selection_up(&mut self, model: &AuditModel) {
+        if self.is_history_graph_view() {
+            return;
+        }
         if self.page_index == 0 && self.main_view == MainView::History {
             match self.overview_focus {
                 OverviewFocus::Heads => {
@@ -271,6 +279,53 @@ impl AppState {
         self.set_main_view(MainView::History);
     }
 
+    /// Switches to history commit-pages mode.
+    pub(crate) fn show_history_commit_pages_view(&mut self) {
+        self.show_history_view();
+        self.history_view_mode = HistoryViewMode::CommitPages;
+        self.history_graph_scroll_y = 0;
+    }
+
+    /// Switches to history commit-graph mode.
+    pub(crate) fn show_history_graph_view(&mut self) {
+        self.show_history_view();
+        self.history_view_mode = HistoryViewMode::Graph;
+        self.page_index = 0;
+        self.history_graph_scroll_y = 0;
+        self.action_message = None;
+    }
+
+    /// Returns `true` when history graph mode is active.
+    pub(crate) fn is_history_graph_view(&self) -> bool {
+        self.main_view == MainView::History && self.history_view_mode == HistoryViewMode::Graph
+    }
+
+    /// Scrolls history graph mode down by `step` rows.
+    pub(crate) fn scroll_history_graph_down(&mut self, model: &AuditModel, step: usize) {
+        let max = self.history_graph_row_count(model).saturating_sub(1);
+        self.history_graph_scroll_y =
+            std::cmp::min(self.history_graph_scroll_y.saturating_add(step), max);
+    }
+
+    /// Scrolls history graph mode up by `step` rows.
+    pub(crate) fn scroll_history_graph_up(&mut self, step: usize) {
+        self.history_graph_scroll_y = self.history_graph_scroll_y.saturating_sub(step);
+    }
+
+    /// Returns renderable graph row count for active history commits.
+    pub(crate) fn history_graph_row_count(&self, model: &AuditModel) -> usize {
+        let CommitPagesModel::Ok(entries) = &model.commit_pages else {
+            return 0;
+        };
+        let mut unique = std::collections::HashSet::<git2::Oid>::new();
+        for head_entry in entries {
+            for commit in &head_entry.commits {
+                unique.insert(commit.commit_id);
+            }
+        }
+        unique.len()
+    }
+
     /// Switches to payload main-page view.
     pub(crate) fn show_payload_view(&mut self) {
         self.set_main_view(MainView::Payload);
@@ -285,6 +340,8 @@ impl AppState {
         self.page_index = 0;
         if view == MainView::History {
             self.overview_focus = OverviewFocus::Heads;
+            self.history_view_mode = HistoryViewMode::CommitPages;
+            self.history_graph_scroll_y = 0;
         }
         self.payload_preview = None;
         self.payload_object_view = None;

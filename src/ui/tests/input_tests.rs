@@ -396,6 +396,82 @@ fn handle_page_keys_key_three_from_payload_switches_to_history_commit_detail() {
     );
 }
 
+// Verifies that key `4` opens commit graph mode from history overview.
+#[test]
+fn handle_page_keys_key_four_opens_commit_graph_mode() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    assert_eq!(state.page_index, 0, "precondition: overview page");
+    assert!(
+        !state.is_history_graph_view(),
+        "precondition: graph mode should start disabled"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('4'));
+
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "key 4 should keep/switch to history view"
+    );
+    assert!(
+        state.is_history_graph_view(),
+        "key 4 should activate history graph mode"
+    );
+}
+
+// Verifies that key `4` from payload switches to history and opens commit graph mode.
+#[test]
+fn handle_page_keys_key_four_from_payload_switches_to_history_graph_mode() {
+    let model = sample_model(2, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.main_view = MainView::Payload;
+
+    handle_page_keys(&mut state, &model, KeyCode::Char('4'));
+
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "key 4 should switch back to history view"
+    );
+    assert!(
+        state.is_history_graph_view(),
+        "key 4 should activate history graph mode from payload view"
+    );
+}
+
+// Verifies that graph page supports vertical scrolling via Up/Down and PageUp/PageDown keys.
+#[test]
+fn handle_page_keys_graph_scroll_shortcuts_update_graph_offset() {
+    let model = sample_model(40, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.show_history_graph_view();
+
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    assert_eq!(
+        state.history_graph_scroll_y, 1,
+        "Down should move graph offset by one row"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageDown);
+    assert_eq!(
+        state.history_graph_scroll_y, 21,
+        "PageDown should move graph offset by fast-scroll step"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Up);
+    assert_eq!(
+        state.history_graph_scroll_y, 20,
+        "Up should move graph offset up by one row"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::PageUp);
+    assert_eq!(
+        state.history_graph_scroll_y, 0,
+        "PageUp should move graph offset up by fast-scroll step with floor clamp"
+    );
+}
+
 // Verifies that Tab on overview toggles focus between heads and would-change tables.
 #[test]
 fn handle_page_keys_tab_toggles_overview_focus() {

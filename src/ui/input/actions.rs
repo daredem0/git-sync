@@ -18,7 +18,7 @@ pub(super) fn apply_key_action(
         KeyAction::GoHistoryOverview => {
             state.close_diff();
             state.close_payload_object();
-            state.show_history_view();
+            state.show_history_commit_pages_view();
             state.first_page();
             false
         }
@@ -32,9 +32,15 @@ pub(super) fn apply_key_action(
         KeyAction::GoCommitDetailPage => {
             state.close_diff();
             state.close_payload_object();
-            state.show_history_view();
+            state.show_history_commit_pages_view();
             state.first_page();
             state.enter_selected_head(model);
+            false
+        }
+        KeyAction::GoCommitGraphPage => {
+            state.close_diff();
+            state.close_payload_object();
+            state.show_history_graph_view();
             false
         }
         KeyAction::ExportPayloadAuditJsonFull => {
@@ -58,6 +64,10 @@ pub(super) fn apply_key_action(
                 false
             } else if state.is_payload_object_open() {
                 state.close_payload_object();
+                false
+            } else if state.is_history_graph_view() {
+                state.show_history_commit_pages_view();
+                state.first_page();
                 false
             } else if state.page_index > 0 {
                 state.first_page();
@@ -111,6 +121,14 @@ pub(super) fn apply_key_action(
             } else {
                 state.open_selected_diff(model);
             }
+            false
+        }
+        KeyAction::GraphScrollDown(step) => {
+            state.scroll_history_graph_down(model, step);
+            false
+        }
+        KeyAction::GraphScrollUp(step) => {
+            state.scroll_history_graph_up(step);
             false
         }
         KeyAction::PayloadMoveSelectionDown(step) => {

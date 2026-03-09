@@ -9,6 +9,7 @@
 mod commit;
 mod commit_table;
 mod diff_view;
+mod graph;
 mod overview;
 mod overview_tables;
 mod payload;
@@ -22,6 +23,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 pub(crate) use commit::render_commit_page;
 pub(crate) use diff_view::render_diff_view;
+pub(crate) use graph::render_history_graph_page;
 pub(crate) use overview::render_overview_page;
 pub(crate) use payload::render_payload_page;
 
@@ -32,7 +34,9 @@ pub(crate) fn render_page(frame: &mut Frame<'_>, model: &AuditModel, state: &App
     } else {
         match state.main_view {
             MainView::History => {
-                if state.page_index == 0 {
+                if state.is_history_graph_view() {
+                    render_history_graph_page(frame, model, state);
+                } else if state.page_index == 0 {
                     render_overview_page(frame, model, state);
                 } else {
                     render_commit_page(frame, model, state);
@@ -60,6 +64,8 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
         "j/k or Up/Down select entry | PgUp/PgDn jump 10 | e toggle objects/entries\nEnter open resolved entry detail | ? help | p/P export paudit minimal/full | q quit"
     } else if state.main_view == MainView::Payload {
         "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | ? help | p/P export paudit minimal/full | q quit"
+    } else if state.is_history_graph_view() {
+        "j/k or Up/Down scroll | PgUp/PgDn fast scroll | 1/2/3/4 jump pages\nEsc return to overview | ? help | p/P export paudit minimal/full | q quit"
     } else if state.page_index == 0 {
         "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
     } else {
@@ -77,6 +83,7 @@ const HELP_PAGE_COUNT: usize = 3;
 enum HelpContext {
     HistoryOverview,
     HistoryCommit,
+    HistoryGraph,
     Diff,
     PayloadObjects,
     PayloadEntries,
@@ -156,6 +163,8 @@ fn active_help_context(state: &AppState) -> HelpContext {
         } else {
             HelpContext::PayloadObjects
         }
+    } else if state.is_history_graph_view() {
+        HelpContext::HistoryGraph
     } else if state.page_index == 0 {
         HelpContext::HistoryOverview
     } else {
@@ -171,7 +180,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - j/k or Up/Down: move selected row in the focused table\n\
              - Enter: open selected head and move into commit pages\n\
              - v: toggle main view (History/Payload) on main page\n\
-             - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
@@ -184,7 +193,18 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - j/k or Up/Down: move selected changed file\n\
              - Enter: open diff for selected file\n\
              - g / G: jump to first or last commit page for selected head\n\
-             - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
+             - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
+             - P: export full payload-audit JSON (.paudit) file\n\
+             - ?: open/close help overlay\n\
+             - Esc: return to overview\n\
+             - q: quit"
+        }
+        HelpContext::HistoryGraph => {
+            "Hotkeys (Commit Graph)\n\
+             - j/k or Up/Down: vertical scroll through graph rows\n\
+             - PgUp/PgDn: fast vertical scroll\n\
+             - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
@@ -211,7 +231,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - e: toggle Objects/Entries subview\n\
              - Enter: open selected object detail\n\
              - v: toggle main view (History/Payload) on main page\n\
-             - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
@@ -225,7 +245,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - e: toggle Objects/Entries subview\n\
              - Enter: open detail for selected resolved entry\n\
              - v: toggle main view (History/Payload) on main page\n\
-             - 1 / 2 / 3: direct jump to main overview, payload, or first commit page\n\
+             - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
@@ -269,6 +289,14 @@ fn help_context_text(context: HelpContext) -> &'static str {
              - changed-files table: files touched by the selected commit, shown as review targets.\n\
              - selected file row: Enter opens unified patch/diff rendering for that file.\n\
              - selection state: table position is remembered per commit while paging."
+        }
+        HelpContext::HistoryGraph => {
+            "Commit Graph Glossary\n\
+             - graph columns: branch/merge shape approximation derived from parent links.\n\
+             - commit: abbreviated commit object id for each displayed row.\n\
+             - tree: abbreviated tree object id referenced by that commit.\n\
+             - decorations: refs whose head OID equals the shown commit.\n\
+             - subject: first commit-message line for quick review context."
         }
         HelpContext::Diff => {
             "Diff Glossary\n\
@@ -330,6 +358,14 @@ fn help_audit_text(context: HelpContext) -> &'static str {
              - Open changed files that affect security, build scripts, deployment, auth, crypto, and external interfaces first.\n\
              - Treat wide-scoped commits touching many unrelated directories as suspicious until justified.\n\
              - Use this page to decide where deeper diff review is needed; then open file diffs with Enter."
+        }
+        HelpContext::HistoryGraph => {
+            "How to Audit (Commit Graph)\n\
+             - Validate topology first: inspect branch/merge shape before reading individual diffs.\n\
+             - Confirm ref decorations point where expected (especially release and integration refs).\n\
+             - Spot unexpected merge commits or side branches, then jump to commit pages for details.\n\
+             - Use tree identifiers to quickly detect commits that re-root to unexpected trees.\n\
+             - Treat unexplained topology changes as a stop signal before approving transfer."
         }
         HelpContext::Diff => {
             "How to Audit (Diff)\n\
@@ -479,7 +515,7 @@ fn help_highlight_rules() -> Vec<(&'static str, Style)> {
         ("P:", help_key_style()),
         ("h/l", help_key_style()),
         ("j/k", help_key_style()),
-        ("1 / 2 / 3", help_key_style()),
+        ("1 / 2 / 3 / 4", help_key_style()),
         ("+LINES", help_ok_style()),
         ("-LINES", help_warn_style()),
     ]

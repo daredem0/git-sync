@@ -38,7 +38,7 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
     let title = Paragraph::new(format!(
         "Audit Overview ({})\n\
              This page shows package validity, import heads, and would-change summary\n\
-             Press 1 main | 2 payload | 3 commit",
+             Press 1 main | 2 payload | 3 commit | 4 graph",
         page_label
     ))
     .block(Block::default().borders(Borders::ALL).title("git-sync"))

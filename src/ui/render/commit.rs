@@ -95,7 +95,7 @@ pub(crate) fn render_commit_page(frame: &mut Frame<'_>, model: &AuditModel, stat
             };
 
             let header_text = format!(
-                "Press 1 main | 2 payload | 3 commit\nHEAD {}/{}: {}\nCommit {}/{}: {}\nTree: {}\n{}\nCommitter: {} | {}\nAuthor: {} | {}\nChanged files: {}\n\n{}",
+                "Press 1 main | 2 payload | 3 commit | 4 graph\nHEAD {}/{}: {}\nCommit {}/{}: {}\nTree: {}\n{}\nCommitter: {} | {}\nAuthor: {} | {}\nChanged files: {}\n\n{}",
                 selected_head_index + 1,
                 entries.len(),
                 head_entry.head.reference,

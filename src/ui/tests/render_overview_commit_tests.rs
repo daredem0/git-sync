@@ -553,6 +553,31 @@ fn render_page_in_payload_object_detail_mode_shows_object_content() {
     );
 }
 
+// Verifies that history graph mode renders a dedicated graph page with commit/tree identifiers.
+#[test]
+fn render_page_in_history_graph_mode_shows_commit_graph_rows() {
+    let model = sample_model(3, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.show_history_graph_view();
+
+    let output = render_and_capture_text(160, 40, |frame| {
+        render_page(frame, &model, &state);
+    });
+
+    assert!(
+        output.contains("Commit Graph"),
+        "graph mode should render a dedicated commit-graph page"
+    );
+    assert!(
+        output.contains("commit"),
+        "graph mode should render commit identifiers in graph rows"
+    );
+    assert!(
+        output.contains("tree"),
+        "graph mode should render tree identifiers in graph rows"
+    );
+}
+
 // Verifies that rendering commit page in normal mode shows commit metadata and changed-file table.
 #[test]
 fn render_commit_page_shows_commit_detail_and_changed_files() {

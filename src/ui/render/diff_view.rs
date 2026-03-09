@@ -29,7 +29,7 @@ pub(crate) fn render_diff_view(frame: &mut Frame<'_>, state: &AppState) {
         .split(frame.area());
 
     let header = Paragraph::new(format!(
-        "Commit {}/{} | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}\nPress 1 main | 2 payload | 3 commit",
+        "Commit {}/{} | {}\n{}\nfile: {}\nsyntax: {} | selected file index: {}\nPress 1 main | 2 payload | 3 commit | 4 graph",
         diff_view.commit_index + 1,
         diff_view.commit_total,
         diff_view.commit_id,

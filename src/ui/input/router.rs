@@ -13,12 +13,14 @@ const DIFF_SCROLL_VERTICAL_STEP: usize = 1;
 const DIFF_SCROLL_HORIZONTAL_STEP: usize = 2;
 const DIFF_SCROLL_PAGE_STEP: usize = 20;
 const PAYLOAD_SELECT_PAGE_STEP: usize = 10;
+const GRAPH_SCROLL_PAGE_STEP: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KeyAction {
     GoHistoryOverview,
     GoPayloadOverview,
     GoCommitDetailPage,
+    GoCommitGraphPage,
     ExportPayloadAuditJsonFull,
     ExportPayloadAuditJsonLight,
     Quit,
@@ -33,6 +35,8 @@ pub(super) enum KeyAction {
     HistoryFirstPage,
     HistoryLastPage,
     HistoryOpenSelection,
+    GraphScrollDown(usize),
+    GraphScrollUp(usize),
     PayloadMoveSelectionDown(usize),
     PayloadMoveSelectionUp(usize),
     PayloadCycleSort,
@@ -81,7 +85,8 @@ pub(super) fn action_for_page_key(state: &AppState, code: KeyCode) -> Option<Key
     }
 
     let on_main_page = state.page_index == 0;
-    let on_history_overview = on_main_page && state.main_view == MainView::History;
+    let on_history_overview =
+        on_main_page && state.main_view == MainView::History && !state.is_history_graph_view();
     match code {
         KeyCode::Char('v') if on_main_page => return Some(KeyAction::ToggleMainView),
         KeyCode::Tab if on_history_overview => return Some(KeyAction::ToggleOverviewFocus),
@@ -154,6 +159,7 @@ fn primary_navigation_action(code: KeyCode) -> Option<KeyAction> {
         KeyCode::Char('1') => Some(KeyAction::GoHistoryOverview),
         KeyCode::Char('2') => Some(KeyAction::GoPayloadOverview),
         KeyCode::Char('3') => Some(KeyAction::GoCommitDetailPage),
+        KeyCode::Char('4') => Some(KeyAction::GoCommitGraphPage),
         _ => None,
     }
 }
@@ -174,6 +180,16 @@ fn action_for_payload_page_key(state: &AppState, code: KeyCode) -> Option<KeyAct
 }
 
 fn action_for_history_page_key(state: &AppState, code: KeyCode) -> Option<KeyAction> {
+    if state.is_history_graph_view() {
+        return match code {
+            KeyCode::Down | KeyCode::Char('j') => Some(KeyAction::GraphScrollDown(1)),
+            KeyCode::Up | KeyCode::Char('k') => Some(KeyAction::GraphScrollUp(1)),
+            KeyCode::PageDown => Some(KeyAction::GraphScrollDown(GRAPH_SCROLL_PAGE_STEP)),
+            KeyCode::PageUp => Some(KeyAction::GraphScrollUp(GRAPH_SCROLL_PAGE_STEP)),
+            _ => None,
+        };
+    }
+
     match code {
         KeyCode::Right | KeyCode::Char('l') if state.page_index > 0 => {
             Some(KeyAction::HistoryNextPage)

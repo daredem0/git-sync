@@ -24,6 +24,10 @@ fn global_action_maps_primary_navigation_and_global_shortcuts() {
         Some(KeyAction::GoCommitDetailPage)
     );
     assert_eq!(
+        global_action(KeyCode::Char('4')),
+        Some(KeyAction::GoCommitGraphPage)
+    );
+    assert_eq!(
         global_action(KeyCode::Char('p')),
         Some(KeyAction::ExportPayloadAuditJsonLight)
     );
@@ -87,6 +91,31 @@ fn action_for_page_key_routes_history_commit_page_controls() {
     assert_eq!(
         action_for_page_key(&state, KeyCode::Char('G')),
         Some(KeyAction::HistoryLastPage)
+    );
+}
+
+#[test]
+fn action_for_page_key_routes_history_graph_controls() {
+    let model = sample_model(3, 1);
+    let mut state = AppState::new(&model);
+    state.main_view = MainView::History;
+    state.show_history_graph_view();
+
+    assert_eq!(
+        action_for_page_key(&state, KeyCode::Down),
+        Some(KeyAction::GraphScrollDown(1))
+    );
+    assert_eq!(
+        action_for_page_key(&state, KeyCode::PageDown),
+        Some(KeyAction::GraphScrollDown(20))
+    );
+    assert_eq!(
+        action_for_page_key(&state, KeyCode::Up),
+        Some(KeyAction::GraphScrollUp(1))
+    );
+    assert_eq!(
+        action_for_page_key(&state, KeyCode::PageUp),
+        Some(KeyAction::GraphScrollUp(20))
     );
 }
 
