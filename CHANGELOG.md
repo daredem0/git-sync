@@ -7,6 +7,30 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-03-09
+
+### Added
+- Added `create --assume-present <rev> ...` support to build delta bundles against known receiver history by excluding objects already reachable from explicit prerequisite revisions.
+- Added a dedicated history page 4 commit-graph view with git-log-style topology rendering, commit/tree identifiers, and decoration labels.
+- Added commit-graph navigation features for row selection, fast paging (`PgUp`/`PgDn`), and `Enter` to open selected commit detail.
+
+### Changed
+- Updated audit overview `General` to show the bundle-derived commit range (`from..to`) instead of `base_ref`/`tip_ref`.
+- Enriched and reordered commit detail metadata to include explicit `tree` and `parent commit(s)` fields with improved readability.
+- Improved commit-graph rendering readability with spaced connector columns and semantic colors for graph lanes and decoration labels.
+- Updated commit-page escape behavior so commit detail opened from graph returns to graph view (preserving selection) instead of always jumping to overview.
+
+### Fixed
+- Fixed dry-run receive commit classification for annotated-tag targets by peeling tag references for commit ancestry checks while preserving raw target OIDs for guarded ref updates.
+
+### Tests
+- Added create-path regression coverage for repeated `--assume-present` handling and prerequisite filtering behavior.
+- Added receive regression coverage for annotated-tag preflight target peeling behavior.
+- Added UI regression tests for commit-graph selection/open flow and graph-aware `Esc` return behavior.
+
+### Documentation
+- Updated SDD/SAD UI interaction model and module map for page 4 commit-graph behavior and graph-origin commit return semantics.
+
 ## [0.9.0] - 2026-03-03
 
 ### Added
@@ -441,7 +465,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Documentation
 - Added Rust doc comments across the codebase and initial README improvements.
 
-[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/daredem0/git-sync/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/daredem0/git-sync/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/daredem0/git-sync/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/daredem0/git-sync/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/daredem0/git-sync/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/daredem0/git-sync/compare/v0.8.0...v0.8.1

@@ -268,6 +268,7 @@ This map is intentionally explicit so developers can quickly locate responsibili
 | `src/ui/state/{navigation,payload_ops,diff_ops}.rs` | View/navigation/payload state transitions |
 | `src/ui/render/overview.rs` | Overview page rendering |
 | `src/ui/render/commit.rs` | Commit page rendering |
+| `src/ui/render/graph.rs` | Commit-graph page rendering and graph-row projection |
 | `src/ui/render/diff_view.rs` | Diff page rendering |
 | `src/ui/render/payload/{mod,layout,tables/*,preview/*,detail,util}.rs` | Payload page rendering stack |
 | `src/ui/diff/{parse,render,style}.rs` | Diff parse/render/style helpers |
@@ -387,7 +388,7 @@ Execution narrative:
 
 ### 5.2 Interactive audit sequence
 
-Interactive audit assembles an `AuditModel` with three logical views: overview, history pages, and payload pages.
+Interactive audit assembles an `AuditModel` with four logical views: overview, history commit pages, history graph, and payload pages.
 
 ```mermaid
 sequenceDiagram
@@ -410,6 +411,7 @@ The model is intentionally mixed-source:
 
 - overview combines metadata status, dry-run applicability, and payload proof summary
 - history pages explain expected change intent by commit/file evolution
+- history graph derives a bundle-scope commit graph from imported commit entries and decorates rows with locally available refs
 - payload pages expose full PACK-level proof context and object details
 - startup draws a loading screen before model construction so large-bundle initialization remains explicit to the operator
 
@@ -831,6 +833,7 @@ Major modes:
 
 - history overview
 - history commit pages
+- history graph view
 - diff view
 - payload main view
 - payload object detail view
@@ -839,24 +842,33 @@ Major modes:
 stateDiagram-v2
     [*] --> HistoryOverview
     HistoryOverview --> HistoryCommit: Enter selected head
+    HistoryOverview --> HistoryGraph: 4
     HistoryOverview --> PayloadMain: v or 2
+    HistoryCommit --> HistoryGraph: 4
     HistoryCommit --> PayloadMain: 2
     PayloadMain --> HistoryOverview: v or 1
     PayloadMain --> HistoryCommit: 3
+    PayloadMain --> HistoryGraph: 4
+    HistoryGraph --> HistoryCommit: Enter selected commit
+    HistoryGraph --> HistoryOverview: Esc
+    HistoryGraph --> [*]: q
     HistoryCommit --> DiffView: Enter selected file
     DiffView --> HistoryCommit: Esc
     PayloadMain --> PayloadObjectDetail: Enter selected object or resolved entry
     PayloadObjectDetail --> PayloadMain: Esc
-    HistoryCommit --> HistoryOverview: Esc
+    HistoryCommit --> HistoryGraph: Esc (if opened from graph)
+    HistoryCommit --> HistoryOverview: Esc (otherwise)
     HistoryOverview --> [*]: q or Esc
     PayloadMain --> [*]: q or Esc
 ```
 
 Key interaction properties:
 
-- `1`, `2`, `3` provide direct navigation shortcuts
+- `1`, `2`, `3`, `4` provide direct navigation shortcuts
 - `v` toggles history/payload from main page
 - `Tab` switches overview focus between head and would-change tables
+- graph page renders a git-log-style topology view with commit OID, tree OID, and decorations
+- graph page supports selection with `j/k` (or arrows), fast movement with `PgUp/PgDn`, and commit open with `Enter`
 - payload supports sort cycling, page jumps, and entry/object subview toggles
 - `p` exports minimal paudit (`object_detail_mode=light`, `entry_ledger.mode=none`)
 - `P` exports full paudit (`object_detail_mode=full`, `entry_ledger.mode=summary`)
@@ -864,7 +876,7 @@ Key interaction properties:
 - successful export displays a notice overlay with path and UTC date/time; `Esc` closes the overlay
 - `?` opens a contextual help overlay with three pages (`Hotkeys`, `Glossary`, `Audit Guide`)
 - while help is open, paging keys (`PgUp/PgDn`, `h/l`, arrows, `j/k`, `Tab`) switch help pages instead of mutating the underlying review selection
-- Esc closes deep modes first (diff/detail), then unwinds to overview, then exits
+- Esc closes deep modes first (diff/detail), then unwinds commit pages to graph when opened from graph, otherwise to overview, then exits
 
 ### 7.1 Contextual help overlay
 
@@ -926,7 +938,7 @@ For design reviews and audits, the most important discipline is to avoid mixing 
 |---|---|---|---|
 | Payload audit (`audit` payload table/json, interactive payload views) | Strict bundle framing + PACK verifier + ledger/proof invariants | PACK payload completeness and integrity under resolve policy | Metadata correctness or producer authenticity |
 | Metadata verification (`audit --verify-metadata`) | Sidecar integrity checks + repository recomputation equivalence | Sidecar claims match package and repository truth | PACK completeness by itself |
-| History views (interactive commit/file pages) | Imported graph traversal + commit/file extraction | Human-readable change intent/context | Full payload coverage |
+| History views (interactive commit pages, graph page, and file diff) | Imported graph traversal + commit/file extraction | Human-readable change intent/context and graph topology context for review navigation | Full payload coverage |
 | Receive / dry-run / check-mergeability | Import/apply behavior in receiver or mirror | Operational applicability, mergeability diagnostics, and impact | Replacement for payload proof checks |
 
 The architectural invariants that tie these surfaces together are:
@@ -1003,6 +1015,7 @@ Representative covered areas:
 - receive import compatibility paths (`indexer verify=true` then guarded fallback chain) and post-fallback connectivity-validation gate behavior
 - receive mergeability simulation output paths (status, merge context, and conflict-file reporting)
 - commit and file-level extraction for review pages
+- history graph rendering, selection, and graph-to-commit-to-graph navigation behavior
 - payload session/object detail behaviors
 - PACK mismatch and unresolved-delta rejection paths
 - paudit export mode paths (`--payload-ledger none|summary|full`, `--payload-detail full|light`) and interactive `p`/`P` export notice behavior
