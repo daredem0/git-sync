@@ -13,7 +13,7 @@ mod payload;
 mod receive;
 
 pub use create::{create_bundle, create_bundle_with_options, remove_unarchived_bundle_artifacts};
-pub use inspect::inspect_bundle;
+pub use inspect::{inspect_bundle, inspect_bundle_input};
 pub use payload::{
     PayloadSession, build_payload_audit_document_for_bundle_input_with_options,
     build_payload_audit_document_for_bundle_input_with_options_and_detail_mode,

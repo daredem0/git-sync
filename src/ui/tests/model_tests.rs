@@ -109,6 +109,32 @@ fn payload_model_build_still_loads_with_existing_bundle_fixture() {
     }
 }
 
+// Verifies that overview range display comes from the bundle header rather than UI config refs.
+#[test]
+fn build_audit_model_uses_bundle_header_range_for_overview() {
+    let fixture = create_diff_fixture();
+    let inspection = git::inspect_bundle_input(&fixture.bundle_archive_path)
+        .expect("fixture bundle should inspect successfully");
+    let config = AppConfig {
+        repo_path: fixture.receiver_dir.clone(),
+        bundle_path: fixture.bundle_archive_path.clone(),
+        base_ref: "refs/heads/not-used-base".to_string(),
+        tip_ref: Some("refs/heads/not-used-tip".to_string()),
+    };
+
+    let model = build_audit_model(&config);
+    assert_eq!(
+        model.overview.bundle_range_from,
+        inspection.prerequisites[0].to_string(),
+        "overview range start should be read from bundle prerequisite, not UI config"
+    );
+    assert_eq!(
+        model.overview.bundle_range_to,
+        inspection.heads[0].oid.to_string(),
+        "overview range end should be read from bundle head, not UI config"
+    );
+}
+
 // Verifies that payload model stores heavy payload data behind indirection to keep enum size small.
 #[test]
 fn payload_model_enum_is_smaller_than_payload_audit_type() {

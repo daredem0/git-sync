@@ -6,6 +6,7 @@
 //! Part of the authoritative git-domain layer for bundle, metadata, and payload proof logic.
 //! Prioritizes deterministic behavior and fail-closed validation in safety-critical paths.
 
+use crate::git::archive::{extract_bundle_archive, is_zip_bundle_input_path};
 use crate::git::{BundleHead, BundleInspection, BundleVersion};
 use anyhow::{Result, anyhow, bail};
 use std::fs::File;
@@ -86,4 +87,19 @@ pub fn inspect_bundle(bundle_path: &Path) -> Result<BundleInspection> {
         prerequisites,
         heads,
     })
+}
+
+/// Parses bundle-header inspection metadata from either a plain `.bundle` or packaged `.zip`.
+///
+/// # Errors
+///
+/// Returns an error when archive extraction fails or when the contained bundle
+/// header cannot be parsed.
+pub fn inspect_bundle_input(bundle_input_path: &Path) -> Result<BundleInspection> {
+    if is_zip_bundle_input_path(bundle_input_path) {
+        let extracted = extract_bundle_archive(bundle_input_path)?;
+        inspect_bundle(&extracted.bundle_path)
+    } else {
+        inspect_bundle(bundle_input_path)
+    }
 }

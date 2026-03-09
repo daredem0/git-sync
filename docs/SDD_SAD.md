@@ -1049,6 +1049,10 @@ Open items are tracked here as intentionally deferred architecture and assurance
   - parse PACK trailer and ref-delta base IDs with algorithm-specific hash length
   - make baseline-assisted delta resolution and reporting algorithm-aware end-to-end
 - policy-driven receive gates based on audit evidence
+- introduce a framework-agnostic `ui_core` layer and a `tui_adapter` split
+  - move interaction state, actions, reducers, and effect contracts out of terminal-specific modules
+  - keep terminal runtime, key mapping, and `ratatui` rendering isolated in the adapter
+  - preserve current TUI behavior while reducing coupling and preparing for an optional GUI frontend
 
 ## 14. Appendix: Code locations for proof claims
 

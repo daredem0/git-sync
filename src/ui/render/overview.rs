@@ -56,10 +56,8 @@ pub(crate) fn render_overview_page(frame: &mut Frame<'_>, model: &AuditModel, st
         format!("tool version: {}", overview.app_version),
         format!("repo: {}", overview.repo_path),
         format!("bundle: {}", overview.bundle_path),
-        format!(
-            "base_ref: {} | tip_ref: {}",
-            overview.base_ref, overview.tip_ref
-        ),
+        format!("bundle range from: {}", overview.bundle_range_from),
+        format!("bundle range to: {}", overview.bundle_range_to),
         format!("bundle version: {payload_bundle_version}"),
         format!("advertised heads: {payload_heads_count}"),
         format!("transport entries: {payload_transport_entry_count}"),

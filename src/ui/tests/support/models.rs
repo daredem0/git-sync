@@ -158,8 +158,8 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
             app_version: "test-version".to_string(),
             repo_path: ".".to_string(),
             bundle_path: "sync.bundle.zip".to_string(),
-            base_ref: "sync/last".to_string(),
-            tip_ref: "main".to_string(),
+            bundle_range_from: oid_from_u64(998).to_string(),
+            bundle_range_to: oid_from_u64(999).to_string(),
             metadata_verification: StatusLine::Ok,
             dry_run: DryRunLine::Failed("not needed for state tests".to_string()),
         },
@@ -235,8 +235,8 @@ pub(crate) fn sample_multi_head_model(commit_counts: &[usize]) -> AuditModel {
             app_version: "test-version".to_string(),
             repo_path: "/tmp/repo".to_string(),
             bundle_path: "/tmp/sync.bundle.zip".to_string(),
-            base_ref: "sync/last".to_string(),
-            tip_ref: "-".to_string(),
+            bundle_range_from: oid_from_u64(19_999).to_string(),
+            bundle_range_to: oid_from_u64(20_000).to_string(),
             metadata_verification: StatusLine::Ok,
             dry_run: DryRunLine::Ok(git::ReceiveBundleResult {
                 bundle_version: BundleVersion::V2,
@@ -264,8 +264,8 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
             app_version: "test-version".to_string(),
             repo_path: "/tmp/repo".to_string(),
             bundle_path: "/tmp/sync.bundle.zip".to_string(),
-            base_ref: "sync/last".to_string(),
-            tip_ref: "-".to_string(),
+            bundle_range_from: oid_from_u64(554).to_string(),
+            bundle_range_to: oid_from_u64(555).to_string(),
             metadata_verification: StatusLine::Ok,
             dry_run,
         },
@@ -316,6 +316,8 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
         .last()
         .map(|entry| entry.commit_id)
         .unwrap_or_else(|| oid_from_u64(777));
+    let inspection = git::inspect_bundle_input(&fixture.bundle_archive_path)
+        .expect("must inspect fixture bundle header");
     let line_stats = fixture
         .entries
         .first()
@@ -331,8 +333,16 @@ pub(crate) fn build_model_from_fixture(fixture: &DiffFixture) -> AuditModel {
             app_version: "test-version".to_string(),
             repo_path: fixture.receiver_dir.display().to_string(),
             bundle_path: fixture.bundle_archive_path.display().to_string(),
-            base_ref: "sync/last".to_string(),
-            tip_ref: "-".to_string(),
+            bundle_range_from: inspection
+                .prerequisites
+                .first()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_else(|| "-".to_string()),
+            bundle_range_to: inspection
+                .heads
+                .first()
+                .map(|head| head.oid.to_string())
+                .unwrap_or_else(|| head_oid.to_string()),
             metadata_verification: StatusLine::Ok,
             dry_run: DryRunLine::Failed("not needed for ui unit tests".to_string()),
         },

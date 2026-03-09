@@ -41,8 +41,8 @@ pub(crate) struct OverviewModel {
     pub(crate) app_version: String,
     pub(crate) repo_path: String,
     pub(crate) bundle_path: String,
-    pub(crate) base_ref: String,
-    pub(crate) tip_ref: String,
+    pub(crate) bundle_range_from: String,
+    pub(crate) bundle_range_to: String,
     pub(crate) metadata_verification: StatusLine,
     pub(crate) dry_run: DryRunLine,
 }

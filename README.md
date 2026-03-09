@@ -81,7 +81,7 @@ Audit verifies metadata automatically and lets the reviewer inspect history and 
 #### Audit UI pages (what to review)
 
 1. Main overview (`1`)
-- `General`: context (tool/repo/bundle refs)
+- `General`: context (tool/repo/bundle range)
 - `Bundle Integrity`: proof and safety status
 - `Heads To Import`: advertised refs
 - `Would Change`: per-file line impact for selected head
@@ -113,12 +113,13 @@ Main overview:
 │repo: . (git-sync)                             ││dry-run applicability: bundle can be applied without     │
 │bundle:                                        ││conflicts                                                │
 │../git-sync-examples/sync_local.bundle.zip     ││pack proof: OK                                           │
-│base_ref: sync/last | tip_ref: -               ││pack entries parsed: 153/153                             │
-│bundle version: v2                             ││pack entries materialized: 153/153                       │
-│advertised heads: 1                            ││transfer gate: allowed                                   │
-│transport entries: 2                           ││pack checksum: match                                     │
-│payload objects: 153                           ││bundle fully reachable from heads: yes                   │
-│                                               ││thin pack detected: no                                   │
+│bundle range from: 0123456789abcdef...         ││pack entries parsed: 153/153                             │
+│bundle range to: abcdef0123456789...           ││pack entries materialized: 153/153                       │
+│bundle version: v2                             ││transfer gate: allowed                                   │
+│advertised heads: 1                            ││pack checksum: match                                     │
+│transport entries: 2                           ││bundle fully reachable from heads: yes                   │
+│payload objects: 153                           ││thin pack detected: no                                   │
+│                                               ││                                                         │
 └───────────────────────────────────────────────┘└─────────────────────────────────────────────────────────┘
 ┌Heads To Import (bundle v2) [active]───────────┐┌Would Change (selected head: refs/heads/main)────────────┐
 │OID                        REF                 ││PATH                                   +LINES    -LINES  │

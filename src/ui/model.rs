@@ -82,15 +82,42 @@ fn build_overview_model(config: &AppConfig) -> OverviewModel {
         Ok(result) => DryRunLine::Ok(result),
         Err(err) => DryRunLine::Failed(err.to_string()),
     };
+    let (bundle_range_from, bundle_range_to) = bundle_range_from_input(&config.bundle_path);
 
     OverviewModel {
         app_version: APP_VERSION.to_string(),
         repo_path: format_repo_display(&config.repo_path),
         bundle_path: config.bundle_path.display().to_string(),
-        base_ref: config.base_ref.clone(),
-        tip_ref: config.tip_ref.clone().unwrap_or_else(|| "-".to_string()),
+        bundle_range_from,
+        bundle_range_to,
         metadata_verification,
         dry_run,
+    }
+}
+
+fn bundle_range_from_input(bundle_input_path: &Path) -> (String, String) {
+    match git::inspect_bundle_input(bundle_input_path) {
+        Ok(inspection) => (
+            format_bundle_range_start(&inspection),
+            format_bundle_range_end(&inspection),
+        ),
+        Err(_) => ("unavailable".to_string(), "unavailable".to_string()),
+    }
+}
+
+fn format_bundle_range_start(inspection: &git::BundleInspection) -> String {
+    match inspection.prerequisites.as_slice() {
+        [oid] => oid.to_string(),
+        [] => "-".to_string(),
+        prerequisites => format!("multiple prerequisites ({})", prerequisites.len()),
+    }
+}
+
+fn format_bundle_range_end(inspection: &git::BundleInspection) -> String {
+    match inspection.heads.as_slice() {
+        [head] => head.oid.to_string(),
+        [] => "-".to_string(),
+        heads => format!("multiple heads ({})", heads.len()),
     }
 }
 
