@@ -501,6 +501,41 @@ fn handle_page_keys_enter_in_graph_mode_opens_commit_detail() {
     );
 }
 
+// Verifies that Esc from graph-opened commit detail returns to graph mode, not overview.
+#[test]
+fn handle_key_press_esc_from_graph_opened_commit_returns_to_graph() {
+    let model = sample_model(3, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.show_history_graph_view();
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    let selected_graph_index = state.history_graph_scroll_y;
+
+    handle_page_keys(&mut state, &model, KeyCode::Enter);
+    assert!(
+        !state.is_history_graph_view(),
+        "precondition: Enter should open a commit page from graph mode"
+    );
+    assert!(
+        state.page_index > 0,
+        "precondition: Enter should move to a concrete commit page"
+    );
+
+    let should_exit = handle_key_press(&mut state, &model, KeyCode::Esc);
+    assert!(
+        !should_exit,
+        "Esc from graph-opened commit detail should return to graph, not exit"
+    );
+    assert!(
+        state.is_history_graph_view(),
+        "Esc should restore graph mode when commit detail was opened from graph"
+    );
+    assert_eq!(state.page_index, 0, "Esc should return to graph main page");
+    assert_eq!(
+        state.history_graph_scroll_y, selected_graph_index,
+        "Esc should keep the previously selected graph row"
+    );
+}
+
 // Verifies that Tab on overview toggles focus between heads and would-change tables.
 #[test]
 fn handle_page_keys_tab_toggles_overview_focus() {

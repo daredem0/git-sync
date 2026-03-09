@@ -70,7 +70,11 @@ pub(super) fn apply_key_action(
                 state.first_page();
                 false
             } else if state.page_index > 0 {
-                state.first_page();
+                if state.should_return_to_graph_from_commit_page() {
+                    state.return_to_history_graph_from_commit_page();
+                } else {
+                    state.first_page();
+                }
                 false
             } else {
                 true

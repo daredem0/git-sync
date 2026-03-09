@@ -68,6 +68,8 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
         "j/k or Up/Down select commit | PgUp/PgDn fast jump | Enter open commit detail | 1/2/3/4 jump pages\nEsc return to overview | ? help | p/P export paudit minimal/full | q quit"
     } else if state.page_index == 0 {
         "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
+    } else if state.should_return_to_graph_from_commit_page() {
+        "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc return to graph | ? help | p/P export paudit minimal/full | q quit"
     } else {
         "h/Left prev page | l/Right next page | j/k or Up/Down move selection\nEnter open selected diff | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
     };
@@ -197,7 +199,7 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\
              - ?: open/close help overlay\n\
-             - Esc: return to overview\n\
+             - Esc: return to graph when opened from graph, otherwise overview\n\
              - q: quit"
         }
         HelpContext::HistoryGraph => {

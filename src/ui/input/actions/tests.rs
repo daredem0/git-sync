@@ -107,6 +107,45 @@ fn apply_key_action_handles_main_view_and_help_toggles() {
 }
 
 #[test]
+fn apply_key_action_escape_returns_to_graph_when_commit_opened_from_graph() {
+    let model = sample_model(3, 1);
+    let mut state = AppState::new(&model);
+    state.show_history_graph_view();
+    state.scroll_history_graph_down(&model, 1);
+    let selected_graph_index = state.history_graph_scroll_y;
+
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::HistoryOpenSelection),
+        "opening selected graph commit should not exit"
+    );
+    assert!(
+        !state.is_history_graph_view(),
+        "opening selected graph commit should switch to commit pages"
+    );
+    assert!(
+        state.should_return_to_graph_from_commit_page(),
+        "graph-opened commit pages should mark graph as the escape return target"
+    );
+
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::Escape),
+        "escape from graph-opened commit pages should not exit"
+    );
+    assert!(
+        state.is_history_graph_view(),
+        "escape should return to graph mode after opening commit detail from graph"
+    );
+    assert_eq!(
+        state.page_index, 0,
+        "escape should return to graph main page"
+    );
+    assert_eq!(
+        state.history_graph_scroll_y, selected_graph_index,
+        "escape should preserve graph selection row when returning"
+    );
+}
+
+#[test]
 fn apply_key_action_export_payload_audit_sets_failure_message_when_export_fails() {
     let model = sample_model(1, 1);
     let mut state = AppState::new(&model);

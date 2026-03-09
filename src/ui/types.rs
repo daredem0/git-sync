@@ -63,6 +63,7 @@ pub(crate) enum DryRunLine {
 pub(crate) struct AppState {
     pub(crate) main_view: MainView,
     pub(crate) history_view_mode: HistoryViewMode,
+    pub(crate) history_commit_return_to_graph: bool,
     pub(crate) overview_focus: OverviewFocus,
     pub(crate) payload_sub_view: PayloadSubView,
     pub(crate) payload_sort_mode: PayloadSortMode,

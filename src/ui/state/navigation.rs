@@ -27,6 +27,7 @@ impl AppState {
         Self {
             main_view: MainView::History,
             history_view_mode: HistoryViewMode::CommitPages,
+            history_commit_return_to_graph: false,
             overview_focus: OverviewFocus::Heads,
             payload_sub_view: PayloadSubView::Objects,
             page_index: 0,
@@ -284,13 +285,14 @@ impl AppState {
     pub(crate) fn show_history_commit_pages_view(&mut self) {
         self.show_history_view();
         self.history_view_mode = HistoryViewMode::CommitPages;
-        self.history_graph_scroll_y = 0;
+        self.history_commit_return_to_graph = false;
     }
 
     /// Switches to history commit-graph mode.
     pub(crate) fn show_history_graph_view(&mut self) {
         self.show_history_view();
         self.history_view_mode = HistoryViewMode::Graph;
+        self.history_commit_return_to_graph = false;
         self.page_index = 0;
         self.history_graph_scroll_y = 0;
         self.action_message = None;
@@ -345,6 +347,7 @@ impl AppState {
                 self.show_history_commit_pages_view();
                 self.selected_head_index = head_index;
                 self.page_index = commit_index + 1;
+                self.history_commit_return_to_graph = true;
                 self.action_message = None;
                 return;
             }
@@ -369,6 +372,7 @@ impl AppState {
         if view == MainView::History {
             self.overview_focus = OverviewFocus::Heads;
             self.history_view_mode = HistoryViewMode::CommitPages;
+            self.history_commit_return_to_graph = false;
             self.history_graph_scroll_y = 0;
         }
         self.payload_preview = None;
@@ -436,5 +440,25 @@ impl AppState {
                 DryRunLine::Failed(_) => 0,
             },
         }
+    }
+
+    /// Returns true when Esc from commit pages should return to graph view.
+    pub(crate) fn should_return_to_graph_from_commit_page(&self) -> bool {
+        self.main_view == MainView::History
+            && self.history_view_mode == HistoryViewMode::CommitPages
+            && self.page_index > 0
+            && self.history_commit_return_to_graph
+    }
+
+    /// Returns from commit detail pages back into graph mode while keeping graph selection.
+    pub(crate) fn return_to_history_graph_from_commit_page(&mut self) {
+        if self.main_view != MainView::History {
+            return;
+        }
+        self.history_view_mode = HistoryViewMode::Graph;
+        self.history_commit_return_to_graph = false;
+        self.page_index = 0;
+        self.action_message = None;
+        self.payload_object_view = None;
     }
 }
