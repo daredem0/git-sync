@@ -116,7 +116,9 @@ pub(super) fn apply_key_action(
             false
         }
         KeyAction::HistoryOpenSelection => {
-            if state.page_index == 0 {
+            if state.is_history_graph_view() {
+                state.open_selected_graph_commit(model);
+            } else if state.page_index == 0 {
                 state.enter_selected_head(model);
             } else {
                 state.open_selected_diff(model);

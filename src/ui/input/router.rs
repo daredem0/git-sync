@@ -186,6 +186,7 @@ fn action_for_history_page_key(state: &AppState, code: KeyCode) -> Option<KeyAct
             KeyCode::Up | KeyCode::Char('k') => Some(KeyAction::GraphScrollUp(1)),
             KeyCode::PageDown => Some(KeyAction::GraphScrollDown(GRAPH_SCROLL_PAGE_STEP)),
             KeyCode::PageUp => Some(KeyAction::GraphScrollUp(GRAPH_SCROLL_PAGE_STEP)),
+            KeyCode::Enter => Some(KeyAction::HistoryOpenSelection),
             _ => None,
         };
     }

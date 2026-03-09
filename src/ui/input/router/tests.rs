@@ -117,6 +117,10 @@ fn action_for_page_key_routes_history_graph_controls() {
         action_for_page_key(&state, KeyCode::PageUp),
         Some(KeyAction::GraphScrollUp(20))
     );
+    assert_eq!(
+        action_for_page_key(&state, KeyCode::Enter),
+        Some(KeyAction::HistoryOpenSelection)
+    );
 }
 
 #[test]

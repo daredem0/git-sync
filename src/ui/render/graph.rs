@@ -41,6 +41,16 @@ enum GraphRow {
     },
 }
 
+impl GraphRow {
+    /// Returns commit OID for commit rows; transition rows return `None`.
+    fn commit_oid(&self) -> Option<git2::Oid> {
+        match self {
+            Self::Commit { oid, .. } => Some(*oid),
+            Self::Transition { .. } => None,
+        }
+    }
+}
+
 /// Renders a scrollable commit graph derived from bundle commit entries.
 pub(crate) fn render_history_graph_page(
     frame: &mut Frame<'_>,
@@ -59,6 +69,20 @@ pub(crate) fn render_history_graph_page(
     let body = match &model.commit_pages {
         CommitPagesModel::Ok(entries) => {
             let rows = graph_rows(model, entries);
+            let selectable_commit_oids = history_graph_commit_oids(model);
+            let selected_commit_index = if selectable_commit_oids.is_empty() {
+                0
+            } else {
+                std::cmp::min(
+                    state.history_graph_scroll_y,
+                    selectable_commit_oids.len().saturating_sub(1),
+                )
+            };
+            let selected_commit_oid = selectable_commit_oids.get(selected_commit_index).copied();
+            let selected_row_index = selected_commit_oid.and_then(|selected_oid| {
+                rows.iter()
+                    .position(|row| row.commit_oid().is_some_and(|oid| oid == selected_oid))
+            });
             let title = Paragraph::new(format!(
                 "Commit Graph\n\
                  Press 1 main | 2 payload | 3 commit | 4 graph\n\
@@ -75,7 +99,15 @@ pub(crate) fn render_history_graph_page(
                     "(no commits available in bundle scope)".to_string(),
                 )]
             } else {
-                rows.iter().map(render_graph_row).collect::<Vec<_>>()
+                rows.iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        render_graph_row(
+                            row,
+                            selected_row_index.is_some_and(|selected| selected == index),
+                        )
+                    })
+                    .collect::<Vec<_>>()
             };
             Paragraph::new(Text::from(row_lines))
                 .block(
@@ -84,7 +116,8 @@ pub(crate) fn render_history_graph_page(
                         .title("git log --oneline --decorate --graph (bundle scope)"),
                 )
                 .scroll((
-                    u16::try_from(state.history_graph_scroll_y).unwrap_or(u16::MAX),
+                    u16::try_from(selected_row_index.unwrap_or(0).saturating_sub(4))
+                        .unwrap_or(u16::MAX),
                     0,
                 ))
         }
@@ -114,6 +147,27 @@ pub(crate) fn render_history_graph_page(
     let footer = Paragraph::new(render_footer_text(state))
         .style(Style::default().add_modifier(Modifier::ITALIC));
     frame.render_widget(footer, chunks[2]);
+}
+
+/// Returns graph-selectable commit OIDs in visual order.
+pub(crate) fn history_graph_commit_oids(model: &AuditModel) -> Vec<git2::Oid> {
+    let CommitPagesModel::Ok(entries) = &model.commit_pages else {
+        return Vec::new();
+    };
+    let mut commits = HashMap::<git2::Oid, GraphNode>::new();
+    for head_entry in entries {
+        for commit in &head_entry.commits {
+            commits
+                .entry(commit.commit_id)
+                .or_insert_with(|| GraphNode {
+                    oid: commit.commit_id,
+                    tree_oid: Some(commit.tree_oid),
+                    parent_oids: commit.parent_oids.clone(),
+                    subject: commit.subject.clone(),
+                });
+        }
+    }
+    ordered_commit_ids(entries, &commits)
 }
 
 /// Builds graph-formatted rows across all imported heads.
@@ -493,8 +547,8 @@ fn finalize_decorations(
 }
 
 /// Renders one graph row with git-like color accents.
-fn render_graph_row(row: &GraphRow) -> Line<'static> {
-    match row {
+fn render_graph_row(row: &GraphRow, is_selected: bool) -> Line<'static> {
+    let mut line = match row {
         GraphRow::Transition { columns } => Line::from(render_graph_columns_spans(columns)),
         GraphRow::Commit {
             columns,
@@ -533,7 +587,15 @@ fn render_graph_row(row: &GraphRow) -> Line<'static> {
             spans.push(Span::raw(subject.clone()));
             Line::from(spans)
         }
+    };
+    if is_selected {
+        line = line.patch_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
     }
+    line
 }
 
 /// Renders graph columns with one separator space and per-column coloring.

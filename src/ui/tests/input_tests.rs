@@ -472,6 +472,35 @@ fn handle_page_keys_graph_scroll_shortcuts_update_graph_offset() {
     );
 }
 
+// Verifies that Enter in graph mode opens the selected commit detail page.
+#[test]
+fn handle_page_keys_enter_in_graph_mode_opens_commit_detail() {
+    let model = sample_model(3, 1);
+    let mut state = super::super::types::AppState::new(&model);
+    state.show_history_graph_view();
+    handle_page_keys(&mut state, &model, KeyCode::Down);
+    assert!(
+        state.is_history_graph_view(),
+        "precondition: still in graph mode before opening selection"
+    );
+
+    handle_page_keys(&mut state, &model, KeyCode::Enter);
+
+    assert_eq!(
+        state.main_view,
+        MainView::History,
+        "graph Enter should keep history main view active"
+    );
+    assert!(
+        !state.is_history_graph_view(),
+        "graph Enter should switch to commit-detail pages mode"
+    );
+    assert!(
+        state.page_index > 0,
+        "graph Enter should open a concrete commit detail page"
+    );
+}
+
 // Verifies that Tab on overview toggles focus between heads and would-change tables.
 #[test]
 fn handle_page_keys_tab_toggles_overview_focus() {

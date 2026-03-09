@@ -23,7 +23,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 pub(crate) use commit::render_commit_page;
 pub(crate) use diff_view::render_diff_view;
-pub(crate) use graph::render_history_graph_page;
+pub(crate) use graph::{history_graph_commit_oids, render_history_graph_page};
 pub(crate) use overview::render_overview_page;
 pub(crate) use payload::render_payload_page;
 
@@ -65,7 +65,7 @@ pub(crate) fn render_footer_text(state: &AppState) -> String {
     } else if state.main_view == MainView::Payload {
         "j/k or Up/Down select object | PgUp/PgDn jump 10 | s cycle sort | e toggle objects/entries\nEnter open object detail | ? help | p/P export paudit minimal/full | q quit"
     } else if state.is_history_graph_view() {
-        "j/k or Up/Down scroll | PgUp/PgDn fast scroll | 1/2/3/4 jump pages\nEsc return to overview | ? help | p/P export paudit minimal/full | q quit"
+        "j/k or Up/Down select commit | PgUp/PgDn fast jump | Enter open commit detail | 1/2/3/4 jump pages\nEsc return to overview | ? help | p/P export paudit minimal/full | q quit"
     } else if state.page_index == 0 {
         "Tab switch heads/would-change focus | j/k or Up/Down move selection\nEnter open selected head | Esc overview/quit | ? help | p/P export paudit minimal/full | q quit"
     } else {
@@ -202,8 +202,9 @@ fn help_hotkeys_text(context: HelpContext) -> &'static str {
         }
         HelpContext::HistoryGraph => {
             "Hotkeys (Commit Graph)\n\
-             - j/k or Up/Down: vertical scroll through graph rows\n\
-             - PgUp/PgDn: fast vertical scroll\n\
+             - j/k or Up/Down: move commit selection through graph rows\n\
+             - PgUp/PgDn: fast commit selection jump\n\
+             - Enter: open selected commit detail page\n\
              - 1 / 2 / 3 / 4: direct jump to overview, payload, commit pages, or commit graph\n\
              - p: export minimal payload-audit JSON (light details, no ledger or pack-object rows)\n\
              - P: export full payload-audit JSON (.paudit) file\n\

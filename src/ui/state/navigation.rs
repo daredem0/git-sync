@@ -6,6 +6,7 @@
 //! Part of the read-only review UI that projects verified evidence for operators.
 //! Keeps interaction and rendering concerns separate from proof computation.
 
+use crate::ui::render::history_graph_commit_oids;
 use crate::ui::types::{
     AppState, AuditModel, CommitPagesModel, DryRunLine, HistoryViewMode, MainView, OverviewFocus,
     PayloadSortMode, PayloadSubView,
@@ -314,16 +315,43 @@ impl AppState {
 
     /// Returns renderable graph row count for active history commits.
     pub(crate) fn history_graph_row_count(&self, model: &AuditModel) -> usize {
+        history_graph_commit_oids(model).len()
+    }
+
+    /// Opens commit detail page for the currently selected graph commit.
+    pub(crate) fn open_selected_graph_commit(&mut self, model: &AuditModel) {
+        let commit_oids = history_graph_commit_oids(model);
+        if commit_oids.is_empty() {
+            self.action_message = Some("graph has no selectable commits".to_string());
+            return;
+        }
+        let selected_index = std::cmp::min(
+            self.history_graph_scroll_y,
+            commit_oids.len().saturating_sub(1),
+        );
+        let selected_oid = commit_oids[selected_index];
+
         let CommitPagesModel::Ok(entries) = &model.commit_pages else {
-            return 0;
+            self.action_message = Some("commit pages are unavailable".to_string());
+            return;
         };
-        let mut unique = std::collections::HashSet::<git2::Oid>::new();
-        for head_entry in entries {
-            for commit in &head_entry.commits {
-                unique.insert(commit.commit_id);
+
+        for (head_index, head_entry) in entries.iter().enumerate() {
+            if let Some(commit_index) = head_entry
+                .commits
+                .iter()
+                .position(|commit| commit.commit_id == selected_oid)
+            {
+                self.show_history_commit_pages_view();
+                self.selected_head_index = head_index;
+                self.page_index = commit_index + 1;
+                self.action_message = None;
+                return;
             }
         }
-        unique.len()
+
+        self.action_message =
+            Some("selected graph commit is outside commit-page scope".to_string());
     }
 
     /// Switches to payload main-page view.
