@@ -723,7 +723,7 @@ fn audit_non_interactive_payload_table_output_succeeds() {
         "second row should be the pack-checksum summary"
     );
     assert!(
-        lines.iter().any(|line| *line == "TRANSPORT ENTRIES"),
+        lines.contains(&"TRANSPORT ENTRIES"),
         "table output should include a transport entry section"
     );
     assert!(
@@ -1423,7 +1423,6 @@ fn receive_integrate_merge_passes_for_clean_diverged_target() {
     assert_success(&parents_output, "inspect merge commit parents");
     let parents = String::from_utf8(parents_output.stdout)
         .expect("parents output should be utf-8")
-        .trim()
         .split_whitespace()
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();

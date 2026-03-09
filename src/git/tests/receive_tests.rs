@@ -116,8 +116,8 @@ fn find_incoming_head_ref_target(
         .strip_prefix("refs/")
         .unwrap_or(head_reference);
     let expected_tail = format!("/{suffix}");
-    let mut refs = repo.references().ok()?;
-    while let Some(reference_result) = refs.next() {
+    let refs = repo.references().ok()?;
+    for reference_result in refs {
         let reference = reference_result.ok()?;
         let Some(name) = reference.name() else {
             continue;
@@ -143,8 +143,8 @@ fn find_incoming_head_branch_target(
         .strip_prefix("refs/")
         .unwrap_or(head_reference);
     let expected_tail = format!("/{suffix}");
-    let mut refs = repo.references().ok()?;
-    while let Some(reference_result) = refs.next() {
+    let refs = repo.references().ok()?;
+    for reference_result in refs {
         let reference = reference_result.ok()?;
         let Some(name) = reference.name() else {
             continue;
@@ -170,8 +170,8 @@ fn find_merge_test_ref_target(
         .strip_prefix("refs/")
         .unwrap_or(head_reference);
     let expected_tail = format!("/{suffix}");
-    let mut refs = repo.references().ok()?;
-    while let Some(reference_result) = refs.next() {
+    let refs = repo.references().ok()?;
+    for reference_result in refs {
         let reference = reference_result.ok()?;
         let Some(name) = reference.name() else {
             continue;

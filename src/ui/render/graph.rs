@@ -380,7 +380,7 @@ fn graph_split_transition_columns(
     let max_len = old_len.max(new_len).max(node_index + parent_count);
     let mut chars = vec!['|'; max_len.max(1)];
     for (index, item) in chars.iter_mut().enumerate() {
-        if index > node_index && index <= node_index + parent_count - 1 {
+        if index > node_index && index < node_index + parent_count {
             *item = '\\';
         }
     }
@@ -490,20 +490,19 @@ fn collect_decorations(
         }
     }
 
-    if let Ok(head_ref) = repo.head() {
-        if let (Some(head_name), Ok(head_commit)) = (head_ref.name(), head_ref.peel_to_commit()) {
-            if candidate_oids.contains(&head_commit.id()) {
-                let head_label = if let Some(branch) = head_name.strip_prefix("refs/heads/") {
-                    format!("HEAD -> {branch}")
-                } else {
-                    format!("HEAD -> {head_name}")
-                };
-                decorations
-                    .entry(head_commit.id())
-                    .or_default()
-                    .push((0, head_label));
-            }
-        }
+    if let Ok(head_ref) = repo.head()
+        && let (Some(head_name), Ok(head_commit)) = (head_ref.name(), head_ref.peel_to_commit())
+        && candidate_oids.contains(&head_commit.id())
+    {
+        let head_label = if let Some(branch) = head_name.strip_prefix("refs/heads/") {
+            format!("HEAD -> {branch}")
+        } else {
+            format!("HEAD -> {head_name}")
+        };
+        decorations
+            .entry(head_commit.id())
+            .or_default()
+            .push((0, head_label));
     }
 
     finalize_decorations(decorations)

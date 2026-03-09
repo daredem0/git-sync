@@ -161,8 +161,11 @@ pub fn run(config: &AppConfig) -> Result<()> {
 }
 
 #[cfg(test)]
+type TestRunOverrideFn = fn(&AppConfig) -> Result<()>;
+
+#[cfg(test)]
 thread_local! {
-    static TEST_RUN_OVERRIDE: std::cell::RefCell<Option<fn(&AppConfig) -> Result<()>>> = const { std::cell::RefCell::new(None) };
+    static TEST_RUN_OVERRIDE: std::cell::RefCell<Option<TestRunOverrideFn>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -171,7 +174,7 @@ fn run_override(config: &AppConfig) -> Option<Result<()>> {
 }
 
 #[cfg(test)]
-pub(super) fn set_test_run_override(run_fn: Option<fn(&AppConfig) -> Result<()>>) {
+pub(super) fn set_test_run_override(run_fn: Option<TestRunOverrideFn>) {
     TEST_RUN_OVERRIDE.with(|slot| {
         *slot.borrow_mut() = run_fn;
     });
