@@ -576,6 +576,42 @@ fn render_commit_page_shows_commit_detail_and_changed_files() {
         output.contains("file-0.txt"),
         "commit page render should include the selected commit file list"
     );
+    assert!(
+        output.contains("HEAD 1/1: refs/heads/main"),
+        "commit page render should show the selected head near the top of the detail block"
+    );
+    assert!(
+        output.contains("Commit 1/1: 0000000000000000000000000000000000000001"),
+        "commit page render should show the current commit index and oid"
+    );
+    assert!(
+        output.contains("Tree: 0000000000000000000000000000000000000064"),
+        "commit page render should include commit tree id in the detail block"
+    );
+    assert!(
+        output.contains("Parent: -"),
+        "commit page render should show an explicit parent placeholder for root commits"
+    );
+    assert!(
+        output.contains("Committer: Committer <committer@example.com> |"),
+        "commit page render should combine committer identity and date on one line"
+    );
+    assert!(
+        output.contains("Author: Author <author@example.com> |"),
+        "commit page render should combine author identity and date on one line"
+    );
+    assert!(
+        output.contains("Changed files: 1"),
+        "commit page render should place changed-file count before the full commit message"
+    );
+    assert!(
+        output.contains("commit-0"),
+        "commit page render should render the full commit message without a Message label"
+    );
+    assert!(
+        output.contains("body-0"),
+        "commit page render should include commit message body lines when present"
+    );
 }
 
 // Verifies that rendering commit page handles commit-page-load failures without panicking.

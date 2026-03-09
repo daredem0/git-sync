@@ -424,6 +424,14 @@ Commit Message Shape Rules (git-sync)
 6. Use bullets to state what changed and why; avoid long prose paragraphs.
 7. Only use more than 3 bullets for very large commits
 
+Example:
+```
+Change: This is a brief summary of the changes
+
+* This adds additional information 
+* This adds further information for another part of it
+```
+
 ### Developer Setup and Task Runner (`just`)
 
 Install `just`:

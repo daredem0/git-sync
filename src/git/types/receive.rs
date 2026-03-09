@@ -156,8 +156,14 @@ pub struct FileLineStat {
 pub struct CommitAuditEntry {
     /// Commit object ID.
     pub commit_id: git2::Oid,
+    /// Tree object ID referenced by the commit.
+    pub tree_oid: git2::Oid,
+    /// Parent commit object IDs in stored parent order.
+    pub parent_oids: Vec<git2::Oid>,
     /// First line of commit message.
     pub subject: String,
+    /// Full commit message, including body when present.
+    pub message: String,
     /// Committer identity/time metadata.
     pub committer: CommitAuditIdentity,
     /// Author identity/time metadata.

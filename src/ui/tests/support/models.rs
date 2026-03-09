@@ -113,7 +113,14 @@ pub(crate) fn sample_model(commit_count: usize, files_per_commit: usize) -> Audi
     let commits: Vec<CommitAuditEntry> = (0..commit_count)
         .map(|i| CommitAuditEntry {
             commit_id: oid_from_u64(1 + i as u64),
+            tree_oid: oid_from_u64(100 + i as u64),
+            parent_oids: if i == 0 {
+                Vec::new()
+            } else {
+                vec![oid_from_u64(i as u64)]
+            },
             subject: format!("commit-{i}"),
+            message: format!("commit-{i}\n\nbody-{i}"),
             committer: CommitAuditIdentity {
                 name: "Committer".to_string(),
                 email: "committer@example.com".to_string(),
@@ -181,7 +188,16 @@ pub(crate) fn sample_multi_head_model(commit_counts: &[usize]) -> AuditModel {
             let commits = (0..commit_count)
                 .map(|commit_idx| CommitAuditEntry {
                     commit_id: oid_from_u64(10_000 + (head_idx * 100 + commit_idx) as u64),
+                    tree_oid: oid_from_u64(30_000 + (head_idx * 100 + commit_idx) as u64),
+                    parent_oids: if commit_idx == 0 {
+                        Vec::new()
+                    } else {
+                        vec![oid_from_u64(
+                            10_000 + (head_idx * 100 + commit_idx - 1) as u64,
+                        )]
+                    },
                     subject: format!("head-{}-commit-{}", head_idx + 1, commit_idx + 1),
+                    message: format!("head-{}-commit-{}\n\nbody", head_idx + 1, commit_idx + 1),
                     committer: CommitAuditIdentity {
                         name: "Committer".to_string(),
                         email: "committer@example.com".to_string(),
@@ -281,7 +297,10 @@ pub(crate) fn sample_overview_model(dry_run: DryRunLine) -> AuditModel {
             }],
             commits: vec![CommitAuditEntry {
                 commit_id: oid_from_u64(556),
+                tree_oid: oid_from_u64(6556),
+                parent_oids: vec![oid_from_u64(555)],
                 subject: "subject".to_string(),
+                message: "subject\n\nbody".to_string(),
                 committer: CommitAuditIdentity {
                     name: "Committer".to_string(),
                     email: "committer@example.com".to_string(),

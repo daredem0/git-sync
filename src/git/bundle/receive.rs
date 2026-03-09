@@ -1813,10 +1813,18 @@ fn build_commit_audit_entry(
     let author = commit.author();
     Ok(CommitAuditEntry {
         commit_id,
+        tree_oid: commit.tree_id(),
+        parent_oids: commit.parent_ids().collect(),
         subject: commit
             .summary()
             .map(std::string::ToString::to_string)
             .unwrap_or_else(|| "<no subject>".to_string()),
+        message: commit
+            .message()
+            .map(str::trim_end)
+            .filter(|message| !message.is_empty())
+            .unwrap_or("<no message>")
+            .to_string(),
         committer: CommitAuditIdentity {
             name: committer.name().unwrap_or("<unknown>").to_string(),
             email: committer.email().unwrap_or("<unknown>").to_string(),
