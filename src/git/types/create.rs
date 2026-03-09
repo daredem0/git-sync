@@ -28,11 +28,13 @@ pub struct CreateBundleResult {
     pub archive_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 /// Options controlling bundle creation behavior.
 pub struct CreateBundleOptions {
     /// When true, emit a `.caudit.patch` unified-diff sidecar.
     pub include_patch_sidecar: bool,
+    /// Extra revisions assumed to already exist at the destination.
+    pub assume_present_revs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

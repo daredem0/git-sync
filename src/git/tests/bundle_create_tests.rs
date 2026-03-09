@@ -429,6 +429,7 @@ fn create_bundle_with_patch_sidecar_writes_and_references_sidecar() {
         &bundle_path,
         CreateBundleOptions {
             include_patch_sidecar: true,
+            assume_present_revs: Vec::new(),
         },
     )
     .expect("create_bundle_with_options should succeed with patch sidecar enabled");
@@ -488,6 +489,121 @@ fn create_bundle_with_patch_sidecar_writes_and_references_sidecar() {
     assert!(
         archive_text.contains("range.bundle.caudit.patch"),
         "archive should include patch sidecar entry when patch generation is enabled"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that assume-present commits reachable from tip are emitted as additional bundle prerequisites.
+#[test]
+fn create_bundle_with_assume_present_adds_reachable_prerequisite() {
+    let repo_dir = temp_repo_dir("create-bundle-assume-present-reachable");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let root_commit_id = commit_from_files(&repo, "root", &[("f.txt", "root")], &[]);
+    let base_commit_id = commit_from_files(&repo, "base", &[("f.txt", "base")], &[root_commit_id]);
+    let main_commit_id = commit_from_files(&repo, "main", &[("f.txt", "main")], &[base_commit_id]);
+    let side_commit_id =
+        commit_from_files(&repo, "side", &[("side.txt", "side")], &[root_commit_id]);
+    let tip_commit_id = commit_from_files(
+        &repo,
+        "merge tip",
+        &[("f.txt", "tip"), ("side.txt", "side")],
+        &[main_commit_id, side_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference("refs/heads/side", side_commit_id, true, "create side ref")
+        .expect("must create side ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    let result = create_bundle_with_options(
+        &repo_dir,
+        "refs/heads/base",
+        "refs/heads/tip",
+        &bundle_path,
+        CreateBundleOptions {
+            include_patch_sidecar: false,
+            assume_present_revs: vec!["refs/heads/side".to_string()],
+        },
+    )
+    .expect("create_bundle_with_options should succeed with reachable assume-present ref");
+
+    let inspection = inspect_bundle(&bundle_path).expect("must inspect created bundle");
+    assert_eq!(
+        result.from_commit_id, base_commit_id,
+        "from commit id should remain anchored to --from revision"
+    );
+    assert_eq!(
+        result.to_commit_id, tip_commit_id,
+        "to commit id should remain anchored to --to revision"
+    );
+    assert!(
+        inspection.prerequisites.contains(&base_commit_id),
+        "bundle prerequisites should include --from commit id"
+    );
+    assert!(
+        inspection.prerequisites.contains(&side_commit_id),
+        "bundle prerequisites should include reachable assume-present commit id"
+    );
+    assert_eq!(
+        inspection.prerequisites.len(),
+        2,
+        "bundle should emit one prerequisite for --from plus one for reachable assume-present"
+    );
+
+    let _ = std::fs::remove_dir_all(repo_dir);
+}
+
+// Verifies that assume-present commits not reachable from tip are ignored and do not become prerequisites.
+#[test]
+fn create_bundle_with_assume_present_ignores_non_reachable_prerequisite() {
+    let repo_dir = temp_repo_dir("create-bundle-assume-present-non-reachable");
+    std::fs::create_dir_all(&repo_dir).expect("must create source repo dir");
+    let repo = git2::Repository::init(&repo_dir).expect("must init source git repo");
+
+    let root_commit_id = commit_from_files(&repo, "root", &[("f.txt", "root")], &[]);
+    let base_commit_id = commit_from_files(&repo, "base", &[("f.txt", "base")], &[root_commit_id]);
+    let tip_commit_id = commit_from_files(&repo, "tip", &[("f.txt", "tip")], &[base_commit_id]);
+    let unrelated_commit_id = commit_from_files(
+        &repo,
+        "unrelated",
+        &[("other.txt", "other")],
+        &[root_commit_id],
+    );
+    repo.reference("refs/heads/base", base_commit_id, true, "create base ref")
+        .expect("must create base ref");
+    repo.reference(
+        "refs/heads/unrelated",
+        unrelated_commit_id,
+        true,
+        "create unrelated ref",
+    )
+    .expect("must create unrelated ref");
+    repo.reference("refs/heads/tip", tip_commit_id, true, "create tip ref")
+        .expect("must create tip ref");
+
+    let bundle_path = repo_dir.join("range.bundle");
+    create_bundle_with_options(
+        &repo_dir,
+        "refs/heads/base",
+        "refs/heads/tip",
+        &bundle_path,
+        CreateBundleOptions {
+            include_patch_sidecar: false,
+            assume_present_revs: vec!["refs/heads/unrelated".to_string()],
+        },
+    )
+    .expect("create_bundle_with_options should succeed with non-reachable assume-present ref");
+
+    let inspection = inspect_bundle(&bundle_path).expect("must inspect created bundle");
+    assert_eq!(
+        inspection.prerequisites,
+        vec![base_commit_id],
+        "only --from prerequisite should remain when assume-present commit is not reachable from tip"
     );
 
     let _ = std::fs::remove_dir_all(repo_dir);

@@ -26,11 +26,12 @@ Primary command groups:
 
 Create a transport package:
 
-`git-sync create --repo <path> --from <rev> --to <rev> --output <bundle>`
+`git-sync create --repo <path> --from <rev> --to <rev> --output <bundle> [--assume-present <rev> ...]`
 
 Optional:
 
 - `--with-patches` - include a unified patch sidecar in the package
+- `--assume-present <rev>` - repeatable; exclude objects already reachable from `<rev>` when that commit is reachable from `--to`
 
 ### audit
 

@@ -21,6 +21,7 @@ struct CreateRunInput {
     to: String,
     output: PathBuf,
     with_patches: bool,
+    assume_present: Vec<String>,
 }
 
 pub(super) fn run(
@@ -29,6 +30,7 @@ pub(super) fn run(
     to: String,
     output: PathBuf,
     with_patches: bool,
+    assume_present: Vec<String>,
 ) -> Result<()> {
     let input = CreateRunInput {
         repo,
@@ -36,6 +38,7 @@ pub(super) fn run(
         to,
         output,
         with_patches,
+        assume_present,
     };
     run_with(
         input,
@@ -62,14 +65,16 @@ where
     ) -> Result<CreateBundleResult>,
     FCleanup: FnOnce(&CreateBundleResult) -> Result<()>,
 {
-    let result = if input.with_patches {
+    let use_options_path = input.with_patches || !input.assume_present.is_empty();
+    let result = if use_options_path {
         create_with_options(
             &input.repo,
             &input.from,
             &input.to,
             &input.output,
             CreateBundleOptions {
-                include_patch_sidecar: true,
+                include_patch_sidecar: input.with_patches,
+                assume_present_revs: input.assume_present,
             },
         )?
     } else {

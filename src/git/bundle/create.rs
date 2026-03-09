@@ -21,6 +21,7 @@ use crate::git::util::{
     bundle_version_code, current_hostname, current_unix_timestamp_secs, current_username,
 };
 use anyhow::{Result, bail};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
@@ -89,10 +90,19 @@ pub fn create_bundle_with_options(
     let tip_ref_name = to_ref
         .and_then(|reference| reference.name().map(|name| name.to_string()))
         .unwrap_or_else(|| format!("refs/heads/bundle-tip-{}", &to_commit_id.to_string()[..12]));
+    let assume_present_commit_ids = resolve_assume_present_prerequisites(
+        &repo,
+        from_commit_id,
+        to_commit_id,
+        &options.assume_present_revs,
+    )?;
 
     let mut walk = repo.revwalk()?;
     walk.push(to_commit_id)?;
     walk.hide(from_commit_id)?;
+    for commit_id in &assume_present_commit_ids {
+        walk.hide(*commit_id)?;
+    }
 
     let mut packbuilder = repo.packbuilder()?;
     packbuilder.insert_walk(&mut walk)?;
@@ -102,6 +112,9 @@ pub fn create_bundle_with_options(
     let mut file = File::create(bundle_path)?;
     writeln!(file, "# v2 git bundle")?;
     writeln!(file, "-{from_commit_id}")?;
+    for commit_id in &assume_present_commit_ids {
+        writeln!(file, "-{commit_id}")?;
+    }
     writeln!(file, "{to_commit_id} {tip_ref_name}")?;
     writeln!(file)?;
     file.write_all(&pack_buffer)?;
@@ -178,6 +191,34 @@ pub fn create_bundle_with_options(
         patch_audit_path,
         archive_path,
     })
+}
+
+fn resolve_assume_present_prerequisites(
+    repo: &git2::Repository,
+    from_commit_id: git2::Oid,
+    to_commit_id: git2::Oid,
+    assume_present_revs: &[String],
+) -> Result<Vec<git2::Oid>> {
+    let mut prerequisites = Vec::new();
+    let mut seen = HashSet::new();
+
+    for rev in assume_present_revs {
+        let commit_id = repo.revparse_single(rev)?.peel_to_commit()?.id();
+        if commit_id == from_commit_id {
+            continue;
+        }
+
+        let reachable_from_to =
+            commit_id == to_commit_id || repo.graph_descendant_of(to_commit_id, commit_id)?;
+        if !reachable_from_to {
+            continue;
+        }
+        if seen.insert(commit_id) {
+            prerequisites.push(commit_id);
+        }
+    }
+
+    Ok(prerequisites)
 }
 
 /// Removes loose artifacts once the packaged archive has been produced.

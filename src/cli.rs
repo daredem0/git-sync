@@ -38,6 +38,8 @@ pub enum Command {
         output: PathBuf,
         #[arg(long, default_value_t = false)]
         with_patches: bool,
+        #[arg(long = "assume-present")]
+        assume_present: Vec<String>,
     },
     /// Audits either a repository range or a bundle/package input.
     Audit {

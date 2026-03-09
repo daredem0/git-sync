@@ -62,7 +62,8 @@ git-sync create \
   --repo /path/to/source-repo \
   --from <from-rev> \
   --to <to-rev> \
-  --output sync.bundle
+  --output sync.bundle \
+  [--assume-present <rev> ...]
 ```
 
 Output: `sync.bundle.zip`
@@ -261,6 +262,20 @@ git-sync create \
   --with-patches
 ```
 
+### Create delta bundle against known receiver commits
+
+Exclude objects already reachable from one or more known receiver commits:
+
+```bash
+git-sync create \
+  --repo /path/to/source-repo \
+  --from <from-rev> \
+  --to <to-rev> \
+  --output sync.bundle \
+  --assume-present refs/heads/stable \
+  --assume-present refs/heads/other-network-main
+```
+
 ### Metadata-only verification (non-interactive)
 
 Useful for CI/policy gates that need pass/fail exit codes:
@@ -387,6 +402,8 @@ Payload page:
 ## Constraints and Behavior Notes
 
 - `create --from ... --to ...` requires `to` to be equal to or a descendant of `from`.
+- `create --assume-present <rev>` may be provided multiple times to exclude objects already reachable from `to` via those commits.
+- non-reachable `--assume-present` commits are ignored (no exclusion effect and no prerequisite emitted).
 - `audit` without `--format` is interactive TUI mode and requires `--repo` and `--bundle`.
 - Interactive `audit` currently supports only `--resolve pack-only`.
 - Interactive `audit` includes metadata verification against the provided `--repo`.

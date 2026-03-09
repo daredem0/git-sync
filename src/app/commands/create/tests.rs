@@ -45,6 +45,7 @@ fn run_with_uses_create_path_when_with_patches_is_false() {
             to: "to".to_string(),
             output: PathBuf::from("sync.bundle"),
             with_patches: false,
+            assume_present: Vec::new(),
         },
         move |_repo, _from, _to, _output| {
             *c1.borrow_mut() = true;
@@ -94,6 +95,7 @@ fn run_with_uses_create_with_options_when_with_patches_is_true() {
             to: "to".to_string(),
             output: PathBuf::from("sync.bundle"),
             with_patches: true,
+            assume_present: Vec::new(),
         },
         move |_repo, _from, _to, _output| {
             *c1.borrow_mut() = true;
@@ -134,6 +136,7 @@ fn run_with_propagates_cleanup_error() {
             to: "to".to_string(),
             output: PathBuf::from("sync.bundle"),
             with_patches: false,
+            assume_present: Vec::new(),
         },
         |_repo, _from, _to, _output| Ok(sample_result(false)),
         |_repo, _from, _to, _output, _options| Ok(sample_result(true)),
@@ -144,5 +147,54 @@ fn run_with_propagates_cleanup_error() {
     assert!(
         error.to_string().contains("cleanup failed"),
         "error should preserve cleanup failure context"
+    );
+}
+
+#[test]
+fn run_with_uses_create_with_options_when_assume_present_is_non_empty() {
+    let called_create = Rc::new(RefCell::new(false));
+    let called_create_with_options = Rc::new(RefCell::new(false));
+    let captured_assume_present = Rc::new(RefCell::new(Vec::<String>::new()));
+
+    let c1 = Rc::clone(&called_create);
+    let c2 = Rc::clone(&called_create_with_options);
+    let c3 = Rc::clone(&captured_assume_present);
+    let result = run_with(
+        CreateRunInput {
+            repo: PathBuf::from("/tmp/repo"),
+            from: "from".to_string(),
+            to: "to".to_string(),
+            output: PathBuf::from("sync.bundle"),
+            with_patches: false,
+            assume_present: vec!["refs/heads/stable".to_string()],
+        },
+        move |_repo, _from, _to, _output| {
+            *c1.borrow_mut() = true;
+            Ok(sample_result(false))
+        },
+        move |_repo, _from, _to, _output, options| {
+            *c2.borrow_mut() = true;
+            *c3.borrow_mut() = options.assume_present_revs;
+            Ok(sample_result(false))
+        },
+        |_result| Ok(()),
+    );
+
+    assert!(
+        result.is_ok(),
+        "assume-present create path should succeed with mocked dependencies"
+    );
+    assert!(
+        !*called_create.borrow(),
+        "plain create function must not be called when assume-present is configured"
+    );
+    assert!(
+        *called_create_with_options.borrow(),
+        "with-options create function should be used when assume-present is configured"
+    );
+    assert_eq!(
+        *captured_assume_present.borrow(),
+        vec!["refs/heads/stable".to_string()],
+        "assume-present revisions should be forwarded to create options unchanged"
     );
 }

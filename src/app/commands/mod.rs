@@ -28,7 +28,8 @@ pub fn dispatch(command: Option<Command>) -> Result<()> {
             to,
             output,
             with_patches,
-        }) => create::run(repo, from, to, output, with_patches),
+            assume_present,
+        }) => create::run(repo, from, to, output, with_patches, assume_present),
         Some(Command::Audit {
             repo,
             bundle,

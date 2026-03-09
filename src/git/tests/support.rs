@@ -39,6 +39,7 @@ pub(super) fn create_linear_bundle_fixture(
             &bundle_path,
             CreateBundleOptions {
                 include_patch_sidecar: true,
+                assume_present_revs: Vec::new(),
             },
         )
         .expect("create_bundle_with_options should succeed")

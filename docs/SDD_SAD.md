@@ -164,9 +164,9 @@ The key separation is intentional: UI is a renderer/state machine, not a proof e
 
 #### `create`
 
-`git-sync create --repo --from --to --output [--with-patches]`
+`git-sync create --repo --from --to --output [--with-patches] [--assume-present <rev> ...]`
 
-`create` validates linearity (`to` must be equal to or descendant of `from`), produces bundle + sidecars, packages them into `<output>.zip`, and then removes loose artifacts in default command flow so that the transport unit is a single archive.
+`create` validates linearity (`to` must be equal to or descendant of `from`), resolves optional `--assume-present` revisions, excludes objects already reachable from those resolved commits (when reachable from `to`), produces bundle + sidecars, packages them into `<output>.zip`, and then removes loose artifacts in default command flow so that the transport unit is a single archive.
 
 #### `audit`
 
@@ -361,10 +361,10 @@ sequenceDiagram
     participant R as libgit2 Repo
     participant A as archive writer
 
-    U->>C: create --repo --from --to --output
+    U->>C: create --repo --from --to --output [--assume-present ...]
     C->>G: create_bundle_with_options(...)
     G->>R: resolve OIDs + validate linear range
-    G->>R: revwalk push(to), hide(from)
+    G->>R: revwalk push(to), hide(from), hide(assume-present...)
     G->>R: packbuilder.insert_walk(...)
     R-->>G: PACK bytes
     G->>G: write .bundle + .caudit.json (+ optional .caudit.patch)
@@ -376,12 +376,14 @@ sequenceDiagram
 Execution narrative:
 
 1. Resolve `from` and `to`, then enforce linearity (`to` descendant-or-equal `from`).
-2. Build revwalk and pack payload.
-3. Write bundle bytes and inspect resulting header data.
-4. Build metadata (`commit_chain`, `changed_files`, integrity fields).
-5. Optionally generate patch sidecar.
-6. Archive all artifacts to `.zip` and return command result.
-7. Command handler performs loose-artifact cleanup so the archive is the final package unit.
+2. Resolve optional `assume-present` revisions to commit OIDs and keep only those reachable from `to`.
+3. Build transfer walk with `push(to)` and `hide(from + assume-present...)`.
+4. Build revwalk and pack payload.
+5. Write bundle bytes and inspect resulting header data.
+6. Build metadata (`commit_chain`, `changed_files`, integrity fields).
+7. Optionally generate patch sidecar.
+8. Archive all artifacts to `.zip` and return command result.
+9. Command handler performs loose-artifact cleanup so the archive is the final package unit.
 
 ### 5.2 Interactive audit sequence
 

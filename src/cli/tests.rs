@@ -334,3 +334,37 @@ fn audit_json_parses_payload_ledger_non_alias() {
         "audit --payload-ledger non should map to none ledger mode alias"
     );
 }
+
+// Verifies that `create --assume-present` accepts multiple values in argument order.
+#[test]
+fn create_parses_repeatable_assume_present_values() {
+    let cli = Cli::try_parse_from([
+        "git-sync",
+        "create",
+        "--repo",
+        ".",
+        "--from",
+        "refs/heads/base",
+        "--to",
+        "refs/heads/tip",
+        "--output",
+        "sync.bundle",
+        "--assume-present",
+        "refs/heads/stable",
+        "--assume-present",
+        "refs/heads/release",
+    ])
+    .expect("create command with repeatable --assume-present should parse");
+
+    let Some(Command::Create { assume_present, .. }) = cli.command else {
+        panic!("expected parsed create command");
+    };
+    assert_eq!(
+        assume_present,
+        vec![
+            "refs/heads/stable".to_string(),
+            "refs/heads/release".to_string()
+        ],
+        "create should preserve repeatable --assume-present values in argument order"
+    );
+}
