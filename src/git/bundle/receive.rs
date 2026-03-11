@@ -553,7 +553,10 @@ fn validate_import_connectivity_for_heads(
     Ok(())
 }
 
-/// Recursively validates that all tree/blob/tag objects referenced from one tree are present.
+/// Recursively validates that all in-repo tree/blob objects referenced from one tree are present.
+///
+/// Gitlink entries (mode `160000`, kind `commit`) intentionally point at submodule commits that
+/// are not required to exist in this repository object database, so they are skipped.
 fn validate_tree_connectivity(
     repo: &git2::Repository,
     tree_oid: git2::Oid,
@@ -577,6 +580,10 @@ fn validate_tree_connectivity(
         match entry.kind() {
             Some(git2::ObjectType::Tree) => {
                 validate_tree_connectivity(repo, entry_oid, visited_trees, head_ref, import_path)?;
+            }
+            Some(git2::ObjectType::Commit) => {
+                // Gitlink (submodule) edge: target commit may legitimately be external.
+                continue;
             }
             Some(_) => {
                 repo.find_object(entry_oid, None).map_err(|err| {

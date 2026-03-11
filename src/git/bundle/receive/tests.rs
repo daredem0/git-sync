@@ -52,6 +52,36 @@ fn commit_from_content(
         .expect("must create commit")
 }
 
+fn commit_with_gitlink(
+    repo: &git2::Repository,
+    message: &str,
+    file_content: &str,
+    gitlink_oid: git2::Oid,
+    parents: &[git2::Oid],
+) -> git2::Oid {
+    let mut tree_builder = repo.treebuilder(None).expect("must create tree builder");
+    let blob = repo
+        .blob(file_content.as_bytes())
+        .expect("must create regular blob");
+    tree_builder
+        .insert("f.txt", blob, 0o100644)
+        .expect("must insert regular file entry");
+    tree_builder
+        .insert("submodule", gitlink_oid, 0o160000)
+        .expect("must insert gitlink tree entry");
+    let tree_oid = tree_builder.write().expect("must write tree");
+    let tree = repo.find_tree(tree_oid).expect("must resolve tree");
+
+    let parent_commits = parents
+        .iter()
+        .map(|oid| repo.find_commit(*oid).expect("must resolve parent commit"))
+        .collect::<Vec<_>>();
+    let parent_refs = parent_commits.iter().collect::<Vec<_>>();
+    let sig = git2::Signature::now("Test User", "test@example.com").expect("must build sig");
+    repo.commit(None, &sig, &sig, message, &tree, &parent_refs)
+        .expect("must create commit")
+}
+
 fn build_two_ref_update_fixture(
     suffix: &str,
 ) -> (
@@ -806,6 +836,43 @@ fn connectivity_validation_rejects_missing_head_commit() {
             && (text.contains("failed to push head") || text.contains("missing commit")),
         "connectivity diagnostics should explain missing head failure: {text}"
     );
+
+    let _ = std::fs::remove_dir_all(repo_path);
+}
+
+#[test]
+fn connectivity_validation_accepts_missing_gitlink_target_object() {
+    let repo_path = temp_bare_repo_path("connectivity-validation-gitlink-external");
+    std::fs::create_dir_all(&repo_path).expect("must create repo path");
+    let repo = git2::Repository::init_bare(&repo_path).expect("must init bare repo");
+
+    let root = commit_from_content(&repo, "root", "root", &[]);
+    let external_gitlink_target = git2::Oid::from_str("f2c4a90927bd468dedde0aa1bd4894e84df9458f")
+        .expect("must parse synthetic gitlink oid");
+    let tip = commit_with_gitlink(
+        &repo,
+        "tip-with-gitlink",
+        "tip",
+        external_gitlink_target,
+        &[root],
+    );
+    let heads = vec![BundleHead {
+        oid: tip,
+        reference: "refs/heads/main".to_string(),
+    }];
+
+    assert!(
+        repo.find_object(external_gitlink_target, None).is_err(),
+        "fixture should keep gitlink target oid absent from receiver odb"
+    );
+
+    validate_import_connectivity_for_heads(
+        &repo,
+        &heads,
+        &[],
+        ImportPath::CompatIndexerVerifyFalse,
+    )
+    .expect("gitlink entries may reference external submodule commits and must not fail connectivity");
 
     let _ = std::fs::remove_dir_all(repo_path);
 }

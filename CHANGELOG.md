@@ -7,6 +7,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+- Fixed compatibility fallback post-import connectivity validation to ignore gitlink (`160000`) tree entries so external submodule commit OIDs are not treated as missing local objects.
+
+### Tests
+- Added receive connectivity regression coverage for trees containing gitlink entries that reference non-local submodule commit OIDs.
+
 ## [0.9.1] - 2026-03-09
 
 ### Added
