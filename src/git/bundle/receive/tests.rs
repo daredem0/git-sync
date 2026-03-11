@@ -872,7 +872,9 @@ fn connectivity_validation_accepts_missing_gitlink_target_object() {
         &[],
         ImportPath::CompatIndexerVerifyFalse,
     )
-    .expect("gitlink entries may reference external submodule commits and must not fail connectivity");
+    .expect(
+        "gitlink entries may reference external submodule commits and must not fail connectivity",
+    );
 
     let _ = std::fs::remove_dir_all(repo_path);
 }
