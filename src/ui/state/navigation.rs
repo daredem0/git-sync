@@ -46,6 +46,7 @@ impl AppState {
             payload_preview: None,
             payload_object_view: None,
             diff_view: None,
+            full_redraw_requested: false,
         }
     }
 
@@ -239,6 +240,7 @@ impl AppState {
     pub(crate) fn close_help(&mut self) {
         self.show_help = false;
         self.help_page_index = 0;
+        self.request_full_redraw();
     }
 
     /// Returns `true` when export notice overlay is currently open.
@@ -249,6 +251,7 @@ impl AppState {
     /// Closes export notice overlay.
     pub(crate) fn close_export_notice(&mut self) {
         self.export_notice = None;
+        self.request_full_redraw();
     }
 
     /// Advances help overlay to the next help page.
@@ -265,6 +268,12 @@ impl AppState {
     pub(crate) fn close_diff(&mut self) {
         self.diff_view = None;
         self.action_message = None;
+        self.request_full_redraw();
+    }
+
+    /// Consumes and returns whether the next frame should force a full redraw.
+    pub(crate) fn take_full_redraw_request(&mut self) -> bool {
+        std::mem::take(&mut self.full_redraw_requested)
     }
 
     /// Toggles main page view mode between history and payload.
@@ -378,6 +387,12 @@ impl AppState {
         self.payload_preview = None;
         self.payload_object_view = None;
         self.action_message = None;
+        self.request_full_redraw();
+    }
+
+    /// Requests a one-shot full-terminal clear before the next draw.
+    pub(crate) fn request_full_redraw(&mut self) {
+        self.full_redraw_requested = true;
     }
 
     /// Toggles overview focus between heads and would-change tables.

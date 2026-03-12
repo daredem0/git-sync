@@ -82,6 +82,7 @@ pub(crate) struct AppState {
     pub(crate) payload_preview: Option<PayloadPreviewState>,
     pub(crate) payload_object_view: Option<PayloadObjectViewState>,
     pub(crate) diff_view: Option<DiffViewState>,
+    pub(crate) full_redraw_requested: bool,
 }
 
 #[derive(Debug, Clone)]

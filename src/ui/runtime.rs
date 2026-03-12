@@ -247,6 +247,9 @@ fn run_loop(
     event_source: &impl EventSource,
 ) -> Result<()> {
     loop {
+        if state.take_full_redraw_request() {
+            terminal.clear()?;
+        }
         terminal.draw(|frame| render_page(frame, model, state))?;
 
         if event_source.poll(Duration::from_millis(200))?

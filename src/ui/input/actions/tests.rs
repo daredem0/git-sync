@@ -44,6 +44,10 @@ fn apply_key_action_handles_quit_and_escape_paths() {
         "escape should close diff before exiting"
     );
     assert!(state.diff_view.is_none());
+    assert!(
+        state.take_full_redraw_request(),
+        "closing diff view should request one-shot full redraw"
+    );
 
     state.payload_object_view = Some(PayloadObjectViewState {
         oid: oid("2222222222222222222222222222222222222222"),
@@ -59,6 +63,10 @@ fn apply_key_action_handles_quit_and_escape_paths() {
         "escape should close payload object view before exiting"
     );
     assert!(state.payload_object_view.is_none());
+    assert!(
+        state.take_full_redraw_request(),
+        "closing payload object view should request one-shot full redraw"
+    );
 
     state.export_notice = Some(ExportNotice {
         path: PathBuf::from("sync.paudit.json"),
@@ -71,6 +79,10 @@ fn apply_key_action_handles_quit_and_escape_paths() {
     assert!(
         state.export_notice.is_none(),
         "escape should clear export notice overlay state"
+    );
+    assert!(
+        state.take_full_redraw_request(),
+        "closing export notice should request one-shot full redraw"
     );
 
     state.page_index = 1;
@@ -97,6 +109,19 @@ fn apply_key_action_handles_main_view_and_help_toggles() {
         "help toggle should not exit"
     );
     assert!(state.show_help);
+    assert!(
+        !state.take_full_redraw_request(),
+        "opening help overlay should not force a full redraw"
+    );
+    assert!(
+        !apply_key_action(&mut state, &model, KeyAction::Escape),
+        "escape should close help overlay before other navigation"
+    );
+    assert!(!state.show_help);
+    assert!(
+        state.take_full_redraw_request(),
+        "closing help overlay should request one-shot full redraw"
+    );
 
     assert_eq!(state.main_view, MainView::History);
     assert!(

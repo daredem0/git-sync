@@ -27,6 +27,7 @@ impl AppState {
     pub(crate) fn close_payload_object(&mut self) {
         self.payload_object_view = None;
         self.action_message = None;
+        self.request_full_redraw();
     }
 
     /// Refreshes cached payload preview content for the selected payload row.
